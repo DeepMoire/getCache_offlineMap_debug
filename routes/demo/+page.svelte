@@ -29,12 +29,12 @@ import { onMount } from "svelte";
 // under every other one. An import is resolved by the bundler at BUILD time and
 // the bytes are copied into whatever app builds this child.
 //
-// It comes from `$sharedAssets`, not from a copy inside this child. The hand is
+// It comes from `$parent/retreeved/sharedAssets`, not from a copy inside this child. The hand is
 // Get Cache's marketing art, and art that names the owner belongs to the parent
 // that owns it — a published child carrying its owner's identity is the thing
 // CONTRIBUTING.md rules out. The alias is a seam each parent fills for itself,
 // so this file names no parent and still resolves under both.
-import handPhoneUrl from "$sharedAssets/hand_phoneV3.webp";
+import handPhoneUrl from "$parent/retreeved/sharedAssets/hand_phoneV3.webp";
 import { initializeOfflineMap } from "../../lib/onPhone/render/offlineMapInit";
 import { buildOfflineBaseStyle } from "../../lib/onPhone/render/offlineBaseStyle";
 import { v4TransformRequest } from "../../lib/r2Worker/local_dev/roads/packDownload";

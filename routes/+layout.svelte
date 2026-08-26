@@ -51,8 +51,8 @@ import { page } from "$app/state";
  * in the repo. It built on the machine that made it and nowhere else — the
  * same failure as the leading-slash URLs, one layer down.
  *
- * `$sharedAssets` is the seam each parent fills for itself, exactly like
- * `$hostStyles`: ReTreever points it at retreeved/assets/ and rapper at its
+ * `$parent/retreeved/sharedAssets` is the seam each parent fills for itself, exactly like
+ * `$parent/retreeved/app.css`: ReTreever points it at retreeved/assets/ and rapper at its
  * synced copy of the same folder. One file per mark, replaced atomically on
  * every dev start, instead of the same .webp drifting in three places. The
  * child names no parent, so noParentNames.test.ts still passes.
@@ -61,9 +61,9 @@ import { page } from "$app/state";
  * CONTRIBUTING.md asks for: "Branding is RAPPER's job, never the child's."
  * CHILD below is still the one and only place that says whose logo this is.
  */
-import logoUrl from "$sharedAssets/GC_fly_logo_transparent.webp";
-import ghIconUrl from "$sharedAssets/github-logo.png";
-import backdropUrl from "$sharedAssets/getcache_DT_bg.webp";
+import logoUrl from "$parent/retreeved/sharedAssets/GC_fly_logo_transparent.webp";
+import ghIconUrl from "$parent/retreeved/sharedAssets/github-logo.png";
+import backdropUrl from "$parent/retreeved/sharedAssets/getcache_DT_bg.webp";
 
 const dev = import.meta.env.DEV;
 

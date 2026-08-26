@@ -40,9 +40,9 @@ const ALLOWED = [
 const BANNED = [
 	"$tinyStore",
 	"mapStore",
-	// "$harness" was banned here when this file lived in ReTreever, where $harness
+	// "$parent/siblings" was banned here when this file lived in ReTreever, where $parent/siblings
 	// meant "reaching into the other repo". The engine now LIVES in the harness, so
-	// $harness is its own home and the ban is inverted — see the $lib/mobile entry
+	// $parent/siblings is its own home and the ban is inverted — see the $lib/mobile entry
 	// below, which is the direction that would now breach the boundary.
 	"$lib/mobile/",
 	"$mobRoutes",
