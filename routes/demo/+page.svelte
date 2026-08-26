@@ -23,26 +23,38 @@
  */
 import type * as maplibreType from "maplibre-gl";
 import { onMount } from "svelte";
+// THE HAND IS IMPORTED, NOT REQUESTED. `src="/mobileAssets/hand_phoneV3.webp"`
+// is a path the BROWSER resolves against whatever server answered — so it only
+// finds the file under a host whose static folder happens to hold it, and 404s
+// under every other one. An import is resolved by the bundler at BUILD time and
+// the bytes are copied into whatever app builds this child.
+//
+// It comes from `$sharedAssets`, not from a copy inside this child. The hand is
+// Get Cache's marketing art, and art that names the owner belongs to the parent
+// that owns it — a published child carrying its owner's identity is the thing
+// CONTRIBUTING.md rules out. The alias is a seam each parent fills for itself,
+// so this file names no parent and still resolves under both.
+import handPhoneUrl from "$sharedAssets/hand_phoneV3.webp";
 import { initializeOfflineMap } from "../../lib/onPhone/render/offlineMapInit";
 import { buildOfflineBaseStyle } from "../../lib/onPhone/render/offlineBaseStyle";
-import { v4TransformRequest } from "../../lib/r2Worker/roads/packDownload";
+import { v4TransformRequest } from "../../lib/r2Worker/local_dev/roads/packDownload";
 import {
 	installRawWallProtocol,
 	rawSourceSpec,
 	RAW_SOURCE,
 } from "../../lib/onPhone/roads/rawWallProtocol";
 import { wallLayers } from "../../lib/onPhone/render/wallStyle";
-import { attachDoubleTapToPin } from "$harness/components/map/mapShared/doubleTapToPin";
+import { attachDoubleTapToPin } from "../../lib/shared/doubleTapToPin";
 import { startOfflineBakeService } from "../../lib/onPhone/bake/bakeService.svelte";
-import type { HostPorts } from "$harness/components/map/mapShared/hostPorts";
-import OfflineWorkMeter from "$harness/components/map/mapShared/OfflineWorkMeter.svelte";
+import type { HostPorts } from "../../lib/shared/hostPorts";
+import OfflineWorkMeter from "../../lib/shared/OfflineWorkMeter.svelte";
 import OfflineBlobPanel from "../../lib/panels/OfflineBlobPanel.svelte";
 import OfflineConfigPanel from "../../lib/panels/OfflineConfigPanel.svelte";
 import PinLibrary from "../../lib/panels/PinLibrary.svelte";
 import {
 	pinAssetPath,
 	type PinKey,
-} from "$harness/components/map/mapShared/icons";
+} from "../../lib/shared/icons";
 import { satImageKey } from "../../lib/onPhone/satellite/satelliteImage";
 import {
 	LAYER_TOGGLES,
@@ -212,6 +224,10 @@ const layerOn = $state<Record<string, boolean>>(
 	),
 );
 let mapInstance: maplibreType.Map | null = null;
+/** Name of the row OfflineBlobPanel currently exports — see its onFocusedName
+ *  doc. Forwarded into OfflineWorkMeter so the export button's sub-label
+ *  always names the SAME area export json actually exports. */
+let focusedBlobName = $state<string | null>(null);
 
 /** Show/hide a layer group. Mirrors the real /offline route's local helper,
  *  including the Satellite special case: that toggle owns every per-pin photo
@@ -363,8 +379,13 @@ onMount(() => {
 			route="debug/map"
 			pins={PINS.map((p) => ({ lng: p.lngLat[0], lat: p.lngLat[1] }))}
 			{layers}
+			{focusedBlobName}
 		/>
-		<OfflineBlobPanel places={(hostPorts ?? fixturePorts).places()} areaKeyOf={satImageKey} />
+		<OfflineBlobPanel
+			places={(hostPorts ?? fixturePorts).places()}
+			areaKeyOf={satImageKey}
+			onFocusedName={(name) => (focusedBlobName = name)}
+		/>
 	</aside>
 	{/if}
 
@@ -377,7 +398,7 @@ onMount(() => {
 		{#if decor}
 			<img
 				class="hand"
-				src="/mobileAssets/hand_phoneV3.webp"
+				src={handPhoneUrl}
 				alt=""
 				draggable="false"
 			/>
@@ -478,11 +499,10 @@ onMount(() => {
 	   rig (phone) has margin-inline: auto below so it still centres itself
 	   between whatever the rails leave. */
 	justify-content: space-between;
-	/* 15px of air on EACH side of the phone. Set as the row's gap, not as
-	   padding on the rails: the gap is between the rig and whatever is beside
-	   it, so both sides stay equal by construction and neither rail can drift
-	   over the bezel. */
-	gap: 15px;
+	/* Rails sit right up against the phone — 5px, not the old 15px. The rails
+	   are dense read-outs, not framing, so every extra pixel between them and
+	   the phone is width the CONFIG/MEMORY panels could be using instead. */
+	gap: 5px;
 	/* STYLE OFF is the DEFAULT here: plain black, no scenery. The host opts
 	   INTO the art by setting --host-decor: 1, which is only true when a
 	   parent is lending its style. A debugger should look like a value
@@ -514,7 +534,11 @@ onMount(() => {
 	width: clamp(27rem, 32vw, 42rem);
 	max-height: 100cqh;
 	overflow-y: auto;
-	padding: 0.5rem;
+	/* No outer padding — the rail's outer edge butts directly against the
+	   phone (gap:0 on .stage) and against the stage's own edge. Each card
+	   inside keeps its own internal padding for breathing room; a second,
+	   outer padding on top of that just reopens the gap this was fixing. */
+	padding: 0;
 	box-sizing: border-box;
 }
 .rail.left {

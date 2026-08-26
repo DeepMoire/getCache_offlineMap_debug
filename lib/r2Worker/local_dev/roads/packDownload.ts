@@ -30,17 +30,17 @@
  */
 import { VectorTile } from "@mapbox/vector-tile";
 import Pbf from "pbf";
-import { guardPackDownload } from "../../onPhone/store/downloadGuard";
-import { migrateIdbDatabase } from "../../onPhone/store/idbRename";
+import { guardPackDownload } from "../../../onPhone/store/downloadGuard";
+import { migrateIdbDatabase } from "../../../onPhone/store/idbRename";
 import {
 	currentDbName,
 	registerOfflineDbReset,
 	registerWipeLatch,
-} from "$harness/components/map/mapShared/sandboxDbNames";
-import { BLOB_RADIUS_KM, BLOB_ZOOMS } from "../../contract/roadBlob";
-import { pinTileKey } from "../../contract/grid";
-import { keysForAddress } from "../../onPhone/roads/pinTileLookup";
-import { cellTileKey, cellsFor } from "../../contract/grid";
+} from "../../../shared/sandboxDbNames";
+import { BLOB_RADIUS_KM, BLOB_ZOOMS } from "../../../contract/roadBlob";
+import { pinTileKey } from "../../../contract/grid";
+import { keysForAddress } from "../../../onPhone/roads/pinTileLookup";
+import { cellTileKey, cellsFor } from "../../../contract/grid";
 import { packUrl } from "../tilesHost";
 
 /** The `offline-tiles` Worker's pack endpoint — ONE request returns both rings of
@@ -51,7 +51,7 @@ import { packUrl } from "../tilesHost";
  *  regional-edge holes that broke per-area shapes. Source + deploy:
  *  /Users/chrisharris/DEV/fetch/ReTreever/workers/offline-tiles/. The ring geometry
  *  below (RINGS / DETAIL_INNER_Z) must stay in lockstep with the Worker. */
-// packUrl() (and which Worker it points at) lives in r2Worker/tilesHost.
+// packUrl() (and which Worker it points at) lives in r2Worker/local_dev/tilesHost.
 // Imported at the top of this file.
 // Wire-format version, appended to every pack request. The Worker edge-caches each
 // disc keyed by the FULL URL and that cache survives Worker redeploys — so whenever

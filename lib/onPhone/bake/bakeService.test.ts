@@ -76,11 +76,11 @@ let features: Array<{
 	anchors: [number, number][];
 }> = [];
 // NO mapStore / anchors / liveFix / fireFetch MOCKS ANY MORE. The engine imports
-// none of them — it asks the HOST PORT (mapShared/hostPorts.ts), and these tests
+// none of them — it asks the HOST PORT (getCache_OfflineMap/lib/shared/hostPorts.ts), and these tests
 // supply that port themselves via `testPorts` below. That is the point of the
 // seam: were it fake, every tripwire here would bake nothing and go red.
 
-vi.mock("../../r2Worker/roads/packDownload", () => ({
+vi.mock("../../r2Worker/local_dev/roads/packDownload", () => ({
 	downloadV4Area: h.downloadV4Area,
 	areaCentreCovered: vi.fn(async (lng: number, lat: number) =>
 		h.tiles.has(h.key(lng, lat)),
@@ -190,7 +190,7 @@ vi.mock("../store/coverageRegistry", () => ({
 import type {
 	FireRecord,
 	HostPorts,
-} from "$harness/components/map/mapShared/hostPorts";
+} from "../../shared/hostPorts";
 import { reconcileOnceForTest } from "./bakeService.svelte";
 
 /**

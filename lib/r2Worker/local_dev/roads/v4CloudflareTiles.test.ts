@@ -11,8 +11,8 @@
  *     suppress a new anchor's download and leave a hole mid-feature.
  */
 import "fake-indexeddb/auto";
-import { BLOB_RADIUS_KM, BLOB_ZOOMS } from "../../contract/roadBlob";
-import { BLOB_MIN_Z } from "../../contract/blob";
+import { BLOB_RADIUS_KM, BLOB_ZOOMS } from "../../../contract/roadBlob";
+import { BLOB_MIN_Z } from "../../../contract/blob";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // downloadGuard (imported by the module under test) pulls in Sentry — mock it
@@ -244,11 +244,11 @@ describe("THE BLOB — one radius, every zoom", () => {
 		const zoomLine = /BLOB_TILE_Z = (\d+)/.exec(
 			readFileSync(
 				fileURLToPath(
-					// ../../../../../../ lands in harness/src/; the Worker lives in the PARENT
-				// repo (ReTreever), so this climbs out of the submodule. The engine is
-				// vendored into the harness but the Worker it must agree with is not.
+					// Climbs out of the harness into ReTreever itself: the engine is
+				// vendored into the harness, but the Worker it must agree with
+				// lives in ReTreever/workers/.
 				new URL(
-					"../../../../../../../../../workers/offline-tiles/src/grid.ts",
+					"../../../../../ReTreever/workers/offline-tiles/src/grid.ts",
 					import.meta.url,
 				),
 				),

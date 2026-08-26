@@ -19,7 +19,7 @@
  * a tile grid instead of to the pin. Two subsystems, one mistake.
  */
 import { describe, expect, it } from "vitest";
-import { kmToDegSpan } from "$harness/components/map/mapShared/kmGeo";
+import { kmToDegSpan } from "../../../shared/kmGeo";
 
 /** The tile-grid box the imagery tiles cover, as the bake computes it. */
 function tileGridBox(lng: number, lat: number, radiusKm: number, z: number) {
@@ -110,7 +110,7 @@ describe("the satellite photo is centred", () => {
 		const { readFileSync } = await import("node:fs");
 		const { fileURLToPath } = await import("node:url");
 		const src = readFileSync(
-			fileURLToPath(new URL("../../onPhone/satellite/satelliteImage.ts", import.meta.url)),
+			fileURLToPath(new URL("../../../onPhone/satellite/satelliteImage.ts", import.meta.url)),
 			"utf8",
 		);
 		expect(src).toContain("bounds: [cw, cs, ce, cn]");

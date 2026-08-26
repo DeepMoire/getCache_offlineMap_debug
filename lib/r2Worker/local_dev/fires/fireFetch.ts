@@ -15,14 +15,14 @@
  *    past field failures here. Hence the explicit AbortController timeout.
  */
 
-import { guardPackDownload } from "../../onPhone/store/downloadGuard";
+import { guardPackDownload } from "../../../onPhone/store/downloadGuard";
 import { firesUrl } from "../tilesHost";
 import {
 	FIRE_RADIUS_KM,
 	type FireHotspot,
-} from "$harness/components/map/mapShared/fireContract";
+} from "../../../shared/fireContract";
 
-// firesUrl() (and which Worker it points at) lives in r2Worker/tilesHost.
+// firesUrl() (and which Worker it points at) lives in r2Worker/local_dev/tilesHost.
 
 /**
  * Wall-clock cap for one fire fetch. Generous enough for a cold Worker doing

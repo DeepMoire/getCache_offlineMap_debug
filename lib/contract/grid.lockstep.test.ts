@@ -15,7 +15,7 @@
  * ⚠️ If this fails, do not "fix" it by editing one copy. Copy the Worker's file
  * over the client's (or vice versa) so they are one definition again:
  *
- *     cp workers/offline-tiles/src/grid.ts harness/src/lib/components/map/getCache_OfflineMap/lib/contract/grid.ts
+ *     cp workers/offline-tiles/src/grid.ts harness/src/lib/map/getCache_OfflineMap/lib/contract/grid.ts
  *
  * They are two files only because the Worker and the app are separate build
  * roots with no shared package — not because they are allowed to differ.
@@ -26,11 +26,18 @@ import { describe, expect, it } from "vitest";
 import { BLOB_TILE_Z, GRID_RADIUS_KM, cellOf, cellsFor } from "./grid";
 
 const workerGrid = fileURLToPath(
-	// The client grid now lives in the harness (the engine's home); the Worker lives
-	// in the PARENT repo, so this climbs out of the submodule. 7 levels:
-	// contract → offline → map → components → lib → src → the harness → ReTreever root.
+	// The Worker's grid lives in ReTreever; this child holds the client's.
+	// The climb is COUNTED from this file's own depth, not hand-written:
+	// the hand-written version said "7 levels" and described a folder
+	// layout that has moved twice since, so it pointed at nothing while
+	// the suite stayed green.
+	//
+	// It is still a raw path naming a parent, which a portable child may
+	// not do — so the test SKIPS when ReTreever is absent (a standalone
+	// clone) rather than failing. There is genuinely nothing to compare
+	// against there; the lockstep only means something with both halves.
 	new URL(
-		"../../../../../../../../workers/offline-tiles/src/grid.ts",
+		"../../../ReTreever/workers/offline-tiles/src/grid.ts",
 		import.meta.url,
 	),
 );

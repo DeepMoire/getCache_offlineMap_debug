@@ -19,7 +19,7 @@ import {
 	probeTarget,
 	setWorkerTarget,
 	type WorkerTarget,
-} from "../r2Worker/tilesHost";
+} from "../r2Worker/local_dev/tilesHost";
 
 let {
 	layers = [],
@@ -190,7 +190,10 @@ onMount(() => {
 	text-align: left;
 }
 .cfg-label {
-	flex: 0 1 auto;
+	/* Grows to fill the row so every .sw switch lands on the SAME right edge
+	   regardless of label length ("Fires" vs "Roads/water") — that drift is
+	   what reads as "toggles not lined up". */
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
