@@ -244,8 +244,8 @@ describe("THE BLOB — one radius, every zoom", () => {
 		const zoomLine = /BLOB_TILE_Z = (\d+)/.exec(
 			readFileSync(
 				fileURLToPath(
-					// Climbs out of the harness into ReTreever itself: the engine is
-				// vendored into the harness, but the Worker it must agree with
+					// Climbs out of rapper into ReTreever itself: the engine is
+				// vendored into rapper, but the Worker it must agree with
 				// lives in ReTreever/workers/.
 				new URL(
 					"../../../../../ReTreever/workers/offline-tiles/src/grid.ts",

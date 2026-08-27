@@ -15,12 +15,12 @@
  * ⚠️ If this fails, do not "fix" it by editing one copy. Copy the Worker's file
  * over the client's (or vice versa) so they are one definition again:
  *
- *     cp workers/offline-tiles/src/grid.ts harness/src/lib/map/getCache_OfflineMap/lib/contract/grid.ts
+ *     cp ReTreever/workers/offline-tiles/src/grid.ts getCache_OfflineMap/lib/contract/grid.ts
  *
  * They are two files only because the Worker and the app are separate build
  * roots with no shared package — not because they are allowed to differ.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { BLOB_TILE_Z, GRID_RADIUS_KM, cellOf, cellsFor } from "./grid";
@@ -43,8 +43,18 @@ const workerGrid = fileURLToPath(
 );
 const clientGrid = fileURLToPath(new URL("./grid.ts", import.meta.url));
 
+/**
+ * THE SKIP THE COMMENT ABOVE PROMISED, NOW ACTUALLY IMPLEMENTED.
+ *
+ * The note at the path said this test "SKIPS when ReTreever is absent (a
+ * standalone clone)". It did not: readFileSync ran unguarded, so a solo clone
+ * got ENOENT — a crash dressed as a failing contract, blaming the one thing
+ * the child is built to support. A comment is not a control flow statement.
+ */
+const haveWorker = existsSync(workerGrid);
+
 describe("the grid is ONE definition", () => {
-	it("⛔ the Worker's grid.ts and the client's are IDENTICAL", () => {
+	it.skipIf(!haveWorker)("⛔ the Worker's grid.ts and the client's are IDENTICAL", () => {
 		const worker = readFileSync(workerGrid, "utf8");
 		const client = readFileSync(clientGrid, "utf8");
 		expect(client).toBe(worker);

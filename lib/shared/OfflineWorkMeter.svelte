@@ -130,7 +130,7 @@ interface Props {
 	 * Every pin the host page knows about. Passed IN on purpose — this is
 	 * OFFLINE_MAP_SPEC.md rule 5's "a list of {lng, lat} and nothing else".
 	 * Reading mapStore from in here would couple the debugger to TinyBase and
-	 * cost it the portability that lets it move into the harness.
+	 * cost it the portability that lets it move into rapper.
 	 */
 	pins?: LngLatPin[];
 	/** The blob signature areas SHOULD hold, so the export can flag stale ones. */

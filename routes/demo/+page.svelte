@@ -1,12 +1,12 @@
 <script lang="ts">
 /**
- * /debug/map — the offline map engine, running on nothing.
+ * /offline/debug — the offline map engine, running on nothing.
  *
  * THIS PAGE IS THE POINT OF THE MIGRATION. It proves the engine has no hidden
  * ties to ReTreever: no TinyBase, no Supabase, no auth, no mapStore. Its entire
  * "database" is the PINS array below — three literals.
  *
- * A contractor clones the harness, runs `npm run dev`, opens this page, breaks
+ * A contractor clones rapper, runs `npm run dev`, opens this page, breaks
  * something, and hits `export json` for an AI-debuggable report. None of that
  * needs the private repo.
  *
@@ -591,7 +591,7 @@ onMount(() => {
 	background: #05101f;
 	border-radius: 40px;
 	/* With the hand hidden the phone has no edge, so it needs its own. Gold,
-	   3px, matching the harness bar's rule — the one deliberate bit of colour
+	   3px, matching the rapper bar's rule — the one deliberate bit of colour
 	   in the dull view. A host that supplies the hand sets --demo-bezel:none
 	   so the artwork provides the edge instead of doubling it. */
 	outline: var(--demo-bezel, 3px solid #f5a119);

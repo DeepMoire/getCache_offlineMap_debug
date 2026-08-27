@@ -27,7 +27,7 @@
  * {lng, lat} and nothing else." So pins arrive as a PARAMETER; this module
  * never reaches for mapStore or TinyBase. debugReport.portability.test.ts
  * fails the build if that ever changes — which is what keeps this liftable
- * into the harness without archaeology.
+ * into rapper without archaeology.
  */
 import {
 	BLOB_TILE_Z,

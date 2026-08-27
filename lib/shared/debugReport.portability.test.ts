@@ -12,7 +12,7 @@
  * it accumulated one convenient import at a time.
  *
  * So this test reads debugReport.ts's own import list and fails on anything
- * outside the allow-list. It is what makes moving the map into the harness a
+ * outside the allow-list. It is what makes moving the map into rapper a
  * mechanical lift instead of archaeology — and it fails the moment someone
  * reaches for mapStore because it was handy.
  */

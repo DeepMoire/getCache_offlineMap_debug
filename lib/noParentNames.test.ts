@@ -63,8 +63,38 @@ function sources(dir: string, out: string[] = []): string[] {
  */
 const BRAND_STRING = /Symbol\.for\(/;
 
+/**
+ * THE TRAILING DELIMITER USED TO BE `[/.]`, AND THAT WAS THE HOLE.
+ *
+ * Requiring a `/` or `.` AFTER the name only matches a parent in the MIDDLE of
+ * a path — `../ReTreever/src/...`. A parent at the END of a string sailed
+ * straight through, so all of these passed a green guard:
+ *
+ *     href="{GH}/rapper"
+ *     "https://github.com/Ground-Truth-Data/rapper"
+ *     <span>retreever</span>
+ *
+ * The GitHub link and the visible tier labels in routes/+layout.svelte are the
+ * most flagrant parent-naming in this repo and the guard reported zero.
+ *
+ * WHY IT SURVIVED: the self-test below proved exactly one shape — the same
+ * mid-path shape the regex was written from — so the blind spot could not be
+ * caught by the thing meant to catch it. A check that only tests the case it
+ * was designed for is a check that tests nothing. It now asserts a TERMINAL
+ * name too, which is the case that was missing.
+ *
+ * So the name may now be followed by a path separator, a string/JSX terminator,
+ * whitespace, or the end of the line.
+ *
+ * The LEADING side needed widening for the same reason. `href="{GH}/rapper"`
+ * puts a template-interpolation close — `}` — immediately before the slash, so
+ * a prefix list of only `../`, a quote or `(` did not match it either. Both
+ * ends of the pattern were written from path examples; a link built by
+ * interpolation is neither a path nor a bare literal, and it was the actual
+ * offender sitting in this repo.
+ */
 const PARENT_AS_LOCATION =
-	/(?:\.\.?\/|["'`(]\/?|https?:\/\/[^"'`\s]*)(?:ReTreever|rapper|vercel)[/.]/gi;
+	/(?:\.\.?\/|["'`({]\/?|\}\/|https?:\/\/[^"'`\s]*)(?:ReTreever|rapper|vercel)(?:[/.]|["'`)\s<]|$)/gi;
 
 describe("the child names no parent", () => {
 	it("no path, import or URL names ReTreever, rapper or vercel", () => {
@@ -78,10 +108,32 @@ describe("the child names no parent", () => {
 			// recognised — the first version tested one line at a time and
 			// missed `Symbol.for(\n  "retreever.safeCoveringTiles.installed")`.
 			const lines = text.split("\n");
+			/**
+			 * BLOCK COMMENTS SPAN LINES, so "is this line a comment?" cannot be
+			 * answered by looking at the line. `startsWith("*")` catches the
+			 * conventionally-starred middle of a JSDoc block and nothing else:
+			 * a CSS or prose block whose continuation lines are plainly indented
+			 * — as .pill's comment in routes/+layout.svelte is — reads as code
+			 * and its prose gets reported as a violation.
+			 *
+			 * That is the "cries wolf" failure this file's own BRAND_STRING note
+			 * warns about, so the state is tracked across lines instead. Prose
+			 * may name a parent; only a dependency may not.
+			 */
+			let inBlockComment = false;
 			for (const [i, line] of lines.entries()) {
 				const stmt = `${lines[i - 1] ?? ""}\n${line}`;
 				const t = line.trim();
-				if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) {
+				const wasInComment = inBlockComment;
+				// Opens and closes counted on THIS line, so a one-line /* */ is
+				// not treated as opening a block, and a line that closes one is
+				// still skipped (its text is comment up to the close).
+				const opens = (line.match(/\/\*/g) ?? []).length;
+				const closes = (line.match(/\*\//g) ?? []).length;
+				if (opens > closes) inBlockComment = true;
+				else if (closes > opens) inBlockComment = false;
+
+				if (wasInComment || t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) {
 					continue; // documentation, not a dependency
 				}
 				if (BRAND_STRING.test(stmt)) continue;
@@ -107,9 +159,24 @@ describe("the child names no parent", () => {
 
 	it("the check bites — a parent-named path is detected", () => {
 		// Without this, a broken regex silently passes everything above.
-		const bad = 'import x from "../ReTreever/src/lib/foo";';
 		const ok = 'import x from "$parent/siblings/getCache_OnlineMap/lib/foo";';
-		expect([...bad.matchAll(PARENT_AS_LOCATION)].length).toBeGreaterThan(0);
 		expect([...ok.matchAll(PARENT_AS_LOCATION)].length).toBe(0);
+
+		/**
+		 * BOTH SHAPES. The mid-path one is what the regex was born from; the
+		 * TERMINAL ones are what it silently missed for as long as it existed.
+		 * Losing either case re-opens the hole, so both are asserted by name.
+		 */
+		const bad = [
+			'import x from "../ReTreever/src/lib/foo";', // mid-path
+			'href="{GH}/rapper"', // terminal, in a string
+			'"https://github.com/Ground-Truth-Data/rapper"', // terminal, full URL
+		];
+		for (const b of bad) {
+			expect(
+				[...b.matchAll(PARENT_AS_LOCATION)].length,
+				`should have been flagged: ${b}`,
+			).toBeGreaterThan(0);
+		}
 	});
 });

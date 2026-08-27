@@ -107,6 +107,25 @@ if (typeof envTilesHost === "string" && envTilesHost.trim() !== "") {
 const GH = "https://github.com/Ground-Truth-Data";
 
 /**
+ * THE MOUNTING PARENT'S NAME — injected, never written here.
+ *
+ * This line used to read `href="{GH}/rapper"` with a visible "rapper" label,
+ * which is the one thing a child may not do: it has two possible parents and
+ * is published on its own, so naming one is a fact about this machine baked
+ * into an open-source repo. SharedNav.svelte already solved exactly this —
+ * its `selfRepo` prop carries the note "Told, not assumed: `rapper` was
+ * hardcoded here, which named a parent."
+ *
+ * It stayed hidden because noParentNames.test.ts could not SEE it: its regex
+ * demanded a `/` or `.` after the name, so a name at the end of a string never
+ * matched. The guard is fixed; this is the violation it was missing.
+ *
+ * Undefined in a solo clone — no parent, so no parent link, which is honest.
+ */
+const SELF_REPO = (import.meta.env as Record<string, string | undefined>)
+	.VITE_RAPPER_TIER;
+
+/**
  * THE MOUNTED CHILD — written by the installer, one per rapper.
  *
  * `views` is a LIST because one child is not one page: the offline map has a
@@ -126,9 +145,12 @@ const CHILD: Child = {
 	name: "offlineMap",
 	owner: "Get Cache",
 	logo: logoUrl,
-	repo: "getCache_offlineMap",
+	// Casing matters — this becomes a GitHub URL. It read "offlineMap"
+	// (lowercase o) while the repo and the folder are both "OfflineMap",
+	// so the link 404'd.
+	repo: "getCache_OfflineMap",
 	views: [
-		{ href: "/debug/map", label: "debugger" },
+		{ href: "/offline/debug", label: "debugger" },
 		{ href: "/offline", label: "offline map" },
 	],
 };
@@ -160,14 +182,14 @@ const child = CHILD;
  *
  */
 /**
- * THE SWITCH IS ALWAYS LIVE IN THE HARNESS. It used to be gated on
+ * THE SWITCH IS ALWAYS LIVE IN RAPPER. It used to be gated on
  * `parentHere` — measured by asking whether ReTreever's `--rt-bg` resolved.
- * In the harness it never does (no app.css here, by design), so the checkbox
+ * In rapper it never does (no app.css here, by design), so the checkbox
  * was permanently greyed: a switch that could not move, in the one place you
- * most need to see it move. Backwards. The harness is the SURROGATE PARENT —
+ * most need to see it move. Backwards. rapper is the SURROGATE PARENT —
  * it is precisely where both states must be viewable.
  *
- * So the harness now SUPPLIES the decor itself when the flag is on, and
+ * So rapper now SUPPLIES the decor itself when the flag is on, and
  * withholds it when off. That is what a surrogate does: it stands in.
  */
 // hitched=true reads as "rapper" is off — the pill LABELS the state, no boolean word.
@@ -178,10 +200,10 @@ let { children } = $props();
 </script>
 
 <svelte:head>
-	<!-- IDENTITY FOLLOWS THE CHILD. The harness is a surrogate parent: it has no
+	<!-- IDENTITY FOLLOWS THE CHILD. rapper is a surrogate parent: it has no
 	     brand of its own, so the tab shows whichever product the mounted child
-	     belongs to. This used to be the harness's favicon in app.html, which put an
-	     the harness mark on a Get Cache page. -->
+	     belongs to. This used to be the harness's favicon in app.html, which put a
+	     harness mark on a Get Cache page. -->
 	<title>{`${child.owner} — ${child.name}`}</title>
 	<link rel="icon" href={child.logo} />
 	{#if dev}
@@ -197,7 +219,7 @@ let { children } = $props();
 		</style>
 	{/if}
 	{#if dev && featureOn}
-		<!-- FEATURE FLAG ON — HITCHED. The harness stands in for the parent and
+		<!-- FEATURE FLAG ON — HITCHED. rapper stands in for the parent and
 		     lends the child its full-dress version: the child reads --host-decor
 		     and puts back its backdrop and hand, and the artwork then provides
 		     the phone's edge, so the plain gold bezel steps aside.
@@ -205,7 +227,7 @@ let { children } = $props();
 		     OFF sets NOTHING AT ALL. That is the point: unhitched is not a
 		     stripped-down variant we compute, it is simply the absence of a
 		     parent. What you see with the box unticked is what a developer who
-		     has never had ReTreever sees. The assets here are the HARNESS's own —
+		     has never had ReTreever sees. The assets here are RAPPER's own —
 		     imported at the top of this file, not fetched from ReTreever — and a
 		     surrogate supplies its own, or it is not a surrogate. -->
 		<!-- WHY THE URL IS INTERPOLATED AND NOT WRITTEN OUT.
@@ -255,9 +277,11 @@ let { children } = $props();
 		</nav>
 
 		<span class="right">
-			<a class="btn gh" href="{GH}/rapper" target="_blank" rel="noreferrer">
-				<img src={GH_ICON} alt="" /> rapper
-			</a>
+			{#if SELF_REPO}
+				<a class="btn gh" href="{GH}/{SELF_REPO}" target="_blank" rel="noreferrer">
+					<img src={GH_ICON} alt="" /> {SELF_REPO}
+				</a>
+			{/if}
 			<a class="btn gh" href="{GH}/{child.repo}" target="_blank" rel="noreferrer">
 				<img src={GH_ICON} alt="" /> {child.repo}
 			</a>
@@ -358,7 +382,7 @@ let { children } = $props();
 		color: #17170f;
 		font-weight: 700;
 	}
-	/* A view the harness cannot serve yet: shown so you know it exists, dead so
+	/* A view rapper cannot serve yet: shown so you know it exists, dead so
 	   you never click through to a 404. */
 	.btn.dead {
 		opacity: 0.35;

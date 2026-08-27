@@ -614,7 +614,7 @@ describe("offline tripwire 5 — the fire layer can never break the map", () => 
 // the identical area. Every 20 s, forever, until the session pack budget
 // tripped the download circuit breaker.
 //
-// The harness already mocks getVectorKeys as empty, so these fail on the old
+// The test harness already mocks getVectorKeys as empty, so these fail on the old
 // code and pass on the fix (presence now read from the v4 tile pile).
 describe("offline tripwire — a completed area is NEVER re-downloaded", () => {
 	it("second pass does NOT re-download an area whose tiles are already on disk", async () => {

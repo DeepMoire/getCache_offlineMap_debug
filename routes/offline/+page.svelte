@@ -2,7 +2,7 @@
 /**
  * /offline — the offline map WITHOUT the debug rails.
  *
- * Same page as /debug/map, same engine, same fixtures; `rails={false}` hides
+ * Same page as /offline/debug, same engine, same fixtures; `rails={false}` hides
  * the two debug panels. Deliberately NOT a second copy of the page: the engine
  * wiring is the part that drifts, and two copies of it would drift apart the
  * first time either one is touched.
