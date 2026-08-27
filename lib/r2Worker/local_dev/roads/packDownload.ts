@@ -307,6 +307,37 @@ async function idbPutMany(
 }
 
 /**
+ * DELETE ONE AREA'S TILES — the missing half of `idbPutMany`.
+ *
+ * ⛔ WHY THIS EXISTS. `pruneArea()` in bakeService.svelte.ts evicts an area and
+ * its comment says it "sheds ALL its data together" — it deleted the satellite
+ * image, the legacy vectors, the fires and the coverage record, and left the
+ * TILES on disk forever. Nothing else ever removed them, so every eviction
+ * leaked the whole tile payload of the area it evicted.
+ *
+ * The leak is bytes, not correctness: an orphan tile is still a valid tile for
+ * its own pin, so it never draws the wrong thing. But the eviction budget is
+ * there to bound what the app occupies, and an evictor that cannot actually
+ * free what it evicted does not bound anything.
+ *
+ * ONE TRANSACTION, like its write twin above — an eviction is all-or-nothing for
+ * the same reason a pack write is. A half-deleted area is a coverage record that
+ * says "gone" over tiles that are still there.
+ */
+export async function idbDeleteMany(keys: readonly string[]): Promise<void> {
+	if (!keys.length) return;
+	const db = await openDb();
+	await new Promise<void>((resolve, reject) => {
+		const tx = db.transaction(STORE, "readwrite");
+		const store = tx.objectStore(STORE);
+		for (const k of keys) store.delete(k);
+		tx.oncomplete = () => resolve();
+		tx.onerror = () => reject(tx.error);
+	});
+	db.close();
+}
+
+/**
  * EVERY stored tile's bytes. Full-pile read.
  *
  * codestyle-allow-blob-getall: ON-DEMAND ONLY — the /blobs stats page is the

@@ -106,18 +106,67 @@ function d2(aLng: number, aLat: number, bLng: number, bLat: number): number {
  * the answer is to draw BOTH — never to choose. Choosing is what made the
  * collision fix into a new kind of hole.
  */
+/**
+ * Does the tile `z/x/y` contain the stored tile at `address`?
+ *
+ * True when they are the SAME tile, or when `z/x/y` is an ancestor of it — a
+ * z5 tile contains 8×8 z8 tiles beneath it. Walking the stored address UP to
+ * the requested zoom is exact integer arithmetic (halve x and y per level), so
+ * there is no tolerance and no rounding to get wrong.
+ *
+ * Requests DEEPER than the stored level are not handled here on purpose:
+ * MapLibre overzooms upward by itself, so a z12 camera is served the z8 tile
+ * by the renderer, not by this lookup.
+ */
+function containsAddress(
+	z: number,
+	x: number,
+	y: number,
+	address: string,
+): boolean {
+	const [szRaw, sxRaw, syRaw] = address.split("/");
+	const sz = Number(szRaw);
+	let sx = Number(sxRaw);
+	let sy = Number(syRaw);
+	if (!Number.isFinite(sz) || !Number.isFinite(sx) || !Number.isFinite(sy)) {
+		return false;
+	}
+	// Stored is shallower than asked — the renderer's own overzoom covers that.
+	if (sz < z) return false;
+	// Climb the stored tile up to the requested zoom; each level halves.
+	for (let level = sz; level > z; level--) {
+		sx = Math.floor(sx / 2);
+		sy = Math.floor(sy / 2);
+	}
+	return sx === x && sy === y;
+}
+
 export function keysForAddress(
 	stored: Iterable<string>,
 	z: number,
 	x: number,
 	y: number,
 ): string[] {
-	const address = `${z}/${x}/${y}`;
 	const centre = tileCentre(z, x, y);
 	const hits: Array<{ key: string; d: number }> = [];
 	for (const key of stored) {
 		const pt = parsePinTileKey(key);
-		if (!pt || pt.address !== address) continue;
+		if (!pt) continue;
+		// ⛔ NOT A STRING COMPARE. A ZOOMED-OUT ADDRESS CONTAINS THE STORED ONE.
+		//
+		// This was `pt.address !== address`, an exact `z/x/y` match, which meant
+		// a request for a SHALLOWER tile than the one on disk found nothing.
+		// Blobs are stored at BLOB_TILE_Z (8); the moment the camera sat above
+		// z8 every lookup missed and the map went blank — with megabytes of
+		// roads on disk. MEASURED 27 Aug 2026, both lines seconds apart:
+		//     ✅ 2 road layer(s) drawing from 961 blob(s)
+		//     961 blob(s) on disk but NO ROADS DRAWING — check the zoom span
+		//
+		// A z5 tile geometrically CONTAINS the z8 tiles under it, so the honest
+		// answer to "what roads are in this z5 tile?" is every stored tile whose
+		// footprint falls inside it. MapLibre only overzooms UP, so without this
+		// there is no way to draw anything below the stored level at all.
+		if (!containsAddress(z, x, y, pt.address)) continue;
 		hits.push({ key, d: d2(centre.lng, centre.lat, pt.lng, pt.lat) });
 	}
 	// Nearest FIRST — not to exclude anyone, only so the pin the user is looking

@@ -83,7 +83,7 @@ import maplibregl from "maplibre-gl";
 
 import { vlog } from "../../shared/verboseLog";
 
-import { BLOB_MAX_Z, BLOB_MIN_Z } from "../../contract/roadBlob";
+import { BLOB_MAX_Z } from "../../contract/roadBlob";
 
 import { idbGetTileForAddress } from "../../r2Worker/local_dev/roads/packDownload";
 
@@ -112,7 +112,26 @@ export const RAW_TILE_URL = `${RAW_SCHEME}://disc/{z}/{x}/{y}`;
  * two lines read that rule; they do not restate it. Change `BLOB_ZOOMS` and
  * this span follows automatically.
  */
-export const RAW_MIN_Z = BLOB_MIN_Z;
+/**
+ * ⛔ THE RENDER FLOOR IS NOT THE STORAGE LEVEL. They were one number, and that
+ * was the bug.
+ *
+ * Blobs are STORED at BLOB_TILE_Z (8). `minzoom` used to be that same 8, and
+ * because MapLibre only ever overzooms UP, the map went blank the instant the
+ * camera rose above z8 — with the roads sitting on disk the whole time.
+ * MEASURED 27 Aug 2026, two lines seconds apart on /offline/debug:
+ *     ✅ 2 road layer(s) drawing from 961 blob(s)
+ *     961 blob(s) on disk but NO ROADS DRAWING — check the zoom span
+ *
+ * z5 is the user's own number, already written into blob.ts: "if it stopped at
+ * 5 that would be perfect". Going shallower costs nothing — it is the SAME
+ * single stored tile at a coarser address, and `keysForAddress` resolves an
+ * ancestor address to the stored tiles inside it.
+ *
+ * RAW_MAX_Z stays the stored level: above it MapLibre overzooms on its own,
+ * which is free and is what gives constant presence at every zoom.
+ */
+export const RAW_MIN_Z = 5;
 export const RAW_MAX_Z = BLOB_MAX_Z;
 
 let installed = false;
@@ -318,8 +337,9 @@ function notFound(url: string): Error {
  * MapLibre re-requests that level and overzooms for free, which is the
  * "jumping between layers" the product explicitly accepts.
  *
- * ⛔ Do not hand-write either bound. They are `BLOB_MIN_Z`/`BLOB_MAX_Z`, so a
- * change to `BLOB_ZOOMS` moves them automatically and they cannot drift.
+ * ⛔ `maxzoom` is `BLOB_MAX_Z` and follows `BLOB_ZOOMS` automatically.
+ * `minzoom` is deliberately NOT tied to it — see RAW_MIN_Z above for why the
+ * render floor and the storage level must be allowed to differ.
  */
 export function rawSourceSpec(): maplibregl.VectorSourceSpecification {
 	return {
@@ -337,10 +357,20 @@ export function rawSourceSpec(): maplibregl.VectorSourceSpecification {
 		// requested", and MapLibre then asks for a z0..z9 tile that the pack does
 		// not contain: 404, blank map, no error. Overzoom only ever goes UP.
 		//
-		// So this must be exactly the shallowest level the pack HOLDS. The pack
-		// now stores z10..z15 (shallower levels GENERATED from z15, not read from
-		// the archive), so below z10 there is deliberately nothing — that is the
-		// IMAGE tier's range, not vector's.
+		// So this must be exactly the shallowest level the pack HOLDS.
+		//
+		// ⛔ CORRECTED 27 Aug 2026. This read "the pack now stores z10..z15",
+		// which has been FALSE since the pack rewrite: `BLOB_ZOOMS = [8]`
+		// (workers/offline-tiles/src/blob.ts) means the pack stores ONE zoom, z8,
+		// and RAW_MIN_Z/RAW_MAX_Z above derive from it. A z5-z7 request resolves
+		// to its stored z8 descendants via containsAddress(); deeper zooms come
+		// from MapLibre overzooming z8 upward.
+		//
+		// The cost of leaving it stale: a "z10..z15" claim makes 1-4 tiles per pin
+		// look like the debris of failed downloads rather than the correct count
+		// for a 30 km circle on a z8 grid, and sent a blank-map investigation at
+		// the write path — which is atomic and was never broken — instead of the
+		// read path. A bold, specific, wrong comment gets believed.
 		minzoom: RAW_MIN_Z,
 		maxzoom: RAW_MAX_Z,
 	};

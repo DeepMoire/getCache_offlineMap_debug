@@ -113,6 +113,23 @@ export function attachDoubleTapToPin(
 		teardown(); // clear any prior outline
 		const hit = opts.identify?.(e.point) ?? null;
 		if (hit?.geometry) opts.onSelect?.(hit.geometry);
+		// ⛔ THIS LINE IS NOT GATED BY `DEBUG`, ON PURPOSE.
+		//
+		// A tap that does nothing visible is indistinguishable from a tap the app
+		// never received, and the whole gesture layer was silent by default
+		// (`DEBUG = false` above), so "the pin doesn't drop" and "the pin dropped
+		// and the download failed" produced the SAME empty console. That
+		// ambiguity cost hours on 27 Aug 2026.
+		//
+		// One line per double-tap is not noise: a double-tap is a deliberate,
+		// low-frequency user action, unlike the pointer stream above it, which is
+		// exactly why that stream stays behind DEBUG and this does not. It is the
+		// first link in the chain the [tiles] and [offline-bake] lines continue,
+		// so a silent console after this line means the failure is downstream.
+		console.info(
+			`[pin] 📍 double-tap at ${e.lngLat.lng.toFixed(5)}, ${e.lngLat.lat.toFixed(5)} — seeding`,
+			{ handler: opts.onMeasureSeed ? "attached" : "MISSING (nothing will happen)" },
+		);
 		// Seed the Snake Ruler's first node at the tap. It renders the bullseye
 		// and shows the Save (drop pin) / Share (copy GPS) popover for one point,
 		// or grows into a line/polygon as you drag.

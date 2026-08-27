@@ -40,13 +40,22 @@ let {
 } = $props();
 
 // ── WORKER TARGET ───────────────────────────────────────────────────────
-// TWO tiers, BOTH IN THE CLOUD — r2_prod and r2_dev. See the WorkerTarget
-// block in tilesHost.ts for what each is.
+// THREE tiers — r2_prod and r2_dev in the cloud, local_dev on the developer's
+// own machine. See the WorkerTarget block in tilesHost.ts for what each is.
 //
-// local_dev was REMOVED from this list on 27 Aug 2026, Chris's call: "delete
-// the local one, it's too much work." A row that only works while a terminal
-// stays open is a switch that is usually dead, and a dead switch reads as a
-// broken app — which is exactly how the day it was removed started.
+// local_dev was removed earlier on 27 Aug ("delete the local one, it's too
+// much work" — a row that only works while a terminal is open is usually dead,
+// and a dead switch reads as a broken app) and RESTORED the same day, because
+// removing it removed the only target an outside contributor can reach.
+// r2_prod and r2_dev both live on Chris's Cloudflare account; the key for them
+// is in Bitwarden and is never shared. A contributor runs `wrangler dev
+// --remote` against THEIR OWN free account and THEIR OWN bucket, which is what
+// local_dev points at. Without this row there is no way to test a Worker change
+// without Chris deploying it for you — which is not a contribution loop.
+//
+// The "dead switch reads as broken" worry is answered by the hint text and the
+// greyed-out state, not by hiding the row: absent looks like impossible,
+// greyed-out looks like not-running-yet, and only one of those is true.
 //
 // This list is the ONLY place a row is declared — probing, greying-out and
 // the fallback all read from it, so adding a tier is one entry, not four.
@@ -69,6 +78,11 @@ const TARGETS: {
 		id: "r2Dev",
 		label: "r2_dev",
 		hint: "tiles-dev.retreever.org — a DEPLOYED sandbox worker reading the same R2 data as r2_prod, so any difference between them is code, never data. No shipped phone ever reads it.",
+	},
+	{
+		id: "localDev",
+		label: "local_dev",
+		hint: "127.0.0.1:8787 — `npx wrangler dev --remote` in workers/offline-tiles. THE ONLY TARGET A CONTRIBUTOR CAN REACH: it runs against THEIR Cloudflare account and THEIR bucket, so nobody needs a key to this one. Greyed out until that terminal is running, which is expected, not broken.",
 	},
 ];
 
@@ -173,12 +187,6 @@ onMount(() => {
 	letter-spacing: 0.08em;
 	margin-bottom: 4px;
 }
-.cfg-subtitle {
-	color: #8f8a76;
-	letter-spacing: 0.06em;
-	font-size: 0.85em;
-	margin: 6px 0 2px;
-}
 .cfg-row {
 	display: flex;
 	align-items: center;
@@ -204,7 +212,12 @@ onMount(() => {
 	white-space: nowrap;
 }
 .cfg-row.sel {
-	color: #e8e8e8;
+	/* GOLD, not off-white. At #e8e8e8 the selected row sat one shade off the
+	   unselected ones and the whole group read as greyed-out/disabled — the
+	   switch looked broken when it was working. The colour has to carry the
+	   state as loudly as the pill does. */
+	color: #ffd24a;
+	font-weight: 600;
 }
 .cfg-row.dead {
 	opacity: 0.45;

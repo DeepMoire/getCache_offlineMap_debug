@@ -124,6 +124,12 @@ const ENV = import.meta.env as Record<string, string | undefined>;
 // possible parents — the exact thing noParentNames.test.ts forbids, and it
 // caught this line the moment it was ported in from the other child. Undefined
 // in a solo clone is the honest answer: there is no mounting tier to name.
+/**
+ * Empty when no second tier is injected — an npm install, where rapper has no
+ * sibling parent. Passed to SharedNav as `undefined` rather than "", so the
+ * component's own default (its repo name) applies: the self-link points at a
+ * repo that exists either way and must not go dark with the tier facts.
+ */
 const THIS_TIER = ENV.VITE_RAPPER_TIER ?? "";
 const OTHER_TIER = ENV.VITE_OTHER_TIER ?? "";
 const OTHER_ORIGIN = ENV.VITE_OTHER_ORIGIN;
@@ -255,13 +261,26 @@ let { children } = $props();
 		     after paint, and it would land AFTER the child has read --host-decor
 		     in its own onMount, so the backdrop could show up a frame late or
 		     not at all. Declared markup keeps all three applied together. -->
-		<style>
-			:root {
-				--host-decor: 1;
-				--demo-backdrop: url("{backdropUrl}");
-				--demo-bezel: none;
-			}
-		</style>
+		<!-- ⛔ NOT A <style> TAG. MEASURED 27 Aug 2026: the version above this
+		     one was
+		         <style>:root { --demo-backdrop: url("{backdropUrl}"); }</style>
+		     and the server logged, on every load,
+		         [404] GET /offline/%7BbackdropUrl%7D
+		     — `%7B...%7D` being `{backdropUrl}` url-encoded. Svelte does NOT
+		     interpolate inside a <style> element: its contents are raw CSS
+		     text, so the braces reached the browser verbatim and it fetched a
+		     file literally named "{backdropUrl}". The backdrop never loaded.
+
+		     The comment that used to sit here argued the value must be
+		     interpolated rather than written literally — correct, and it is
+		     exactly what a <style> tag cannot do. `svelte:element` with an
+		     inline style attribute IS interpolated, keeps the value a built
+		     asset URL, and still applies declaratively at paint time, which
+		     was the whole reason a JS-on-mount version was rejected. -->
+		<svelte:element
+			this="style"
+			>{`:root { --host-decor: 1; --demo-backdrop: url("${backdropUrl}"); --demo-bezel: none; }`}</svelte:element
+		>
 	{/if}
 </svelte:head>
 
@@ -287,12 +306,27 @@ let { children } = $props();
 		otherHost={OTHER_ORIGIN}
 		otherHome={OTHER_HOME}
 		routes={TIER_ROUTES}
-		selfRepo={THIS_TIER}
+		selfRepo={THIS_TIER || undefined}
 	/>
 	<!-- THE HITCH FLAG — this child's own control, not the tier switcher.
 	     Same pill SHAPE, different question: the switcher asks which tier is
 	     serving the page, this asks whether the surrogate parent is lending
-	     its decor. Kept here because only this child has the decor to lend. -->
+	     its decor. Kept here because only this child has the decor to lend.
+
+	     WORKSPACE ONLY, and NOT gated on `dev` like the bar above it.
+	     `import.meta.env.DEV` is TRUE for `npm run dev`, which is exactly what
+	     someone who installed this from npm runs — so this control shipped to
+	     them, offering a choice between "retreever" and "rapper" when they have
+	     neither. It is also meaningless on a deployed build, for the same
+	     reason: the thing it toggles is which HostPorts fixture is wired in
+	     while developing against the two tiers side by side.
+
+	     `THIS_TIER` is the honest signal, and it is one already computed: it
+	     comes from the mounting parent's injected tier facts, which rapper now
+	     emits only when a sibling parent exists on disk. Empty in an npm
+	     install and empty in a deployed build; set only in the workspace this
+	     control is for. -->
+	{#if THIS_TIER}
 	<div class="hitch">
 		<button
 			type="button"
@@ -303,6 +337,7 @@ let { children } = $props();
 			<span class:on={hitched}>retreever</span><span class:on={!hitched}>rapper</span>
 		</button>
 	</div>
+	{/if}
 {/if}
 
 <main>
@@ -310,99 +345,6 @@ let { children } = $props();
 </main>
 
 <style>
-	/* A child may own the whole viewport — the offline demo's stage is
-	   position:fixed, which ignores a header in normal flow. So the bar is fixed
-	   too and declares its height via --host-chrome. */
-	header {
-		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		z-index: 10000;
-		height: var(--host-chrome);
-		box-sizing: border-box;
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		padding: 0 1.1rem;
-		/* Same chrome as the real ReTreever / Get Cache navbar: near-black bar,
-		   gold rule underneath. Values taken from ReTreever's app.css
-		   (--rt-bg #0b0b0b, --color-gold-bar #f5a119) rather than eyeballed,
-		   but hard-coded here — the bar must look identical when the parent's
-		   tokens are stripped by the feature flag. */
-		background: #0b0b0b;
-		border-bottom: 3px solid #f5a119;
-		font: 500 13px/1 "JetBrains Mono", ui-monospace, monospace;
-		color: #c9c9d1;
-	}
-	.left,
-	.right {
-		display: flex;
-		align-items: center;
-		gap: 0.55rem;
-		flex: 1;
-	}
-	.right {
-		justify-content: flex-end;
-	}
-	.logo {
-		height: 48px;
-		width: auto;
-		display: block;
-	}
-	.title {
-		font-size: 28px;
-		font-weight: 700;
-		letter-spacing: 0.01em;
-		/* Gold display title, like GET CA¢HE / ReTreever on the real bars.
-		   --color-gold-shard, hard-coded so the flag cannot strip it. */
-		color: #f0b60a;
-		white-space: nowrap;
-	}
-	.title.dim {
-		color: #6b6b78;
-		font-size: 20px;
-	}
-	.views {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-	.btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.38rem 0.7rem;
-		border: 1px solid #33333d;
-		border-radius: 5px;
-		background: #1a1a20;
-		color: #d8d8e0;
-		text-decoration: none;
-		white-space: nowrap;
-	}
-	.btn:hover {
-		background: #26262e;
-		border-color: #45454f;
-	}
-	.btn.on {
-		background: #f0b60a;
-		border-color: #f0b60a;
-		color: #17170f;
-		font-weight: 700;
-	}
-	/* A view rapper cannot serve yet: shown so you know it exists, dead so
-	   you never click through to a 404. */
-	.btn.dead {
-		opacity: 0.35;
-		cursor: not-allowed;
-	}
-	.btn.gh img {
-		height: 15px;
-		width: 15px;
-		display: block;
-		/* The mark is solid black; invert it to read on a dark bar. */
-		filter: invert(1);
-	}
 	/* THE PILL. Two halves in one rounded box, states the FACT ("retreever" /
 	   "rapper") instead of a bare checkbox with a caption. One state is always
 	   lit; the lit half names which HostPorts object is live right now. */

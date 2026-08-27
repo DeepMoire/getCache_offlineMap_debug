@@ -188,8 +188,33 @@ export function tilesHost(): string | null {
  *  would fetch the literal string "null/pack", which is a silent wrong URL. */
 export function packUrl(): string | null {
 	const h = tilesHost();
+	// SAY WHERE THE BLOB IS COMING FROM, OR WHY IT ISN'T COMING.
+	//
+	// A null host is the single most expensive silent failure in this
+	// subsystem: the download is skipped BEFORE the network, so DevTools >
+	// Network shows nothing at all, and "no request" is indistinguishable
+	// from "request failed" when you are staring at an empty map. The only
+	// prior signal was one console.info at boot that reads as a config note.
+	//
+	// Logged on STATE CHANGE, not per call — packUrl() is hit on every bake
+	// slice, and a line per slice is the noise that buries the signal.
+	if (h !== lastAnnouncedPackHost) {
+		lastAnnouncedPackHost = h;
+		if (h === null) {
+			console.error(
+				`[tiles] ⛔ NO HOST for target "${getWorkerTarget()}" — no /pack request will be sent. ` +
+					"Nothing will appear in the Network tab. Set VITE_TILES_HOST (or pick a reachable target).",
+			);
+		} else {
+			console.info(`[tiles] ✅ /pack will be fetched from ${h}`);
+		}
+	}
 	return h === null ? null : `${h}/pack`;
 }
+
+/** Last host packUrl() spoke about, so it reports transitions and not every
+ *  call. undefined = never announced; null = announced as unconfigured. */
+let lastAnnouncedPackHost: string | null | undefined;
 
 /** Wildfire hotspots. The Worker proxies NASA FIRMS so the API key stays
  *  server-side. null when unconfigured — see packUrl(). */
