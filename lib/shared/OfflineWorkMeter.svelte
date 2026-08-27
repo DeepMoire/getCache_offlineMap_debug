@@ -4,9 +4,14 @@
   Renders NOTHING outside dev. Sits top-left over the map, small enough to
   ignore and specific enough to settle an argument.
 
-  It mounts on the offline map AND on the online map (/mobile/map) on purpose:
-  the whole offline-cost question is a COMPARISON against the online route, and
-  you cannot compare an instrumented route against a blind one.
+  DEBUG ROUTES ONLY. It mounts on the offline route and on the online map's
+  DEBUG route (/map/debug) — never on the plain /map a user opens. It used to
+  mount on both, arguing that the offline-cost question is a COMPARISON and you
+  cannot compare an instrumented route against a blind one. That is still true,
+  and still satisfied: the comparison baseline is /map/debug, which mounts this
+  same component. What was wrong was putting the instrument on the product.
+  "dev only" is not a narrow enough gate when the whole app is dev while it is
+  being built.
 
   HOW TO READ IT, sitting still and touching nothing:
     • ⚠ N INSTANCES        → STOP. Another tab of this app is live; every

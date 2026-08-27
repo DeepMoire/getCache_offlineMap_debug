@@ -133,7 +133,7 @@ const child = CHILD;
  * So the harness now SUPPLIES the decor itself when the flag is on, and
  * withholds it when off. That is what a surrogate does: it stands in.
  */
-// hitched=true reads as "harness" is off — the pill LABELS the state, no boolean word.
+// hitched=true reads as "rapper" is off — the pill LABELS the state, no boolean word.
 let hitched = $state(true);
 const featureOn = $derived(hitched);
 
@@ -230,7 +230,7 @@ let { children } = $props();
 				onclick={() => (hitched = !hitched)}
 				title="Which HostPorts object is wired in right now — retreeverPorts.ts (proprietary, in ReTreever) or the child's own literal fixture. See docs/TODO.md 'The pill'."
 			>
-				<span class:on={hitched}>retreever</span><span class:on={!hitched}>harness</span>
+				<span class:on={hitched}>retreever</span><span class:on={!hitched}>rapper</span>
 			</button>
 		</span>
 	</header>
@@ -335,7 +335,7 @@ let { children } = $props();
 		filter: invert(1);
 	}
 	/* THE PILL. Two halves in one rounded box, states the FACT ("retreever" /
-	   "harness") instead of a bare checkbox with a caption. One state is always
+	   "rapper") instead of a bare checkbox with a caption. One state is always
 	   lit; the lit half names which HostPorts object is live right now. */
 	.pill {
 		display: inline-flex;
