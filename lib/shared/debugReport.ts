@@ -128,7 +128,6 @@ export interface DebugReport {
 		userAgent: string;
 		devicePixelRatio: number;
 	};
-	contamination: { tabs: number; peers: number; contaminated: boolean };
 	heap: {
 		nowMb: number | null;
 		lowMb: number | null;
@@ -227,8 +226,6 @@ function summarise(rec: CoverageRecord, currentVersion: string | null): AreaSumm
  *  store, so this module stays free of Svelte state and stays portable. */
 export interface LivePanelState {
 	route?: string;
-	tabs?: number;
-	peers?: number;
 	heapNowMb?: number | null;
 	heapLowMb?: number | null;
 	heapPeakMb?: number | null;
@@ -270,8 +267,6 @@ export async function collectDebugReport(
 		(p) => !haveKeys.has(`${p.lng.toFixed(4)},${p.lat.toFixed(4)}`),
 	);
 
-	const tabs = live.tabs ?? 1;
-	const peers = live.peers ?? 0;
 
 	return {
 		schema: DEBUG_REPORT_SCHEMA,
@@ -286,11 +281,6 @@ export async function collectDebugReport(
 				typeof navigator === "undefined" ? "" : navigator.userAgent,
 			devicePixelRatio:
 				typeof window === "undefined" ? 1 : window.devicePixelRatio,
-		},
-		contamination: {
-			tabs,
-			peers,
-			contaminated: tabs > 1 || peers > 0,
 		},
 		heap: {
 			nowMb: live.heapNowMb ?? null,
@@ -336,7 +326,6 @@ export interface FocusedBlobReport {
 	capturedAt: string;
 	route: string;
 	env: DebugReport["env"];
-	contamination: DebugReport["contamination"];
 	heap: DebugReport["heap"];
 	layers: DebugReport["layers"];
 	/** The focused blob's full geometry — corners, reach, offset — same fields
@@ -353,8 +342,6 @@ export async function collectFocusedBlobReport(
 	const sorted = [...records].sort(
 		(a, b) => (b.lastTouched ?? 0) - (a.lastTouched ?? 0),
 	);
-	const tabs = live.tabs ?? 1;
-	const peers = live.peers ?? 0;
 
 	return {
 		schema: DEBUG_REPORT_SCHEMA,
@@ -368,11 +355,6 @@ export async function collectFocusedBlobReport(
 			userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
 			devicePixelRatio:
 				typeof window === "undefined" ? 1 : window.devicePixelRatio,
-		},
-		contamination: {
-			tabs,
-			peers,
-			contaminated: tabs > 1 || peers > 0,
 		},
 		heap: {
 			nowMb: live.heapNowMb ?? null,

@@ -4,14 +4,18 @@
   Renders NOTHING outside dev. Sits top-left over the map, small enough to
   ignore and specific enough to settle an argument.
 
-  DEBUG ROUTES ONLY. It mounts on the offline route and on the online map's
-  DEBUG route (/map/debug) — never on the plain /map a user opens. It used to
-  mount on both, arguing that the offline-cost question is a COMPARISON and you
-  cannot compare an instrumented route against a blind one. That is still true,
-  and still satisfied: the comparison baseline is /map/debug, which mounts this
-  same component. What was wrong was putting the instrument on the product.
-  "dev only" is not a narrow enough gate when the whole app is dev while it is
-  being built.
+  DEBUG ROUTES ONLY — /offline/debug and /map/debug. Never on the plain
+  /offline or /map a user opens.
+
+  It used to mount on both product routes too, arguing that the offline-cost
+  question is a COMPARISON and you cannot compare an instrumented route against
+  a blind one. That is still true, and still satisfied: both debug routes mount
+  this same component, so the comparison is debug-vs-debug. What was wrong was
+  putting the instrument on the product — a panel of run counts and heap bars
+  covering the map on the route that IS the thing being measured.
+
+  "dev only" was never a narrow enough gate, because the whole app is dev while
+  it is being built. The gate is the ROUTE.
 
   HOW TO READ IT, sitting still and touching nothing:
     • ⚠ N INSTANCES        → STOP. Another tab of this app is live; every
@@ -28,13 +32,6 @@
 import { dev } from "$app/environment";
 import { onMount } from "svelte";
 import { workStats, payloadStats, resetWorkStats } from "./workMeter.svelte";
-import {
-	startInstanceWatch,
-	otherInstances,
-	startPortWatch,
-	devPortCounts,
-	totalDevTabs,
-} from "./instanceWatch.svelte";
 import { subscribeOfflineBake } from "../onPhone/bake/bakeService.svelte";
 import {
 	HEAP_NOTE,
@@ -127,7 +124,7 @@ $effect(() => {
 });
 
 interface Props {
-	/** Which map this is, shown to OTHER tabs so a peer row names its route. */
+	/** Which map this is, used to label the report. */
 	route?: string;
 	/**
 	 * Every pin the host page knows about. Passed IN on purpose — this is
@@ -191,8 +188,6 @@ function flash(action: "copied" | "saved") {
 async function buildReport() {
 	return collectFocusedBlobReport({
 		route,
-		tabs,
-		peers: peers.length,
 		heapNowMb: heap,
 		heapLowMb: floor,
 		heapPeakMb: peak,
@@ -200,6 +195,20 @@ async function buildReport() {
 		layers: layers.map((l) => ({ key: l.key, on: l.on })),
 	});
 }
+
+let exportOpen = $state(false);
+
+// Tap-outside closes the export popup. Bound only while open, matching
+// SharePicker's behaviour on the Get Cache side.
+$effect(() => {
+	if (!exportOpen) return;
+	function offClick(e: MouseEvent) {
+		const t = e.target as HTMLElement | null;
+		if (!t?.closest?.(".export-wrap")) exportOpen = false;
+	}
+	window.addEventListener("click", offClick, true);
+	return () => window.removeEventListener("click", offClick, true);
+});
 
 async function copyJson() {
 	if (exporting) return;
@@ -246,15 +255,6 @@ async function downloadJson() {
 let now = $state(Date.now());
 let open = $state(true);
 let host: HTMLElement | undefined = $state();
-
-// Join the roll call. Dev-gated inside startInstanceWatch, so this is a no-op
-// in production even though the call site is unconditional.
-onMount(() => startInstanceWatch(route));
-onMount(() => startPortWatch());
-
-const peers = $derived(otherInstances());
-const ports = $derived(devPortCounts());
-const tabs = $derived(totalDevTabs());
 
 /**
  * Live JS heap, if the browser exposes it (Chromium does). This is the
@@ -416,58 +416,73 @@ function fmtKb(kb: number): string {
 				></span>
 				MAP DEBUGGER {open ? "▾" : "▸"}
 			</button>
-			<div class="export-group">
+			<!-- ONE trigger, not two slabs. Two full-width gold buttons that
+			     differed only in verb ate the whole header and stamped the blob
+			     name twice. This is Get Cache's SharePicker shape — a small
+			     outlined icon button that opens a popup of choices — hand-built
+			     because the open-core boundary bans importing $lib/mobile
+			     components into this child. -->
+			<div class="export-wrap">
 				<button
-					class="export"
-					class:did={justDid === "copied"}
-					onclick={copyJson}
+					class="export-trigger"
+					class:did={justDid !== null}
+					class:on={exportOpen}
+					onclick={() => (exportOpen = !exportOpen)}
 					disabled={exporting}
-					title="Copy the focused blob's metadata as JSON"
+					aria-haspopup="menu"
+					aria-expanded={exportOpen}
+					title="Export this blob's metadata as JSON"
 				>
-					<span class="ej-main">{justDid === "copied" ? "✓ copied" : exportMsg || (exporting ? "…" : "copy json")}</span>
-					{#if focusedBlobName}
-						<span class="ej-sub">{focusedBlobName}</span>
+					{#if justDid !== null}
+						<span class="et-ok">✓</span>
+					{:else if exporting}
+						<span class="et-ok">…</span>
+					{:else}
+						<!-- Share/upload glyph, same silhouette as the Get Cache
+						     export icon on /inbox. -->
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<path
+								d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4.5 14v4.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V14"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							/>
+						</svg>
 					{/if}
 				</button>
-				<button
-					class="export"
-					class:did={justDid === "saved"}
-					onclick={downloadJson}
-					disabled={exporting}
-					title="Download the focused blob's metadata as JSON"
-				>
-					<span class="ej-main">{justDid === "saved" ? "✓ saved" : exportMsg || (exporting ? "…" : "download")}</span>
-					{#if focusedBlobName}
-						<span class="ej-sub">{focusedBlobName}</span>
-					{/if}
-				</button>
-			</div>
-		</div>
 
-		<!-- THE INSTANCE LINE. ALWAYS shown, never hidden by collapse.
-		     A detector that only speaks when something is wrong is
-		     indistinguishable from a detector that is broken — "1 instance ·
-		     clean" is the reading that tells you it is actually working AND
-		     that this measurement counts. -->
-		<div class="inst" class:bad={peers.length > 0 || tabs > 1}>
-			{#if peers.length > 0 || tabs > 1}
-				⚠ {Math.max(peers.length + 1, tabs)} TABS — readings contaminated
-			{:else}
-				✓ 1 tab · clean · /{route}
-			{/if}
-			<div class="dupe-list">
-				{#each peers as p (p.id)}
-					<div>· same-origin tab on /{p.route}</div>
-				{/each}
-				<!-- Per-port truth from the dev servers themselves. This is what
-				     catches a leftover :4173 preview tab and a private window —
-				     neither of which BroadcastChannel can see. -->
-				{#each ports as p (p.port)}
-					<div class:warn={p.clients > 1}>
-						· :{p.port} — {p.clients}
-						{p.clients === 1 ? "tab" : "tabs"}
+				{#if exportOpen}
+					<!-- The blob name lives HERE, once, as the popup's heading —
+					     not stamped on every button face. -->
+					<div class="export-menu" role="menu">
+						{#if focusedBlobName}
+							<div class="em-head">{focusedBlobName}</div>
+						{/if}
+						<button
+							class="em-opt em-opt--active"
+							onclick={() => {
+								exportOpen = false;
+								copyJson();
+							}}
+						>
+							copy json
+						</button>
+						<button
+							class="em-opt"
+							onclick={() => {
+								exportOpen = false;
+								downloadJson();
+							}}
+						>
+							download
+						</button>
+						{#if exportMsg}
+							<div class="em-err">{exportMsg}</div>
+						{/if}
 					</div>
-				{/each}
+				{/if}
 			</div>
 		</div>
 
@@ -775,42 +790,12 @@ tr.hot .name {
 	color: var(--muted);
 	margin-top: 3px;
 }
-/* The instance line is ALWAYS present — green when clean so you can trust it,
-   loud red when not, because that one condition silently invalidates every
-   other number in the panel. */
-.inst {
-	margin-top: 12px;
-	padding: 9px 13px;
-	border-radius: 9px;
-	background: rgba(127, 191, 106, 0.08);
-	border: 1px solid rgba(127, 191, 106, 0.4);
-	color: var(--green);
-	font-weight: 600;
-	max-width: 100%;
-	white-space: normal;
-}
-.inst.bad {
-	background: rgba(226, 85, 63, 0.1);
-	border-color: var(--red);
-	color: var(--red);
-	font-weight: 700;
-}
 .hint {
 	color: var(--muted2);
 	font-size: 11px;
 	margin-top: 2px;
 	max-width: 100%;
 	white-space: normal;
-}
-.dupe-list {
-	font-weight: 400;
-	color: var(--muted);
-	margin-top: 4px;
-	font-size: 11px;
-}
-.dupe-list .warn {
-	color: var(--amber);
-	font-weight: 700;
 }
 /* MEMORY block — three bar rows (now/avg/peak) + a session sparkline,
    matched to the design handoff's .memrow/.sparkwrap layout. */
@@ -996,83 +981,149 @@ tr.hot .name {
 	flex: 1 1 auto;
 	min-width: 0;
 }
-.export-group {
+.export-wrap {
 	flex: 0 0 auto;
-	display: flex;
-	gap: 6px;
+	position: relative;
+	display: inline-flex;
 }
-/* Same gradient/bevel/glow recipe as Get Cache's .rt-gold-btn (app.css) —
-   that class lives on the ReTreever side and this child cannot import it
-   (open-core boundary), so the look is hand-matched here instead. */
-.export {
+/* OUTLINED icon button — the Get Cache export affordance. Gold ink on a gold
+   hairline, not a gold fill: the fill is reserved for the DEFAULT choice
+   inside the popup, so the loud element is the commit, not the opener. */
+.export-trigger {
 	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 34px;
+	height: 30px;
+	padding: 0;
+	border-radius: 9px;
+	border: 1px solid #e8b923;
+	background: transparent;
+	color: #e8b923;
+	cursor: pointer;
+	font: inherit;
+	transition:
+		background 80ms ease,
+		transform 80ms ease;
+}
+.export-trigger svg {
+	width: 18px;
+	height: 18px;
+	display: block;
+}
+.export-trigger:hover:not(:disabled),
+.export-trigger.on {
+	background: rgba(232, 185, 35, 0.14);
+}
+.export-trigger:active:not(:disabled) {
+	transform: translateY(1px);
+}
+.export-trigger:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+.export-trigger .et-ok {
+	font-weight: 800;
+	font-size: 14px;
+	line-height: 1;
+}
+/* Popup of formats, anchored under the trigger. In-flow (not portaled) —
+   the panel is fixed-position and never clips at this corner, so the
+   portal machinery SharePicker needs isn't warranted here. */
+.export-menu {
+	position: absolute;
+	top: calc(100% + 8px);
+	right: 0;
+	z-index: 40;
 	display: flex;
 	flex-direction: column;
-	align-items: center;
-	gap: 1px;
-	border: none;
-	border-radius: 9px;
-	font: inherit;
-	font-family: "Inter", -apple-system, sans-serif;
-	padding: 6px 14px;
-	cursor: pointer;
+	gap: 5px;
+	padding: 0.5rem;
+	border-radius: 10px;
+	background: rgba(10, 10, 10, 0.95);
+	border: 1px solid rgba(232, 185, 35, 0.5);
+	box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
 	white-space: nowrap;
+	animation: export-menu-in 120ms ease-out;
+}
+/* The blob name, ONCE — as the popup's heading. */
+.em-head {
+	font-family: "JetBrains Mono", ui-monospace, monospace;
+	font-size: 9.5px;
+	font-weight: 600;
+	color: var(--muted, #8b8b8b);
+	padding: 0 2px 2px;
+}
+.em-opt {
+	text-align: left;
+	padding: 0.5rem 0.9rem;
+	border-radius: 8px;
+	border: 1px solid transparent;
+	background: transparent;
+	color: #e8b923;
+	font-family: "Inter", -apple-system, sans-serif;
+	font-size: 12.5px;
+	font-weight: 700;
+	cursor: pointer;
+}
+.em-opt:hover {
+	background: rgba(232, 185, 35, 0.14);
+}
+/* The DEFAULT choice wears the full gold — same gradient/bevel recipe as
+   Get Cache's .rt-gold-btn, hand-matched because the open-core boundary
+   bans importing it. */
+.em-opt--active {
 	background: linear-gradient(180deg, #f5d565 0%, #e8b923 100%);
+	border-color: transparent;
+	color: #1a1405;
 	box-shadow:
 		0 2px 0 #b8901c,
 		0 6px 14px rgba(232, 185, 35, 0.25),
 		inset 0 1px 0 rgba(255, 255, 255, 0.45);
-	transition:
-		transform 80ms ease,
-		box-shadow 80ms ease,
-		background 80ms ease;
 }
-.export,
-.export * {
-	color: #1a1405;
+.em-opt--active:hover {
+	background: linear-gradient(180deg, #f5d565 0%, #e8b923 100%);
 }
-.export:active:not(:disabled) {
-	background: linear-gradient(180deg, #c9a028 0%, #e8b923 100%);
-	box-shadow:
-		0 1px 0 #b8901c,
-		0 2px 6px rgba(232, 185, 35, 0.15),
-		inset 0 1px 0 rgba(255, 255, 255, 0.15);
-	transform: translateY(1px);
+/* Fail LOUD (spec rule 3) — the error keeps its home now the button face
+   no longer carries the message. */
+.em-err {
+	font-size: 10px;
+	color: var(--red, #e2553f);
+	max-width: 200px;
+	white-space: normal;
+	padding: 0 2px;
 }
-.export .ej-main {
-	font-weight: 800;
-	font-size: 12.5px;
-}
-.export .ej-sub {
-	font-family: "JetBrains Mono", ui-monospace, monospace;
-	font-size: 9.5px;
-	font-weight: 600;
-	opacity: 0.7;
-}
-.export:disabled {
-	opacity: 0.55;
-	cursor: default;
+@keyframes export-menu-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
 }
 /* Confirmation flash — a quick green pulse so a copy/download registers as a
    state change on the button itself, not just a word swap that's easy to
    miss. Reminds you the JSON is still on your clipboard after the flash
    fades, per the ask ("reminds me it's on my clipboard"). */
-.export.did {
+.export-trigger.did {
 	animation: export-flash 1.8s ease-out;
 }
 @keyframes export-flash {
 	0% {
-		background: linear-gradient(180deg, #9fe6a0 0%, #6fbf6a 100%);
-		box-shadow:
-			0 2px 0 #4a8f47,
-			0 6px 14px rgba(127, 191, 106, 0.35),
-			inset 0 1px 0 rgba(255, 255, 255, 0.45);
+		background: rgba(127, 191, 106, 0.9);
+		border-color: #6fbf6a;
+		color: #0d1a0c;
 	}
 	70% {
-		background: linear-gradient(180deg, #9fe6a0 0%, #6fbf6a 100%);
+		background: rgba(127, 191, 106, 0.9);
+		border-color: #6fbf6a;
+		color: #0d1a0c;
 	}
 	100% {
-		background: linear-gradient(180deg, #f5d565 0%, #e8b923 100%);
+		background: transparent;
+		border-color: #e8b923;
+		color: #e8b923;
 	}
 }
 </style>
