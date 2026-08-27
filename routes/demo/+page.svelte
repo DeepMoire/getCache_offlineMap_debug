@@ -340,6 +340,31 @@ onMount(() => {
 				try {
 					if (!map.getSource(RAW_SOURCE)) {
 						installRawWallProtocol();
+						// ⛔ WIRE THE SELF-HEAL, OR IT IS A SPECTATOR.
+						//
+						// rawWallProtocol detects "asking, finding nothing" and calls
+						// onBlind — but NOTHING EVER SET IT. MEASURED 27 Aug 2026 in a
+						// live browser with a pack successfully stored (`1 area · 574
+						// KB`): "[roads] ⚠️ map is reading NOTHING from disk (4 tiles
+						// asked, 0 found)". The detector fired, narrated, and did
+						// nothing, because `setRawWallBlindHandler` had no callers
+						// anywhere in the repo — its own comment says "Set by the
+						// route", and the route never did.
+						//
+						// The cause is a race, not an address bug: MapLibre requests
+						// tiles before the download lands, caches the 404s, and then
+						// STOPS ASKING — so it can never recover however long you
+						// wait. That is the whole "it works sometimes" pattern; it
+						// depends only on whether the pack beat the first render.
+						// (A write→read round trip over the real key functions passes
+						// at every rendered zoom — see readWriteRoundTrip.test.ts — so
+						// the addresses were never the problem.)
+						//
+						// refreshRawTiles is the narrow fix: setTiles with the same URL
+						// invalidates the tile cache and nothing else. Do NOT re-add
+						// the source or the layers here — that rebuilds the stack and
+						// drops the per-pin satellite layers.
+						setRawWallBlindHandler(() => refreshRawTiles(map));
 						map.addSource(RAW_SOURCE, rawSourceSpec());
 						for (const layer of wallLayers()) map.addLayer(layer);
 					}

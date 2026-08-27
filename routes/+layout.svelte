@@ -100,9 +100,21 @@ const envTilesHost = import.meta.env.VITE_TILES_HOST;
 if (typeof envTilesHost === "string" && envTilesHost.trim() !== "") {
 	configureTilesHost(envTilesHost);
 } else if (dev) {
-	console.info(
-		"[offline map] No VITE_TILES_HOST set — tiles will not load. " +
-			"Set it to your own tiles Worker origin to enable them.",
+	// ⛔ console.warn, NOT .info, AND IT NAMES THE FILE TO EDIT. MEASURED
+	// 27 Aug 2026: this printed twelve identical times during one boot while a
+	// correct .env sat one directory above vite's root. As an .info it was
+	// filtered out of the default console view, and it never said WHERE the
+	// file belongs — so "no blobs" cost a day. A log that repeats identically
+	// is a bug in the log; this one now says what to do about it.
+	console.warn(
+		"[tiles] ⛔ VITE_TILES_HOST is not set — NOTHING will download " +
+			"(no /pack request is sent at all; the satellite layer still draws, " +
+			"so this looks like 'roads are broken'). Put it in the .env beside " +
+			"vite's root — the wrapper folder, not the project root:\n" +
+			// ⛔ A PLACEHOLDER, NOT OUR HOSTNAME. noParentNames.test.ts fails on a
+			// real one: this child ships on its own and must name no parent and no
+			// origin of ours, or a stranger's install points at our bill.
+			"    VITE_TILES_HOST=https://<your-tiles-worker>",
 	);
 }
 

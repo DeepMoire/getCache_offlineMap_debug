@@ -3,7 +3,7 @@
  *
  * ⛔ WHY THIS FILE EXISTS AT ALL
  *
- * `wrangler deploy` publishes straight to tiles-prod.retreever.org — the hostname
+ * `wrangler deploy` publishes straight to tiles.retreever.org — the hostname
  * every shipped phone talks to. A local override lets a Worker change be
  * tried on your own machine, against the real R2 bucket, before it ever
  * reaches that hostname.
@@ -42,7 +42,7 @@
  *
  * This file used to open with:
  *
- *     export const PRODUCTION_HOST = "https://tiles-prod.retreever.org";
+ *     export const PRODUCTION_HOST = "https://tiles.retreever.org";
  *
  * That is a bill, not a default. This child is published as its own AGPL
  * package, so a stranger who installed it streamed tiles off the maintainer's
@@ -94,15 +94,35 @@ export function configureTilesDevHost(host: string): void {
 export function isTilesHostConfigured(): boolean {
 	return configuredHost !== null;
 }
-/** `wrangler dev --remote` in workers/offline-tiles. `--remote` is required to
- *  reach the real R2 bucket — the checked-in planet.pmtiles is a 0-byte
- *  placeholder. */
-export const LOCAL_DEV_HOST = "http://127.0.0.1:8787";
+/**
+ * THE LOCAL TIER — `tiles-local.retreever.org`, the third of dev/prod/local.
+ *
+ * ⛔ ONE CONVENTION, READ AT A GLANCE. The three tiers are named the same way
+ * on purpose: tiles-prod / tiles-dev / tiles-local. A bare IP here broke that
+ * — it was the one row you could not read as a tier, and the panel showed
+ * "127.0.0.1:8787" beside two dotted hostnames.
+ *
+ * `tiles-local.retreever.org` is a DNS record pointing at 127.0.0.1. It costs
+ * nothing (no Worker, no bill, no Cloudflare account for whoever uses it) and
+ * resolves to the developer's own machine, exactly as the bare IP did. It is a
+ * NAME for localhost, not a server.
+ *
+ * ⚠️ UNTIL THAT RECORD EXISTS, keep the loopback address: a name with no DNS
+ * is strictly worse than an ugly IP — it fails at resolution with no clue,
+ * which is precisely the failure that cost 27 Aug 2026. Flip LOCAL_HOST_NAME
+ * to the hostname the day the record is created, and not before.
+ *
+ * `wrangler dev --remote` in workers/offline-tiles serves it. `--remote` is
+ * required to reach the real R2 bucket — the checked-in planet.pmtiles is a
+ * 0-byte placeholder.
+ */
+const LOCAL_HOST_NAME = "127.0.0.1:8787"; // → "tiles-local.retreever.org" once DNS exists
+export const LOCAL_DEV_HOST = `http://${LOCAL_HOST_NAME}`;
 
 /**
  * THE THREE PLACES BLOBS CAN COME FROM. Chris's naming, 27 Aug 2026.
  *
- *   production / r2_prod — tiles-prod.retreever.org. Every shipped phone. Real users.
+ *   production / r2_prod — tiles.retreever.org. Every shipped phone. Real users.
  *   r2Dev      / r2_dev  — tiles-dev.retreever.org. A deployed sandbox worker.
  *   localDev   / local_dev — 127.0.0.1:8787, `wrangler dev --remote`.
  *
@@ -123,7 +143,10 @@ export type WorkerTarget = "production" | "r2Dev" | "localDev";
 
 /** null when the tier's host was never configured — production and r2Dev are
  *  both injected by the app, so either can be null; localDev is always known. */
-function hostFor(t: WorkerTarget): string | null {
+/** EXPORTED so the CONFIG panel can NAME the host in its diagnostics. A log
+ *  saying "production unreachable" sends you looking at Cloudflare; one saying
+ *  "production (https://typo.example.org) unreachable" ends the search. */
+export function hostFor(t: WorkerTarget): string | null {
 	if (t === "localDev") return LOCAL_DEV_HOST;
 	if (t === "r2Dev") return configuredDevHost;
 	return configuredHost;
