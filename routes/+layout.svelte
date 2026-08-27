@@ -64,8 +64,45 @@ import { page } from "$app/state";
 import logoUrl from "$parent/retreeved/sharedAssets/GC_fly_logo_transparent.webp";
 import ghIconUrl from "$parent/retreeved/sharedAssets/github-logo.png";
 import backdropUrl from "$parent/retreeved/sharedAssets/getcache_DT_bg.webp";
+import { configureTilesHost } from "../lib/r2Worker/local_dev/tilesHost";
 
 const dev = import.meta.env.DEV;
+
+/**
+ * WHERE THE TILES COME FROM WHEN THIS CHILD IS RUN ON ITS OWN.
+ *
+ * tilesHost.ts ships NO production origin: packUrl() and firesUrl() answer null
+ * until an app configures one, so a stranger installing this package cannot
+ * fetch from the maintainer's bucket by accident. Something has to answer, and
+ * under a plain wrapper THIS shell is the only thing that runs.
+ *
+ * ⛔ WHY HERE AND NOT IN THE WRAPPER. It was in the wrapper first, and that was
+ * wrong: a wrapper mounts exactly ONE child, so a boot file there importing
+ * THIS child by name fails to resolve for every other child. MEASURED 27 Aug
+ * 2026 — three of four children stopped building with "Could not load
+ * .../getCache_OfflineMap/lib/r2Worker/local_dev/tilesHost (imported by
+ * src/hooks.client.ts)". A wrapper must name no child; a child may configure
+ * itself.
+ *
+ * ⛔ NO DEFAULT, AND NO NAME. An unset variable leaves the map unconfigured —
+ * tile fetches then fail with a message naming configureTilesHost, which is the
+ * honest outcome for someone who has not said whose Worker to use. Naming a
+ * real origin here would just move the leak from one file to another.
+ *
+ *     VITE_TILES_HOST=https://tiles.example.org npm run dev
+ *
+ * A host that embeds this child in its own app configures it at ITS boot and
+ * never reaches this shell, so the two cannot fight.
+ */
+const envTilesHost = import.meta.env.VITE_TILES_HOST;
+if (typeof envTilesHost === "string" && envTilesHost.trim() !== "") {
+	configureTilesHost(envTilesHost);
+} else if (dev) {
+	console.info(
+		"[offline map] No VITE_TILES_HOST set — tiles will not load. " +
+			"Set it to your own tiles Worker origin to enable them.",
+	);
+}
 
 const GH = "https://github.com/Ground-Truth-Data";
 
