@@ -72,7 +72,7 @@ const TARGETS: {
 	{
 		id: "production",
 		label: "r2_prod",
-		hint: "tiles.retreever.org — what every shipped phone talks to. Deployed by ./deployProduction.sh, which asks for confirmation first.",
+		hint: "tiles-prod.retreever.org — what every shipped phone talks to. Deployed by ./deployProduction.sh, which asks for confirmation first.",
 	},
 	{
 		id: "r2Dev",
@@ -103,10 +103,37 @@ async function probeAll() {
 	for (const t of TARGETS) {
 		reachable[t.id] = await probeTarget(t.id);
 	}
-	// If the CURRENT target turned out to be gone, fall back rather than sit
-	// there pointed at nothing.
-	if (reachable[target] === false && reachable.production !== false) {
-		pickTarget("production");
+	// If the CURRENT target turned out to be gone, move to ANY tier that is
+	// actually answering rather than sit there pointed at nothing.
+	//
+	// ⛔ THIS USED TO READ `reachable.production !== false`, WHICH MADE THE
+	// FALLBACK IMPOSSIBLE IN THE ONE CASE IT EXISTED FOR. production is the
+	// default target, so the branch only runs when production is the dead one —
+	// and then the guard is false and nothing happens. MEASURED 27 Aug 2026:
+	// production NXDOMAIN, r2Dev unconfigured, localDev not running, so all
+	// three rows disabled themselves and the panel showed r2_prod lit green AND
+	// greyed out simultaneously. Selected-and-unreachable is a state the user
+	// cannot leave: every row refuses the click that would fix it.
+	//
+	// Try the others in preference order instead. If NOTHING answers we stay
+	// put and say so — the greying is then honest, and the log names the
+	// hostname so "no blobs" is one glance from being explained.
+	if (reachable[target] === false) {
+		const alive = (["production", "r2Dev", "localDev"] as WorkerTarget[]).find(
+			(t) => reachable[t] === true,
+		);
+		if (alive) {
+			console.info(
+				`[tiles] ${target} is unreachable — switching to ${alive}.`,
+			);
+			pickTarget(alive);
+		} else {
+			console.warn(
+				"[tiles] NO worker is reachable: " +
+					TARGETS.map((t) => `${t.id}=${hostFor(t.id) ?? "unconfigured"}`).join(" · ") +
+					" — nothing will download until one of these answers.",
+			);
+		}
 	}
 }
 

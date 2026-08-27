@@ -371,7 +371,8 @@ onMount(() => {
 <div class="stage">
 	<!-- LEFT RAIL — ONE component. Both read-outs live inside it so they share a
 	     stacking context and can never drift apart or slide under the hand. It
-	     sits 15px clear of the phone's left edge (.stage's gap). -->
+	     sits 15px clear of the phone — see .stage's gap and, more importantly,
+	     the margin-inline on .rig that makes that 15px real. -->
 	{#if rails}
 	<aside class="rail left">
 		<OfflineWorkMeter
@@ -493,16 +494,23 @@ onMount(() => {
 	   re-centres itself below. Centring the whole row instead left both panels
 	   floating in the middle of the stage with the map beside them. */
 	align-items: flex-start;
-	/* space-between pushes the rails out to the stage's true edges instead of
-	   centring the whole three-column row, which left equal dead black gaps
-	   on the far left/right on any viewport wider than the row's content. The
-	   rig (phone) has margin-inline: auto below so it still centres itself
-	   between whatever the rails leave. */
-	justify-content: space-between;
-	/* Rails sit right up against the phone — 5px, not the old 15px. The rails
-	   are dense read-outs, not framing, so every extra pixel between them and
-	   the phone is width the CONFIG/MEMORY panels could be using instead. */
-	gap: 5px;
+	/* NOT space-between, and NOT any other free-space distribution. Those make
+	   the rail-to-phone gap a RESIDUAL — whatever width is left over after the
+	   row is laid out — which is why every previous attempt to shrink it by
+	   editing `gap` did nothing: `gap` is a MINIMUM separation, and
+	   space-between is free to exceed it, which it does on every viewport
+	   wider than the row's content. Measured 27 Aug 2026: gap read 5px in the
+	   CSS while the rendered distance was 80px.
+	   The rails flex-grow instead (see .rail), so there IS no leftover width to
+	   distribute, and the gap below is the whole and only separation. */
+	justify-content: center;
+	/* THE gap — the real one, now that nothing can add to it. 15px between each
+	   rail and the phone. The rails are dense read-outs, not framing, so every
+	   extra pixel between them and the phone is width the CONFIG/MEMORY panels
+	   could be using instead. This value is only trustworthy because the rails
+	   grow to eat the slack; restore any free-space justify-content above and
+	   this number becomes decorative again. */
+	gap: 15px;
 	/* STYLE OFF is the DEFAULT here: plain black, no scenery. The host opts
 	   INTO the art by setting --host-decor: 1, which is only true when a
 	   parent is lending its style. A debugger should look like a value
@@ -527,17 +535,29 @@ onMount(() => {
 	display: flex;
 	flex-direction: column;
 	gap: 0.5rem;
-	/* Wide enough to use real space next to the phone instead of sitting in a
-	   narrow column with dead black space beside it — these panels are dense
-	   read-outs, not decoration, so they should fill what's available. Capped
-	   so a very wide monitor doesn't stretch a single card absurdly wide. */
-	width: clamp(27rem, 32vw, 42rem);
+	/* The rails ABSORB the leftover width — this is what keeps the 15px gap
+	   honest. flex: 1 1 0 lets each rail grow into whatever the phone doesn't
+	   use, so no free space survives to be redistributed into the gap. The old
+	   fixed `width: clamp(...)` is gone: a fixed width leaves slack by
+	   definition, and slack is exactly what reopens the gap. min-width: 0 is
+	   required or flex refuses to shrink these below their content width. */
+	flex: 1 1 0;
+	min-width: 0;
+	/* NO max-width. A ceiling here would re-open the very gap this fix closed:
+	   once both rails hit it, the leftover width has nowhere to go and
+	   justify-content hands it straight back to the gaps. With 42rem that
+	   happened above 2*672 + 452 = 1796px of stage, i.e. on exactly the large
+	   monitors this debugger is used on. The rails are dense read-outs and are
+	   meant to fill what's available, so letting them grow without limit is
+	   also the behaviour we actually want; individual cards inside cap
+	   themselves if they need to. */
 	max-height: 100cqh;
 	overflow-y: auto;
-	/* No outer padding — the rail's outer edge butts directly against the
-	   phone (gap:0 on .stage) and against the stage's own edge. Each card
-	   inside keeps its own internal padding for breathing room; a second,
-	   outer padding on top of that just reopens the gap this was fixing. */
+	/* No outer padding — the rail's outer edge butts against the stage's own
+	   edge, and its inner edge is held off the phone by .stage's gap alone
+	   (15px). Each card inside keeps its own internal padding for breathing
+	   room; a second, outer padding on top of that just reopens the gap this
+	   was fixing. */
 	padding: 0;
 	box-sizing: border-box;
 }
@@ -569,6 +589,22 @@ onMount(() => {
 	height: var(--phone-height);
 	transform: scale(var(--fit));
 	transform-origin: center center;
+
+	/* THE PHANTOM WIDTH — the actual source of the "crazy padding", found by
+	   measuring the live page on 27 Aug 2026 rather than reading this file.
+	   `transform: scale()` shrinks what the rig PAINTS but not what it
+	   RESERVES: the box still occupies var(--phone-width) (452px) of layout
+	   while drawing only 452 * --fit. At --fit 0.669 that is 149px of reserved
+	   but permanently empty space, which flex splits evenly onto both sides —
+	   74.7px per side, on top of whatever `gap` says. Measured: gap read 15px,
+	   rendered distance 89.7px, and 89.7 - 15 = 74.7 exactly.
+	   That is why editing `gap`/`padding` never worked and could never have
+	   worked; neither property can reach space that lives INSIDE the rig's own
+	   layout box. Pulling the two sides in by half the shortfall each collapses
+	   the layout box onto the painted box, so `gap` finally means what it says.
+	   The visual scaling is untouched — the hand-tuned geometry above is not
+	   re-derived, only the dead space around it is reclaimed. */
+	margin-inline: calc(-0.5 * var(--phone-width) * (1 - var(--fit)));
 }
 .hand {
 	position: absolute;

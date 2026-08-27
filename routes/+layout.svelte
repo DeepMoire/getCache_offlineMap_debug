@@ -66,7 +66,7 @@ import ghIconUrl from "$parent/retreeved/sharedAssets/github-logo.png";
 import SharedNav from "$parent/retreeved/sharedComponents/sharedNav/SharedNav.svelte";
 import type { TierRoute } from "$parent/retreeved/sharedComponents/sharedNav/tierRoutes";
 import backdropUrl from "$parent/retreeved/sharedAssets/getcache_DT_bg.webp";
-import { configureTilesHost } from "../lib/r2Worker/local_dev/tilesHost";
+import { configureTilesHost, configureTilesDevHost } from "../lib/r2Worker/local_dev/tilesHost";
 
 const dev = import.meta.env.DEV;
 
@@ -104,6 +104,29 @@ if (typeof envTilesHost === "string" && envTilesHost.trim() !== "") {
 		"[offline map] No VITE_TILES_HOST set — tiles will not load. " +
 			"Set it to your own tiles Worker origin to enable them.",
 	);
+}
+
+/**
+ * THE r2_dev TIER — CONFIGURED HERE FOR THE SAME REASON production IS.
+ *
+ * ⛔ WITHOUT THIS THE r2_dev TOGGLE CAN NEVER BE ANYTHING BUT GREY. probeTarget
+ * asks hostFor("r2Dev"), which returns configuredDevHost, which stays null
+ * until somebody calls configureTilesDevHost. Nobody did — MEASURED 27 Aug
+ * 2026: the only caller in the whole workspace was ReTreever's
+ * src/hooks.client.ts:45. So under ReTreever the switch worked and under rapper
+ * the row greyed itself out permanently, and the CONFIG panel's own hint
+ * ("a DEPLOYED sandbox worker") described something the user could never reach.
+ *
+ * A dead control is worse than an absent one: it says "this exists and is
+ * broken" when the truth was "nobody told me where it lives".
+ *
+ * Same injection rule as production — no origin is baked in, so a stranger
+ * still cannot reach our sandbox by accident. Unset simply leaves the row grey,
+ * which is then TRUE rather than an artefact.
+ */
+const envTilesDevHost = import.meta.env.VITE_TILES_DEV_HOST;
+if (typeof envTilesDevHost === "string" && envTilesDevHost.trim() !== "") {
+	configureTilesDevHost(envTilesDevHost);
 }
 
 /**
@@ -278,7 +301,7 @@ let { children } = $props();
 		     asset URL, and still applies declaratively at paint time, which
 		     was the whole reason a JS-on-mount version was rejected. -->
 		<svelte:element
-			this="style"
+			this={"style"}
 			>{`:root { --host-decor: 1; --demo-backdrop: url("${backdropUrl}"); --demo-bezel: none; }`}</svelte:element
 		>
 	{/if}
