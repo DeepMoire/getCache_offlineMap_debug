@@ -3,7 +3,7 @@
  *
  * Chris's call, 27 Aug 2026, after a day lost to a switch that looked broken:
  *
- *   r2_prod — tiles.retreever.org.     Every shipped phone. Real users.
+ *   r2_prod — tiles-prod.retreever.org.     Every shipped phone. Real users.
  *   r2_dev  — tiles-dev.retreever.org. A deployed sandbox. Contractors deploy here.
  *
  * `local_dev` (127.0.0.1:8787) was REMOVED from the CONFIG panel: it only

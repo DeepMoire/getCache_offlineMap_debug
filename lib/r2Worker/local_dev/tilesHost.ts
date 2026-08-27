@@ -3,7 +3,7 @@
  *
  * ⛔ WHY THIS FILE EXISTS AT ALL
  *
- * `wrangler deploy` publishes straight to tiles.retreever.org — the hostname
+ * `wrangler deploy` publishes straight to tiles-prod.retreever.org — the hostname
  * every shipped phone talks to. A local override lets a Worker change be
  * tried on your own machine, against the real R2 bucket, before it ever
  * reaches that hostname.
@@ -42,7 +42,7 @@
  *
  * This file used to open with:
  *
- *     export const PRODUCTION_HOST = "https://tiles.retreever.org";
+ *     export const PRODUCTION_HOST = "https://tiles-prod.retreever.org";
  *
  * That is a bill, not a default. This child is published as its own AGPL
  * package, so a stranger who installed it streamed tiles off the maintainer's
@@ -102,7 +102,7 @@ export const LOCAL_DEV_HOST = "http://127.0.0.1:8787";
 /**
  * THE THREE PLACES BLOBS CAN COME FROM. Chris's naming, 27 Aug 2026.
  *
- *   production / r2_prod — tiles.retreever.org. Every shipped phone. Real users.
+ *   production / r2_prod — tiles-prod.retreever.org. Every shipped phone. Real users.
  *   r2Dev      / r2_dev  — tiles-dev.retreever.org. A deployed sandbox worker.
  *   localDev   / local_dev — 127.0.0.1:8787, `wrangler dev --remote`.
  *
