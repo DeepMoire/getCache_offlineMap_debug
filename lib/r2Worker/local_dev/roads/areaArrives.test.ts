@@ -55,9 +55,19 @@ let urls: string[] = [];
 /** Resolvers for in-flight fetches, so we can observe CONCURRENCY. */
 let gate: Array<() => void> = [];
 
-beforeEach(() => {
+beforeEach(async () => {
 	urls = [];
 	gate = [];
+	// A HOST MUST BE CONFIGURED OR THERE IS NO REQUEST TO OBSERVE.
+	//
+	// packUrl() returns null until the app calls configureTilesHost() — see
+	// tilesHost.ts. Before 27 Aug 2026 a production origin was baked into the
+	// module, so these tests got a URL without asking for one; now the app
+	// supplies it, and so must a test. Imported dynamically because afterEach
+	// calls vi.resetModules(), which would otherwise leave a stale copy holding
+	// the configuration while packDownload.ts reads a fresh, unconfigured one.
+	const { configureTilesHost } = await import("../tilesHost");
+	configureTilesHost("https://tiles.example.test");
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (url: string) => {

@@ -80,9 +80,18 @@ export async function fetchAreaFires(
 	const timer = setTimeout(() => controller.abort(), FIRE_TIMEOUT_MS);
 	let res: Response;
 	let text: string;
+	// NO HOST, NO REQUEST — see the identical guard in roads/packDownload.ts and
+	// the header of ../tilesHost.ts.
+	const firesEndpoint = firesUrl();
+	if (firesEndpoint === null) {
+		clearTimeout(timer);
+		throw new Error(
+			"no tiles host configured — call configureTilesHost(<origin>) at app boot before fetching fires.",
+		);
+	}
 	try {
 		res = await fetch(
-			`${firesUrl()}?lng=${lng}&lat=${lat}&km=${Math.round(radiusKm)}`,
+			`${firesEndpoint}?lng=${lng}&lat=${lat}&km=${Math.round(radiusKm)}`,
 			{ signal: controller.signal },
 		);
 		if (!res.ok) {

@@ -37,7 +37,46 @@
  *
  * Deploy production:  ./deployProduction.sh   ← asks for confirmation first
  */
-export const PRODUCTION_HOST = "https://tiles.retreever.org";
+/**
+ * ⛔ NO PRODUCTION HOST IS BAKED IN. THE APP THAT MOUNTS THIS CHILD SETS IT.
+ *
+ * This file used to open with:
+ *
+ *     export const PRODUCTION_HOST = "https://tiles.retreever.org";
+ *
+ * That is a bill, not a default. This child is published as its own AGPL
+ * package, so a stranger who installed it streamed tiles off the maintainer's
+ * R2 bucket, on the maintainer's account, indistinguishable from real traffic — and
+ * npm versions are immutable, so a wrong default cannot be recalled by a later
+ * release. It was RAPPER.md step 3, "the one leak still parked".
+ *
+ * WHY MODULE STATE AND NOT A PARAMETER. packUrl() is called at
+ * roads/packDownload.ts:686 and firesUrl() at fires/fireFetch.ts:85 — deep
+ * inside the download path, never passed down. Threading a host through would
+ * change signatures the whole way to the surface, for a value that is constant
+ * for the lifetime of the app. One call at boot is the smaller change.
+ *
+ * WHY NULL AND NOT A FALLBACK. Any fallback that happens to be reachable is a
+ * fallback that bills whoever owns it. Unconfigured means NO tiles — which is
+ * the channel rule this child already lives by (deps.json `_channel_why`):
+ * "Anything the channel does not provide comes back null and the child renders
+ * nothing rather than crashing."
+ *
+ * LOCAL_DEV_HOST below stays hardcoded on purpose: 127.0.0.1 is nobody's
+ * resource and costs nobody anything.
+ */
+let configuredHost: string | null = null;
+
+/** Call ONCE at app boot, before any tile fetch. Trailing slashes are trimmed
+ *  so `https://x.dev/` and `https://x.dev` cannot produce `//pack`. */
+export function configureTilesHost(host: string): void {
+	configuredHost = host.trim().replace(/\/+$/, "") || null;
+}
+
+/** For UI that needs to explain why no tiles are coming. */
+export function isTilesHostConfigured(): boolean {
+	return configuredHost !== null;
+}
 /** `wrangler dev --remote` in workers/offline-tiles. `--remote` is required to
  *  reach the real R2 bucket — the checked-in planet.pmtiles is a 0-byte
  *  placeholder. */
@@ -45,10 +84,10 @@ export const LOCAL_DEV_HOST = "http://127.0.0.1:8787";
 
 export type WorkerTarget = "production" | "localDev";
 
-const HOSTS: Record<WorkerTarget, string> = {
-	production: PRODUCTION_HOST,
-	localDev: LOCAL_DEV_HOST,
-};
+/** null ONLY for production-with-nothing-configured. localDev is always known. */
+function hostFor(t: WorkerTarget): string | null {
+	return t === "localDev" ? LOCAL_DEV_HOST : configuredHost;
+}
 
 /** What the phone talks to with no override: always production. Local dev
  *  must be picked explicitly via the CONFIG panel — see the DEV note above. */
@@ -100,18 +139,23 @@ export function setWorkerTarget(t: WorkerTarget): void {
  * testing production while believing you are on staging. Call these per
  * request; it is one property read.
  */
-export function tilesHost(): string {
-	return HOSTS[getWorkerTarget()];
+export function tilesHost(): string | null {
+	return hostFor(getWorkerTarget());
 }
 
-/** Roads. One request returns the whole pack of tiles for a pin. */
-export function packUrl(): string {
-	return `${tilesHost()}/pack`;
+/** Roads. One request returns the whole pack of tiles for a pin.
+ *  null when no host is configured — callers MUST check. Interpolating null
+ *  would fetch the literal string "null/pack", which is a silent wrong URL. */
+export function packUrl(): string | null {
+	const h = tilesHost();
+	return h === null ? null : `${h}/pack`;
 }
 
-/** Wildfire hotspots. The Worker proxies NASA FIRMS so the API key stays server-side. */
-export function firesUrl(): string {
-	return `${tilesHost()}/fires`;
+/** Wildfire hotspots. The Worker proxies NASA FIRMS so the API key stays
+ *  server-side. null when unconfigured — see packUrl(). */
+export function firesUrl(): string | null {
+	const h = tilesHost();
+	return h === null ? null : `${h}/fires`;
 }
 
 /** Back-compat for callers that only report which host is in play (the debug
@@ -134,10 +178,14 @@ export async function probeTarget(
 	t: WorkerTarget,
 	timeoutMs = 1500,
 ): Promise<boolean> {
+	const host = hostFor(t);
+	// Nothing configured is not "down", but it is equally un-probeable, and
+	// false is what the switch needs to grey the option out.
+	if (host === null) return false;
 	const ctl = new AbortController();
 	const timer = setTimeout(() => ctl.abort(), timeoutMs);
 	try {
-		await fetch(`${HOSTS[t]}/pack`, {
+		await fetch(`${host}/pack`, {
 			method: "OPTIONS",
 			signal: ctl.signal,
 			mode: "cors",
