@@ -129,9 +129,9 @@ async function probeAll() {
 			pickTarget(alive);
 		} else {
 			console.warn(
-				"[tiles] NO worker is reachable: " +
-					TARGETS.map((t) => `${t.id}=${hostFor(t.id) ?? "unconfigured"}`).join(" · ") +
-					" — nothing will download until one of these answers.",
+				"[tiles] NO worker is reachable — nothing will download. Tried: " +
+					TARGETS.map((t) => t.id).join(", ") +
+					". Check VITE_TILES_HOST resolves, or start a local worker on :8787.",
 			);
 		}
 	}
