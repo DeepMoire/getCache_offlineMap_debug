@@ -191,6 +191,7 @@ import type {
 	FireRecord,
 	HostPorts,
 } from "../../shared/hostPorts";
+import { configureTilesHost } from "../../r2Worker/local_dev/tilesHost";
 import { reconcileOnceForTest } from "./bakeService.svelte";
 
 /**
@@ -277,6 +278,12 @@ function seedOrphan(lng: number, lat: number, lastTouched: number): void {
 }
 
 beforeEach(() => {
+	// THIS CHILD HAS NO HOST UNTIL AN APP GIVES IT ONE. `firesUrl()` answers
+	// null until configureTilesHost() runs, so the two fire tripwires below
+	// throw "no tiles host configured" without it. A FIXTURE origin, never a
+	// real one: naming a parent's host here is what noParentNames.test.ts
+	// exists to catch, and nothing is fetched — the tests stub fetch.
+	configureTilesHost("https://tiles.example.test");
 	h.satStore.clear();
 	h.tiles.clear();
 	h.cov.clear();

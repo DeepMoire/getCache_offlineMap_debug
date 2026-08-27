@@ -40,15 +40,19 @@ let {
 } = $props();
 
 // ── WORKER TARGET ───────────────────────────────────────────────────────
-// TWO workers, on purpose — see the "TWO TIERS" note in tilesHost.ts. A
-// cloud staging tier was tried and dropped: local `wrangler dev --remote`
-// already tests against real data, so it added upkeep without adding
-// fidelity. The "don't push to prod casually" risk that motivated a middle
-// tier is guarded at deployProduction.sh instead (typed confirmation before
-// `wrangler deploy` runs bare). Don't re-add a third row here to solve that
-// problem — strengthen the deploy guard instead.
-// Changing it re-points the NEXT request; in-flight ones finish where they
-// started.
+// TWO tiers, BOTH IN THE CLOUD — r2_prod and r2_dev. See the WorkerTarget
+// block in tilesHost.ts for what each is.
+//
+// local_dev was REMOVED from this list on 27 Aug 2026, Chris's call: "delete
+// the local one, it's too much work." A row that only works while a terminal
+// stays open is a switch that is usually dead, and a dead switch reads as a
+// broken app — which is exactly how the day it was removed started.
+//
+// This list is the ONLY place a row is declared — probing, greying-out and
+// the fallback all read from it, so adding a tier is one entry, not four.
+//
+// Changing the target re-points the NEXT request; in-flight ones finish
+// where they started.
 let target = $state<WorkerTarget>("production");
 
 const TARGETS: {
@@ -62,9 +66,9 @@ const TARGETS: {
 		hint: "tiles.retreever.org — what every shipped phone talks to. Deployed by ./deployProduction.sh, which asks for confirmation first.",
 	},
 	{
-		id: "localDev",
-		label: "local_dev",
-		hint: "127.0.0.1:8787 — run `npm run dev` in workers/offline-tiles. Needs --remote to reach R2: the checked-in planet.pmtiles is a 0-byte placeholder.",
+		id: "r2Dev",
+		label: "r2_dev",
+		hint: "tiles-dev.retreever.org — a DEPLOYED sandbox worker reading the same R2 data as r2_prod, so any difference between them is code, never data. No shipped phone ever reads it.",
 	},
 ];
 

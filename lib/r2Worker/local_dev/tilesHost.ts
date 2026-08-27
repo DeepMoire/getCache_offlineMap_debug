@@ -66,11 +66,28 @@
  * resource and costs nobody anything.
  */
 let configuredHost: string | null = null;
+let configuredDevHost: string | null = null;
 
 /** Call ONCE at app boot, before any tile fetch. Trailing slashes are trimmed
  *  so `https://x.dev/` and `https://x.dev` cannot produce `//pack`. */
 export function configureTilesHost(host: string): void {
 	configuredHost = host.trim().replace(/\/+$/, "") || null;
+}
+
+/**
+ * THE CLOUD DEV WORKER — same injection rule as production, same reason.
+ *
+ * `r2_dev` is a SECOND deployed Worker, not a second bucket: it reads the very
+ * same R2 data as `r2_prod`, so a difference between them is always CODE and
+ * never data. That is the whole point of having it — you deploy a change there
+ * and compare against production without touching what shipped phones read.
+ *
+ * Injected, never baked in, for exactly the reason the production host is (see
+ * the block above): this child is published on its own, and a hardcoded origin
+ * would bill whoever owns it. Unconfigured → null → the r2Dev row greys out.
+ */
+export function configureTilesDevHost(host: string): void {
+	configuredDevHost = host.trim().replace(/\/+$/, "") || null;
 }
 
 /** For UI that needs to explain why no tiles are coming. */
@@ -82,11 +99,34 @@ export function isTilesHostConfigured(): boolean {
  *  placeholder. */
 export const LOCAL_DEV_HOST = "http://127.0.0.1:8787";
 
-export type WorkerTarget = "production" | "localDev";
+/**
+ * THE THREE PLACES BLOBS CAN COME FROM. Chris's naming, 27 Aug 2026.
+ *
+ *   production / r2_prod — tiles.retreever.org. Every shipped phone. Real users.
+ *   r2Dev      / r2_dev  — tiles-dev.retreever.org. A deployed sandbox worker.
+ *   localDev   / local_dev — 127.0.0.1:8787, `wrangler dev --remote`.
+ *
+ * The r2_prod / r2_dev / local_dev spellings are what the CONFIG panel shows
+ * and what we say out loud; the camelCase ids are the same three things in
+ * code. Don't invent a fourth name for any of them.
+ *
+ * WHY r2_dev CAME BACK (it was dropped 24 Aug, restored 27 Aug). The argument
+ * for dropping it was that `wrangler dev --remote` tests the same thing with
+ * less upkeep. True — but it only works while a terminal is open, and the day
+ * that terminal was closed the switch went dead and read as a broken app.
+ * MEASURED the same day: tiles-dev.retreever.org was STILL LIVE and still
+ * serving the pre-fix v29 build, months after its config block was deleted —
+ * so the upkeep was being paid without the benefit. Adopting it is cheaper
+ * than pretending it is gone.
+ */
+export type WorkerTarget = "production" | "r2Dev" | "localDev";
 
-/** null ONLY for production-with-nothing-configured. localDev is always known. */
+/** null when the tier's host was never configured — production and r2Dev are
+ *  both injected by the app, so either can be null; localDev is always known. */
 function hostFor(t: WorkerTarget): string | null {
-	return t === "localDev" ? LOCAL_DEV_HOST : configuredHost;
+	if (t === "localDev") return LOCAL_DEV_HOST;
+	if (t === "r2Dev") return configuredDevHost;
+	return configuredHost;
 }
 
 /** What the phone talks to with no override: always production. Local dev
@@ -112,7 +152,7 @@ export function getWorkerTarget(): WorkerTarget {
 	if (!import.meta.env.DEV) return "production";
 	try {
 		const v = sessionStorage.getItem(OVERRIDE_KEY);
-		if (v === "production" || v === "localDev") return v;
+		if (v === "production" || v === "r2Dev" || v === "localDev") return v;
 	} catch {
 		// codestyle-allow-swallow: sessionStorage is unavailable in SSR and in
 		// some private modes; the default target is always a correct answer.

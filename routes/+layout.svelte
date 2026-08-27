@@ -63,6 +63,8 @@ import { page } from "$app/state";
  */
 import logoUrl from "$parent/retreeved/sharedAssets/GC_fly_logo_transparent.webp";
 import ghIconUrl from "$parent/retreeved/sharedAssets/github-logo.png";
+import SharedNav from "$parent/retreeved/sharedComponents/sharedNav/SharedNav.svelte";
+import type { TierRoute } from "$parent/retreeved/sharedComponents/sharedNav/tierRoutes";
 import backdropUrl from "$parent/retreeved/sharedAssets/getcache_DT_bg.webp";
 import { configureTilesHost } from "../lib/r2Worker/local_dev/tilesHost";
 
@@ -104,55 +106,63 @@ if (typeof envTilesHost === "string" && envTilesHost.trim() !== "") {
 	);
 }
 
-const GH = "https://github.com/Ground-Truth-Data";
+/**
+ * THE PARENT FACTS — INJECTED BY WHOEVER MOUNTED THIS CHILD.
+ *
+ * Ported from the who_what child, which had them and this one did not — which
+ * is precisely why no tier pill rendered here (MEASURED 27 Aug 2026: the bar
+ * on /offline showed the flag toggle and no switcher at all).
+ *
+ * `import.meta.env`, never a bare `define`d global: an absent key reads as
+ * undefined instead of throwing, so a child cloned with no parent degrades to
+ * "no pill" rather than a ReferenceError. Both other shapes were measured
+ * failing on 25 Aug 2026 — see the same block in ReTreever_who_what.
+ */
+const ENV = import.meta.env as Record<string, string | undefined>;
+
+// NO FALLBACK NAME. A literal here would be this child naming one of its two
+// possible parents — the exact thing noParentNames.test.ts forbids, and it
+// caught this line the moment it was ported in from the other child. Undefined
+// in a solo clone is the honest answer: there is no mounting tier to name.
+const THIS_TIER = ENV.VITE_RAPPER_TIER ?? "";
+const OTHER_TIER = ENV.VITE_OTHER_TIER ?? "";
+const OTHER_ORIGIN = ENV.VITE_OTHER_ORIGIN;
+const OTHER_HOME = ENV.VITE_OTHER_HOME;
+
+/** Malformed table = a typo in a dev tool; a dev tool must never white-screen
+ *  the app it exists to help you look at. */
+function readRoutes(raw: string | undefined): TierRoute[] {
+	if (!raw) return [];
+	try {
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+const TIER_ROUTES = readRoutes(ENV.VITE_TIER_ROUTES);
+const THIS_SLOT = (ENV.VITE_TIER_SLOT ?? "right") as "left" | "right";
 
 /**
- * THE MOUNTING PARENT'S NAME — injected, never written here.
+ * THE MOUNTED CHILD — name and repo only.
  *
- * This line used to read `href="{GH}/rapper"` with a visible "rapper" label,
- * which is the one thing a child may not do: it has two possible parents and
- * is published on its own, so naming one is a fact about this machine baked
- * into an open-source repo. SharedNav.svelte already solved exactly this —
- * its `selfRepo` prop carries the note "Told, not assumed: `rapper` was
- * hardcoded here, which named a parent."
+ * `views` and the 200 lines of hand-copied <header> that consumed them are
+ * DELETED, replaced by SharedNav — the same component the who_what child
+ * mounts. The copy had already drifted: its own markup, its own styles, its
+ * own GH constant, and no tier pill at all, because the pill was added to
+ * SharedNav and this file could not receive it.
  *
- * It stayed hidden because noParentNames.test.ts could not SEE it: its regex
- * demanded a `/` or `.` after the name, so a name at the end of a string never
- * matched. The guard is fixed; this is the violation it was missing.
- *
- * Undefined in a solo clone — no parent, so no parent link, which is honest.
+ * SharedNav resolves the per-view name, repo and GitHub url from
+ * childRegistry.ts by PATHNAME, so these two fields are only the solo-clone
+ * fallback for a checkout with no registry entry reachable.
  */
-const SELF_REPO = (import.meta.env as Record<string, string | undefined>)
-	.VITE_RAPPER_TIER;
-
-/**
- * THE MOUNTED CHILD — written by the installer, one per rapper.
- *
- * `views` is a LIST because one child is not one page: the offline map has a
- * map and a debugger. Same engine, same fixtures — /offline just hides the
- * debug rails. Two routes, one implementation.
- */
-type View = { href: string; label: string; missing?: boolean };
-type Child = {
-	name: string;
-	owner: string;
-	logo: string;
-	repo: string;
-	views: View[];
-};
-
-const CHILD: Child = {
+const CHILD = {
 	name: "offlineMap",
 	owner: "Get Cache",
-	logo: logoUrl,
 	// Casing matters — this becomes a GitHub URL. It read "offlineMap"
 	// (lowercase o) while the repo and the folder are both "OfflineMap",
 	// so the link 404'd.
 	repo: "getCache_OfflineMap",
-	views: [
-		{ href: "/offline/debug", label: "debugger" },
-		{ href: "/offline", label: "offline map" },
-	],
 };
 
 const GH_ICON = ghIconUrl;
@@ -204,8 +214,8 @@ let { children } = $props();
 	     brand of its own, so the tab shows whichever product the mounted child
 	     belongs to. This used to be the harness's favicon in app.html, which put a
 	     harness mark on a Get Cache page. -->
-	<title>{`${child.owner} — ${child.name}`}</title>
-	<link rel="icon" href={child.logo} />
+	<title>{`${CHILD.owner} — ${CHILD.name}`}</title>
+	<link rel="icon" href={logoUrl} />
 	{#if dev}
 		<!-- How much room the bar takes off the top. A child that owns the
 		     viewport starts below it; one that doesn't is unaffected. Declared
@@ -256,45 +266,43 @@ let { children } = $props();
 </svelte:head>
 
 {#if dev}
-	<header>
-		<span class="left">
-			<img src={child.logo} alt={child.owner} class="logo" />
-			<span class="title">{child.owner}</span>
-		</span>
-
-		<nav class="views">
-			{#each child.views as v (v.label)}
-				{#if v.missing}
-					<span class="btn dead" title="No route for this in rapper yet">
-						{v.label}
-					</span>
-				{:else}
-					<a href={v.href} class="btn" class:on={page.url.pathname === v.href}>
-						{v.label}
-					</a>
-				{/if}
-			{/each}
-		</nav>
-
-		<span class="right">
-			{#if SELF_REPO}
-				<a class="btn gh" href="{GH}/{SELF_REPO}" target="_blank" rel="noreferrer">
-					<img src={GH_ICON} alt="" /> {SELF_REPO}
-				</a>
-			{/if}
-			<a class="btn gh" href="{GH}/{child.repo}" target="_blank" rel="noreferrer">
-				<img src={GH_ICON} alt="" /> {child.repo}
-			</a>
-			<button
-				type="button"
-				class="pill"
-				onclick={() => (hitched = !hitched)}
-				title="Which HostPorts object is wired in right now — retreeverPorts.ts (proprietary, in ReTreever) or the child's own literal fixture. See docs/TODO.md 'The pill'."
-			>
-				<span class:on={hitched}>retreever</span><span class:on={!hitched}>rapper</span>
-			</button>
-		</span>
-	</header>
+	<!-- THE SHARED BAR, not a copy of it.
+	     This file used to carry its own 40-line <header> plus ~90 lines of
+	     matching CSS — a second implementation of SharedNav that drifted the
+	     moment it existed. It had no tier pill at all, because the pill was
+	     added to the shared component and a copy cannot receive an edit.
+	     The feature-flag toggle below is genuinely this child's own: it flips
+	     the surrogate-parent decor, which no other child has. -->
+	<SharedNav
+		owner={CHILD.owner}
+		name={CHILD.name}
+		logo={logoUrl}
+		repo={CHILD.repo}
+		views={[]}
+		ghIcon={GH_ICON}
+		pathname={page.url.pathname}
+		tier={THIS_TIER}
+		otherTier={OTHER_TIER}
+		tierSlot={THIS_SLOT}
+		otherHost={OTHER_ORIGIN}
+		otherHome={OTHER_HOME}
+		routes={TIER_ROUTES}
+		selfRepo={THIS_TIER}
+	/>
+	<!-- THE HITCH FLAG — this child's own control, not the tier switcher.
+	     Same pill SHAPE, different question: the switcher asks which tier is
+	     serving the page, this asks whether the surrogate parent is lending
+	     its decor. Kept here because only this child has the decor to lend. -->
+	<div class="hitch">
+		<button
+			type="button"
+			class="pill"
+			onclick={() => (hitched = !hitched)}
+			title="Which HostPorts object is wired in right now — retreeverPorts.ts (proprietary, in ReTreever) or the child's own literal fixture. See docs/TODO.md 'The pill'."
+		>
+			<span class:on={hitched}>retreever</span><span class:on={!hitched}>rapper</span>
+		</button>
+	</div>
 {/if}
 
 <main>
