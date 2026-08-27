@@ -118,6 +118,8 @@ export interface DebugReport {
 	capturedAt: string;
 	route: string;
 	env: {
+		/** "(unconfigured)" when no app called configureTilesHost() — a real
+		 *  state worth seeing in a report, not an absent field. */
 		tilesHost: string;
 		/** WHICH worker served this session — production / localDev.
 		 *  Without it a report is ambiguous: identical-looking bad output from
@@ -273,7 +275,7 @@ export async function collectDebugReport(
 		capturedAt: new Date().toISOString(),
 		route: live.route ?? "unknown",
 		env: {
-			tilesHost: tilesHost(),
+			tilesHost: tilesHost() ?? "(unconfigured)",
 			workerTarget: getWorkerTarget(),
 			blobTileZ: BLOB_TILE_Z,
 			gridRadiusKm: GRID_RADIUS_KM,
@@ -348,7 +350,7 @@ export async function collectFocusedBlobReport(
 		capturedAt: new Date().toISOString(),
 		route: live.route ?? "unknown",
 		env: {
-			tilesHost: tilesHost(),
+			tilesHost: tilesHost() ?? "(unconfigured)",
 			workerTarget: getWorkerTarget(),
 			blobTileZ: BLOB_TILE_Z,
 			gridRadiusKm: GRID_RADIUS_KM,

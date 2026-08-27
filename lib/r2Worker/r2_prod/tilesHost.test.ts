@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
 	DEFAULT_TARGET,
 	LOCAL_DEV_HOST,
-	PRODUCTION_HOST,
+	configureTilesHost,
 	getWorkerTarget,
 	packUrl,
 	setWorkerTarget,
@@ -21,15 +21,34 @@ import {
 	tilesHost,
 } from "./tilesHost";
 
+/**
+ * A STAND-IN, BECAUSE THERE IS NO PRODUCTION-HOST CONSTANT TO IMPORT ANY MORE.
+ *
+ * These tests imported one until 27 Aug 2026. It is gone: it baked the
+ * maintainer's R2 origin into a package strangers install, so the host is now
+ * supplied by the app at boot via configureTilesHost(). See tilesHost.ts.
+ *
+ * What these tests are about is unchanged — that the two targets switch
+ * TOGETHER and are read per call. That property has nothing to do with which
+ * origin production points at, so any origin proves it. A .test domain also
+ * means a copy-paste of this file can never aim a real request anywhere.
+ *
+ * "No default is baked in" is covered separately, in ../tilesHostConfig.test.ts.
+ */
+const TEST_HOST = "https://tiles.example.test";
+
 beforeEach(() => {
 	sessionStorage.clear();
+	// Module state, so it is re-established per test — see tilesHost.ts on why
+	// the host is module-level rather than a parameter.
+	configureTilesHost(TEST_HOST);
 });
 
 describe("worker target", () => {
 	it("defaults to production, with no stored override", () => {
 		expect(DEFAULT_TARGET).toBe("production");
 		expect(getWorkerTarget()).toBe("production");
-		expect(tilesHost()).toBe(PRODUCTION_HOST);
+		expect(tilesHost()).toBe(TEST_HOST);
 	});
 
 	it("switches every URL together — no split-brain", () => {
@@ -40,8 +59,8 @@ describe("worker target", () => {
 		expect(firesUrl()).toBe(`${LOCAL_DEV_HOST}/fires`);
 
 		setWorkerTarget("production");
-		expect(packUrl()).toBe(`${PRODUCTION_HOST}/pack`);
-		expect(firesUrl()).toBe(`${PRODUCTION_HOST}/fires`);
+		expect(packUrl()).toBe(`${TEST_HOST}/pack`);
+		expect(firesUrl()).toBe(`${TEST_HOST}/fires`);
 	});
 
 	it("URLs are read per call, so a switch takes effect without a reload", () => {
@@ -57,7 +76,7 @@ describe("worker target", () => {
 	it("ignores a corrupt or hostile stored value", () => {
 		sessionStorage.setItem("rt_worker_target", "https://evil.example.com");
 		expect(getWorkerTarget()).toBe(DEFAULT_TARGET);
-		expect(tilesHost()).toBe(PRODUCTION_HOST);
+		expect(tilesHost()).toBe(TEST_HOST);
 	});
 
 	it("the override is gated on import.meta.env.DEV in BOTH directions", () => {

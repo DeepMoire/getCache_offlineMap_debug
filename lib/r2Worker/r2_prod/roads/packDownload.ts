@@ -682,8 +682,19 @@ export async function downloadV4Area(
 	// trade: a cache miss costs seconds, a displaced blob makes the feature useless.
 	const qLng = lng.toFixed(6);
 	const qLat = lat.toFixed(6);
+	// NO HOST, NO REQUEST. packUrl() is null until the app calls
+	// configureTilesHost() — see the header of ../tilesHost.ts. Interpolating
+	// null would fetch the literal string "null?lng=..." against the current
+	// origin, which 404s and reads as "the offline map is broken" rather than
+	// "nobody told it where the tiles live". Throw with the fix in the message.
+	const packEndpoint = packUrl();
+	if (packEndpoint === null) {
+		throw new Error(
+			"[v4] no tiles host configured — call configureTilesHost(<origin>) at app boot before downloading a pack.",
+		);
+	}
 	const res = await fetch(
-		`${packUrl()}?lng=${qLng}&lat=${qLat}&pv=${PACK_FORMAT_VERSION}${ringParam}`,
+		`${packEndpoint}?lng=${qLng}&lat=${qLat}&pv=${PACK_FORMAT_VERSION}${ringParam}`,
 		{ signal: AbortSignal.timeout(150_000) },
 	);
 	if (!res.ok) {
