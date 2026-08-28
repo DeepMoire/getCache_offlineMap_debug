@@ -9,7 +9,7 @@
  * careless: the two folders hold byte-for-byte identical files, so any tool or
  * agent auditing for duplication reports one as redundant and is CORRECT ABOUT
  * THE BYTES. It is wrong about the world. One of these is deployed to
- * Cloudflare and serves live traffic at tiles-prod.retreever.org; the other runs on
+ * Cloudflare and serves live traffic at tiles-prod.getcache.org; the other runs on
  * a laptop at 127.0.0.1:8787 and exists to be broken. Same code, different
  * moment in its life. The gap between them is TIME, not content.
  *
@@ -41,7 +41,7 @@ describe("r2Worker keeps BOTH environments", () => {
 				`r2Worker/${env}/ is MISSING.\n\n` +
 					`You (or a tool) deleted an ENVIRONMENT, not a duplicate.\n` +
 					`  local_dev/ = the worker running on your machine (127.0.0.1:8787)\n` +
-					`  r2_prod/   = the worker DEPLOYED to tiles-prod.retreever.org, serving users\n\n` +
+					`  r2_prod/   = the worker DEPLOYED to tiles-prod.getcache.org, serving users\n\n` +
 					`They hold identical bytes on purpose: the same code at two stages of\n` +
 					`readiness. That is what lets you break dev all day without touching\n` +
 					`what is live.\n\n` +

@@ -16,6 +16,7 @@
 import { onMount } from "svelte";
 import {
 	getWorkerTarget,
+	LOCAL_DEV_HOST,
 	probeTarget,
 	setWorkerTarget,
 	type WorkerTarget,
@@ -72,17 +73,20 @@ const TARGETS: {
 	{
 		id: "production",
 		label: "r2_prod",
-		hint: "tiles-prod.retreever.org — what every shipped phone talks to. Deployed by ./deployProduction.sh, which asks for confirmation first.",
+		hint: "tiles-prod.getcache.org — what every shipped phone talks to. Deployed by ./deployProduction.sh, which asks for confirmation first.",
 	},
 	{
 		id: "r2Dev",
 		label: "r2_dev",
-		hint: "tiles-dev.retreever.org — a DEPLOYED sandbox worker reading the same R2 data as r2_prod, so any difference between them is code, never data. No shipped phone ever reads it.",
+		hint: "tiles-dev.getcache.org — a DEPLOYED sandbox worker reading the same R2 data as r2_prod, so any difference between them is code, never data. No shipped phone ever reads it.",
 	},
 	{
 		id: "localDev",
 		label: "local_dev",
-		hint: "127.0.0.1:8787 — `npx wrangler dev --remote` in workers/offline-tiles. THE ONLY TARGET A CONTRIBUTOR CAN REACH: it runs against THEIR Cloudflare account and THEIR bucket, so nobody needs a key to this one. Greyed out until that terminal is running, which is expected, not broken.",
+		// Interpolated, never retyped. A hand-copied hostname in a hint is a
+		// fourth spelling waiting to happen — this row said "127.0.0.1:8787"
+		// for a day after the constant had moved on.
+		hint: `${LOCAL_DEV_HOST} — \`npm run dev:local\` in workers/offline-tiles. THE ONLY TARGET A CONTRIBUTOR CAN REACH: that script seeds wrangler's local R2 with a public sample archive, so it needs no Cloudflare account and no key. Greyed out until that terminal is running, which is expected, not broken.`,
 	},
 ];
 
@@ -157,7 +161,7 @@ onMount(() => {
 			disabled={reachable[t.id] === false}
 			onclick={() => pickTarget(t.id)}
 			title={reachable[t.id] === false
-				? `${t.label} is not answering — ${t.id === "localDev" ? "start it with `npm run dev` in workers/offline-tiles (add --remote to reach R2)" : "the Worker is unreachable from here"}`
+				? `${t.label} is not answering — ${t.id === "localDev" ? "start it with `npm run dev:local` in workers/offline-tiles — no account needed" : "the Worker is unreachable from here"}`
 				: t.hint}
 		>
 			<span class="cfg-label">{t.label}</span>

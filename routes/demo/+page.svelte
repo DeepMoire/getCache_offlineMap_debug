@@ -503,16 +503,26 @@ onMount(() => {
 	overflow: hidden;
 }
 
-/* THE STAGE — fixed to the viewport, exactly like the app's own
-   .mobile-preview-backdrop. `container-type: size` is what makes 100cqh below
-   resolve against THIS box, which is how the phone gets fitted to the window. */
+/* THE STAGE — fills the SLOT ITS HOST GAVE IT, not the viewport.
+   `container-type: size` is what makes 100cqh below resolve against THIS box,
+   which is how the phone gets fitted to the space available. */
 .stage {
-	position: fixed;
-	/* Start below whatever chrome the HOST reserved. --host-chrome defaults to
-	   0, so a standalone checkout is pinned to the viewport exactly as before;
-	   a host that puts a bar above the child sets it and the stage moves down.
-	   The child never learns what the bar is. */
-	inset: var(--host-chrome, 0px) 0 0 0;
+	/* absolute, NOT fixed. This is the whole header/footer fix.
+	   `fixed` anchors to the VIEWPORT, so the stage covered the host's top bar
+	   and tab bar no matter what either of them did — the debugger sat ON TOP
+	   of the chrome instead of between it. `absolute` anchors to the nearest
+	   positioned ancestor instead: mounted in ReTreever that is
+	   `.mobile-content` (flex:1, position:relative — the box BETWEEN
+	   TopBarMobile and TabBarMobile), and standalone it is the body. One rule,
+	   correct in both tiers, because the host's own flexbox has already done
+	   the measuring.
+	   This DELETES the --host-chrome workaround rather than extending it: that
+	   var subtracted the header's height from the top and hardcoded 0 for the
+	   bottom, so a footer could never be accounted for at all — and it only
+	   worked while the child's guess about the host's bar stayed in sync with
+	   the host. A child that fills its slot needs no such guess. */
+	position: absolute;
+	inset: 0;
 	container-type: size;
 	display: flex;
 	/* Rails hang from the TOP so the read-outs start where the eye does; the rig

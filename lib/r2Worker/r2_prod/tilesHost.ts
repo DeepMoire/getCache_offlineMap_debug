@@ -3,7 +3,7 @@
  *
  * ⛔ WHY THIS FILE EXISTS AT ALL
  *
- * `wrangler deploy` publishes straight to tiles.retreever.org — the hostname
+ * `wrangler deploy` publishes straight to tiles-prod.getcache.org — the hostname
  * every shipped phone talks to. A local override lets a Worker change be
  * tried on your own machine, against the real R2 bucket, before it ever
  * reaches that hostname.
@@ -42,7 +42,7 @@
  *
  * This file used to open with:
  *
- *     export const PRODUCTION_HOST = "https://tiles.retreever.org";
+ *     export const PRODUCTION_HOST = "https://tiles-prod.getcache.org";
  *
  * That is a bill, not a default. This child is published as its own AGPL
  * package, so a stranger who installed it streamed tiles off the maintainer's
@@ -95,14 +95,14 @@ export function isTilesHostConfigured(): boolean {
 	return configuredHost !== null;
 }
 /**
- * THE LOCAL TIER — `tiles-local.retreever.org`, the third of dev/prod/local.
+ * THE LOCAL TIER — `tiles-local.getcache.org`, the third of dev/prod/local.
  *
  * ⛔ ONE CONVENTION, READ AT A GLANCE. The three tiers are named the same way
  * on purpose: tiles-prod / tiles-dev / tiles-local. A bare IP here broke that
  * — it was the one row you could not read as a tier, and the panel showed
  * "127.0.0.1:8787" beside two dotted hostnames.
  *
- * `tiles-local.retreever.org` is a DNS record pointing at 127.0.0.1. It costs
+ * `tiles-local.getcache.org` is a DNS record pointing at 127.0.0.1. It costs
  * nothing (no Worker, no bill, no Cloudflare account for whoever uses it) and
  * resolves to the developer's own machine, exactly as the bare IP did. It is a
  * NAME for localhost, not a server.
@@ -112,18 +112,20 @@ export function isTilesHostConfigured(): boolean {
  * which is precisely the failure that cost 27 Aug 2026. Flip LOCAL_HOST_NAME
  * to the hostname the day the record is created, and not before.
  *
- * `wrangler dev --remote` in workers/offline-tiles serves it. `--remote` is
- * required to reach the real R2 bucket — the checked-in planet.pmtiles is a
- * 0-byte placeholder.
+ * `npm run dev:local` in workers/offline-tiles serves it. That script seeds
+ * wrangler's LOCAL R2 simulator with a public sample archive first, so it needs
+ * no Cloudflare account and no key — which is what makes this the one tier an
+ * outside contributor can reach. `wrangler dev --remote` still works if you DO
+ * have credentials and want the real planet archive.
  */
-const LOCAL_HOST_NAME = "127.0.0.1:8787"; // → "tiles-local.retreever.org" once DNS exists
+const LOCAL_HOST_NAME = "127.0.0.1:8787"; // → "tiles-local.getcache.org" once DNS exists
 export const LOCAL_DEV_HOST = `http://${LOCAL_HOST_NAME}`;
 
 /**
  * THE THREE PLACES BLOBS CAN COME FROM. Chris's naming, 27 Aug 2026.
  *
- *   production / r2_prod — tiles.retreever.org. Every shipped phone. Real users.
- *   r2Dev      / r2_dev  — tiles-dev.retreever.org. A deployed sandbox worker.
+ *   production / r2_prod — tiles-prod.getcache.org. Every shipped phone. Real users.
+ *   r2Dev      / r2_dev  — tiles-dev.getcache.org. A deployed sandbox worker.
  *   localDev   / local_dev — 127.0.0.1:8787, `wrangler dev --remote`.
  *
  * The r2_prod / r2_dev / local_dev spellings are what the CONFIG panel shows
@@ -134,7 +136,7 @@ export const LOCAL_DEV_HOST = `http://${LOCAL_HOST_NAME}`;
  * for dropping it was that `wrangler dev --remote` tests the same thing with
  * less upkeep. True — but it only works while a terminal is open, and the day
  * that terminal was closed the switch went dead and read as a broken app.
- * MEASURED the same day: tiles-dev.retreever.org was STILL LIVE and still
+ * MEASURED the same day: tiles-dev.getcache.org was STILL LIVE and still
  * serving the pre-fix v29 build, months after its config block was deleted —
  * so the upkeep was being paid without the benefit. Adopting it is cheaper
  * than pretending it is gone.

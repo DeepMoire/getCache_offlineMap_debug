@@ -257,18 +257,6 @@ let { children } = $props();
 	     harness mark on a Get Cache page. -->
 	<title>{`${CHILD.owner} — ${CHILD.name}`}</title>
 	<link rel="icon" href={logoUrl} />
-	{#if dev}
-		<!-- How much room the bar takes off the top. A child that owns the
-		     viewport starts below it; one that doesn't is unaffected. Declared
-		     only while the bar exists, so production reserves nothing. -->
-		<style>
-			:root {
-				/* Matches the real ReTreever / Get Cache navbar: 64px bar plus
-				   the 3px gold rule under it. */
-				--host-chrome: 67px;
-			}
-		</style>
-	{/if}
 	{#if dev && featureOn}
 		<!-- FEATURE FLAG ON — HITCHED. rapper stands in for the parent and
 		     lends the child its full-dress version: the child reads --host-decor
@@ -404,7 +392,31 @@ let { children } = $props();
 		color: #111;
 		font-weight: 600;
 	}
+	/* The child's OWN dev shell, standalone (port 5174 / this checkout's
+	   `npm run dev`). It has to be a real, positioned, SIZED box because the
+	   stage inside it is `position: absolute; inset: 0` — absolute needs a
+	   positioned ancestor to resolve against, and `min-height` alone gives it
+	   no height to fill. This is the standalone mirror of ReTreever's
+	   `.mobile-content`: same job, same shape, so the same child rule is
+	   correct in both tiers.
+	   `--host-chrome` is gone from here — the bar above is a real element in
+	   the flow, so its height is already subtracted by the flex column rather
+	   than guessed at by a hand-copied 67px that silently rotted whenever the
+	   real navbar changed. */
+	:global(body) {
+		margin: 0;
+		height: 100dvh;
+		overflow: hidden;
+		/* The dev bar and <main> are direct body children, so BODY is the flex
+		   column. No wrapper div: adding one here would be a second box in the
+		   height chain for no gain. */
+		display: flex;
+		flex-direction: column;
+	}
 	main {
-		min-height: calc(100dvh - var(--host-chrome, 0px));
+		flex: 1;
+		min-height: 0;
+		position: relative;
+		overflow: hidden;
 	}
 </style>

@@ -44,7 +44,7 @@ folders.
 | folder | where it runs | how it gets there | when it is wrong |
 |---|---|---|---|
 | `local_dev/` | your machine, `http://127.0.0.1:8787` | `wrangler dev --remote` in `/Users/chrisharris/DEV/fetch/ReTreever/workers/offline-tiles/` | nobody notices but you |
-| `r2_prod/` | Cloudflare, `https://tiles-prod.retreever.org` | `deployProduction.sh` in the same worker folder | **every user's map breaks** |
+| `r2_prod/` | Cloudflare, `https://tiles.retreever.org` | `deployProduction.sh` in the same worker folder | **every user's map breaks** |
 
 That last column is the whole point. They are the same code at different
 moments in its life: you develop against `local_dev`, you scream at it, you fix
@@ -58,7 +58,7 @@ why the identical-ness is not a bug.
 
 - **local** — the app fetches tiles from `127.0.0.1:8787`. You are building the
   assets on your own machine. Nothing you do reaches a user.
-- **cloud / production** — the app fetches from `tiles-prod.retreever.org`. This is
+- **cloud / production** — the app fetches from `tiles.retreever.org`. This is
   what a phone in a forest actually talks to.
 
 Both hosts are named in `tilesHost.ts` as `LOCAL_DEV_HOST` and
@@ -72,7 +72,7 @@ is not re-derived.
 
 Because then there is no way to change dev without touching what is live. The
 duplication IS the safety: you can rewrite `local_dev/` freely, all day, and
-`tiles-prod.retreever.org` keeps serving the old code until you deliberately deploy.
+`tiles.retreever.org` keeps serving the old code until you deliberately deploy.
 Collapse them and every local experiment is one `wrangler deploy` away from
 being live.
 

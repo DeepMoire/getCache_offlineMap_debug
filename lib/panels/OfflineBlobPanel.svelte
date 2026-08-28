@@ -63,6 +63,53 @@ function kb(n: number): string {
 		: `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/**
+ * A ticking NOW, so the "3m ago" labels below age by themselves.
+ *
+ * This is a clock, NOT a poll: it touches no storage. The table itself still
+ * refreshes only on an engine generation bump (see onMount) — re-reading
+ * IndexedDB every second to re-render a string that changes once a minute is
+ * exactly the 1 GB heap sink the byte-split above was added to kill. The
+ * interval is the cheapest thing that can be correct: without it a row baked
+ * "2s ago" keeps claiming 2s an hour later, which is worse than no timestamp
+ * because it reads as fresh.
+ *
+ * 10s, not 1s: the coarsest tick that still lets the seconds bucket look live.
+ */
+let now = $state(Date.now());
+onMount(() => {
+	const id = setInterval(() => (now = Date.now()), 10_000);
+	return () => clearInterval(id);
+});
+
+/**
+ * Epoch ms -> "just now" / "45s ago" / "12m ago" / "3h ago" / "2d ago".
+ *
+ * Deliberately one unit, never "1h 3m": this sits in a dense read-out row
+ * where the QUESTION is "is this stale?", and a single coarse figure answers
+ * it at a glance. `ago` reads off `now` above, so every returned string is
+ * re-derived whenever the clock ticks.
+ */
+function ago(ts: number | undefined, at: number): string {
+	if (!ts) return "—";
+	const secs = Math.floor((at - ts) / 1000);
+	// Clock skew (or a record written a tick into the future) must not render
+	// as a negative age; "just now" is the honest reading of "not yet past".
+	if (secs < 5) return "just now";
+	if (secs < 60) return `${secs}s ago`;
+	const mins = Math.floor(secs / 60);
+	if (mins < 60) return `${mins}m ago`;
+	const hrs = Math.floor(mins / 60);
+	if (hrs < 24) return `${hrs}h ago`;
+	return `${Math.floor(hrs / 24)}d ago`;
+}
+
+/** Absolute time for the `title` tooltip — the relative label is for scanning,
+ *  this is for when you actually need to correlate against a log. */
+function stamp(ts: number | undefined): string {
+	return ts ? new Date(ts).toLocaleString() : "unknown";
+}
+
 async function refresh(): Promise<void> {
 	try {
 		// Newest first — the pin you just dropped is the one you are debugging.
@@ -152,6 +199,9 @@ onMount(() => {
 							roads {r.hasLines ? `${r.lineCount ?? 0} feat` : "—"}
 						</span>
 						{#if p?.groupName}<span class="dim">{p.groupName}</span>{/if}
+						<span class="when" title="last touched {stamp(r.lastTouched)}">
+							{ago(r.lastTouched, now)}
+						</span>
 					</div>
 				</div>
 			{/each}
@@ -302,6 +352,15 @@ onMount(() => {
 		gap: 0.5rem;
 		margin-top: 0.3rem;
 		color: #8f8b80;
+	}
+	/* Pushed to the row's right edge: the age is the thing you scan DOWN the
+	   column for, so it wants its own lane rather than a position that shifts
+	   with however many chips a row happens to have. */
+	.when {
+		margin-left: auto;
+		color: #8f8b80;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 	.chip {
 		border: 1px solid rgba(255, 255, 255, 0.1);
