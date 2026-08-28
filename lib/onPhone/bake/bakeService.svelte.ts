@@ -308,6 +308,25 @@ function reportRun(more: boolean): void {
 	// exists for exactly this:  localStorage.rtVerbose = 'wall'
 	vlog("wall", line);
 
+	// ⛔ ONE LINE PER PASS AT warn LEVEL, ALWAYS. NOT OPT-IN.
+	//
+	// MEASURED 27 Aug 2026. Chris, for hours: "there's not one single piece of
+	// data coming from the cloud." There was. His own console held
+	//     ✅ GOT 204176 bytes in 8320 ms
+	// and neither of us saw it, because DevTools was on "Custom levels" —
+	// 3,397 info messages hidden — and EVERY line this service prints about
+	// what it actually fetched goes through vlog(), which is console.log,
+	// which is exactly the level being hidden.
+	//
+	// So the app downloaded 204 KB per area, 39 areas a pass, ~8.3 s each —
+	// five and a half minutes of real work — and said nothing at a level
+	// anyone could see. Silence read as failure for an entire day.
+	//
+	// A pass is ~5 minutes. One line at its end is not noise; it is the only
+	// evidence the thing is alive. warn, because that is what survives the
+	// default filter. [[no-silent-fallbacks]]
+	console.warn(`[roads] pass done — ${line}`);
+
 	// The ONE exception, and the only thing here that is genuinely news: EVERY
 	// area came back empty. That is not a status tick, it is the Worker
 	// answering wrong — the failure this route cannot show you any other way,
