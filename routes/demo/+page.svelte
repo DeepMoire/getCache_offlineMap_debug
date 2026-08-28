@@ -35,6 +35,15 @@ import { onMount } from "svelte";
 // CONTRIBUTING.md rules out. The alias is a seam each parent fills for itself,
 // so this file names no parent and still resolves under both.
 import handPhoneUrl from "$parent/retreeved/sharedAssets/hand_phoneV3.webp";
+// The app's OWN grab hand, replacing MapLibre's stock white glove on the map
+// canvas. Same seam and same reason as the phone hand above: it is the parent's
+// art, so it lives in `retreeved/sharedAssets` (ReTreever owns that folder and
+// syncRetreeved.sh carries it to rapper) and the child imports it through the
+// alias. ReTreever's SnakeRuler uses the very same file via its own static URL
+// `/mobileAssets/...`, which a child cannot use — that path only exists on the
+// ReTreever server and 404s in a standalone checkout. Importing it makes the
+// bytes part of THIS build, so the cursor is correct in every tier.
+import grabCursorUrl from "$parent/retreeved/sharedAssets/hand_shovel_cursor.webp";
 import { initializeOfflineMap } from "../../lib/onPhone/render/offlineMapInit";
 import { buildOfflineBaseStyle } from "../../lib/onPhone/render/offlineBaseStyle";
 import { v4TransformRequest } from "../../lib/r2Worker/local_dev/roads/packDownload";
@@ -393,7 +402,10 @@ onMount(() => {
      itself would fight whatever surrogate parent mounts it, and would carry a
      hard-coded product name into a repo meant to be handed out. -->
 
-<div class="stage">
+<!-- --grab-cursor carries the COMPLETE url() token (see .map-canvas rules):
+     the bundler rewrites `grabCursorUrl` to the built asset path, so the cursor
+     resolves in every tier without any tier-specific URL in the CSS. -->
+<div class="stage" style="--grab-cursor: url({grabCursorUrl});">
 	<!-- LEFT RAIL — ONE component. Both read-outs live inside it so they share a
 	     stacking context and can never drift apart or slide under the hand. It
 	     sits 15px clear of the phone — see .stage's gap and, more importantly,
@@ -671,6 +683,27 @@ onMount(() => {
 .map-canvas {
 	position: absolute;
 	inset: 0;
+}
+/* THE GRAB HAND. MapLibre ships a stock white glove for `grab`/`grabbing`,
+   which reads as "generic web map" — the opposite of what this demo is for.
+   These override its canvas cursors with the app's own hand.
+   `11 5` is the hotspot (the fingertip), matching SnakeRuler.svelte so the
+   pointer lands in the same place here as it does in the real app — a cursor
+   whose hotspot disagrees between two screens feels broken even when nobody
+   can say why. The trailing `grab`/`grabbing` are the fallbacks for the moment
+   before the image loads, or if it ever fails to.
+   `--grab-cursor` carries the WHOLE `url(...)` token, set from the import on
+   .stage below. `url(var(--x))` does not work — the var has to supply the
+   complete function, not just its argument.
+   `:global` because the canvas and its container are MapLibre's own elements,
+   not this component's markup, so Svelte would otherwise scope these away. */
+:global(.map-canvas .maplibregl-canvas-container.maplibregl-interactive),
+:global(.map-canvas .maplibregl-canvas-container.maplibregl-interactive .maplibregl-canvas) {
+	cursor: var(--grab-cursor) 11 5, grab;
+}
+:global(.map-canvas .maplibregl-canvas-container.maplibregl-interactive:active),
+:global(.map-canvas .maplibregl-canvas-container.maplibregl-interactive:active .maplibregl-canvas) {
+	cursor: var(--grab-cursor) 11 5, grabbing;
 }
 /* THE ON-MAP POPOVER. Positioned in the phone's own coordinate space (.phone
    is position:absolute), with left/top set per-frame from map.project(). The

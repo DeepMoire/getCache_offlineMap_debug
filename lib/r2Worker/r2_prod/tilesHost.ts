@@ -243,6 +243,9 @@ export const TILES_HOST_LABEL = "see tilesHost()";
  * without a single R2 read, so this costs nothing even against production.
  * (/bench does 500 range reads by default — never use it as a liveness check.)
  */
+/** Last failure reason per host, so a repeated probe does not repeat the log. */
+const lastProbeFailure: Record<string, string> = {};
+
 export async function probeTarget(
 	t: WorkerTarget,
 	timeoutMs = 1500,
@@ -263,8 +266,33 @@ export async function probeTarget(
 		// and treating "wrong status" as "absent" would grey out a Worker that
 		// is up but answering differently than expected.
 		return true;
-	} catch {
-		// codestyle-allow-swallow: unreachable IS the answer here, not an error.
+	} catch (err) {
+		// SAY WHY, NOT JUST THAT.
+		//
+		// This catch used to swallow the reason, and "unreachable" covered two
+		// completely different problems with completely different fixes:
+		// the Worker is down (deploy it) vs the NAME does not resolve (a stale
+		// negative DNS entry on a resolver you may not even own).
+		//
+		// MEASURED 27 Aug 2026: tiles-prod.getcache.org was deployed, live, and
+		// serving 342 KB to curl, while this panel greyed it out and the app
+		// showed ERR_NAME_NOT_RESOLVED. The resolver was caching NXDOMAIN from
+		// before the record existed, with a 30-minute negative TTL. An hour went
+		// into "the Worker is broken" because the probe could not tell the two
+		// apart. The browser knew; we discarded it.
+		//
+		// Logged once per host, not per probe — probeAll runs on every mount.
+		const why = err instanceof Error ? err.message : String(err);
+		if (lastProbeFailure[host] !== why) {
+			lastProbeFailure[host] = why;
+			const dns = /name not resolved|ERR_NAME|getaddrinfo|ENOTFOUND/i.test(why);
+			console.warn(
+				`[tiles] ${t} probe failed: ${why}` +
+					(dns
+						? ` — this is DNS, NOT the Worker. The name did not resolve, so nothing was ever contacted. If it was deployed recently a resolver may be caching "does not exist" for up to 30 min (check: dig +short ${new URL(host).hostname}).`
+						: " — something answered the name but not the request."),
+			);
+		}
 		return false;
 	} finally {
 		clearTimeout(timer);
