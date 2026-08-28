@@ -84,7 +84,7 @@ import type { HostPorts } from "./shared/hostPorts";
    the other. Twice it was "moved off the nav" by relocating it within that
    same file, which changed nothing: the file is the nav. It is now mounted
    here, beside the stage, so every tier that serves this page gets it. */
-import ParentPill from "$parent/retreeved/sharedComponents/ParentPill/ParentPill.svelte";
+import ParentPill from "$parent/retreeved/sharedComponents/sharedNav/ParentPill/ParentPill.svelte";
 import { TIER_HOME, otherTierOrigin, otherTierPath } from "$parent/retreeved/sharedComponents/sharedNav/tierRoutes";
 import { page as sveltePage } from "$app/state";
 import OfflineWorkMeter from "./shared/OfflineWorkMeter.svelte";
