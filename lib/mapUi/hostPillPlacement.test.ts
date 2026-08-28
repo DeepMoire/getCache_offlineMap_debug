@@ -30,7 +30,7 @@ import { describe, expect, it } from "vitest";
  * DOCK — src/lib/core/map/HostPillDock.svelte. ReTreever's mount: the portal out
  * of the phone frame, `position: fixed`, and the tier facts passed as PROPS.
  *
- * SHARED — retreeved/sharedComponents/sharedNav/ParentPill/ParentPill.svelte.
+ * SHARED — retreeved/sharedComponents/ParentPill/ParentPill.svelte.
  * The pill
  * itself, rendered by BOTH tiers from one file that ReTreever owns and the sync
  * atomically replaces into rapper. It names no tier: it is told two labels.
