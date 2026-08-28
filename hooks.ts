@@ -28,7 +28,11 @@ import type { Reroute } from "@sveltejs/kit";
  * KEEP IN STEP with this child's `defaultPath` in retreeved/childRegistry.ts —
  * that record is what the nav and the printed url read.
  */
-const SERVED: string[] = [];
+// Dev-only endpoints are "views" too as far as the reroute is concerned: an
+// unknown path collapses to DEFAULT, which would hand a fetch("/api/…") the
+// map page's HTML with a 200. The parent-guard light's endpoint is the one
+// for now — see lib/dev/parentGuard.server.ts.
+const SERVED: string[] = ["/api/parentGuard"];
 const DEFAULT = "/offline";
 
 export const reroute: Reroute = ({ url }) => {

@@ -1,0 +1,68 @@
+/*
+ * DEV CARD — the one look for every debugging card on the offline map.
+ *
+ * Lifted verbatim from OfflineWorkMeter.svelte ("MAP DEBUGGER"), which is the
+ * reference style. That file's own note said the tokens were "matched rather
+ * than pulled from a shared token file — there isn't one for this component
+ * pair yet". This is that file. Until every card imports it, the three cards
+ * drift: on 28 Aug 2026 "offline blobs" had a lit header band and a lowercase
+ * title, CONFIG had a translucent brown body, a 1.6rem centred title and a
+ * 10px radius, and only MAP DEBUGGER looked like the design handoff.
+ *
+ * USE: `import "../shared/devCard.css";` in the card, then
+ *   <div class="dev-card">            body: bg, border, radius, padding, mono
+ *     <div class="dev-card__head">    one row, flex, gap
+ *       <span class="dev-card__title">name</span>   gold Inter 800 13px CAPS
+ *
+ * A card keeps its own classes for everything below the header. Only the
+ * shell and the title are shared — that is all the eye compares across cards.
+ * Tokens are exposed as custom properties on .dev-card so a card's own rules
+ * can use var(--gold) etc. instead of re-typing hex.
+ */
+.dev-card {
+	--bg: #0a0a0a;
+	--panel: #141414;
+	--panel3: #0f0f0f;
+	--border: rgba(255, 255, 255, 0.1);
+	--border2: rgba(255, 255, 255, 0.2);
+	--text: #f3f1e9;
+	--muted: #8f8b80;
+	--muted2: #5f5c53;
+	--gold: #eab627;
+	--amber: #d99a3d;
+	--green: #7fbf6a;
+	--blue: #6fb3d9;
+	--red: #e2553f;
+
+	font:
+		12px/1.4 "JetBrains Mono",
+		ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		monospace;
+	color: var(--text);
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	padding: 12px 14px;
+	box-sizing: border-box;
+	box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+
+/* The header is a ROW INSIDE the padding — no band, no border, no fill. */
+.dev-card__head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 10px;
+}
+
+.dev-card__title {
+	font-family: "Inter", -apple-system, sans-serif;
+	font-weight: 800;
+	font-size: 13px;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+	color: var(--gold);
+	white-space: nowrap;
+}

@@ -26,6 +26,7 @@
  */
 import OfflineMapPage from "../../lib/OfflineMapPage.svelte";
 import EphemeralCard from "$parent/retreeved/sharedComponents/effemeralCard/EphemeralCard.svelte";
+import ParentGuardLight from "../../lib/dev/ParentGuardLight.svelte";
 import EphemeralDock from "$parent/retreeved/sharedComponents/effemeralCard/EphemeralDock.svelte";
 
 let debugHost = $state<HTMLElement>();
@@ -34,6 +35,6 @@ let railRightHost = $state<HTMLElement>();
 </script>
 
 <OfflineMapPage {debugHost} {railLeftHost} {railRightHost} />
-<EphemeralCard title="offline map" bind:host={debugHost} />
+<EphemeralCard title="offline map" bind:host={debugHost}><ParentGuardLight /></EphemeralCard>
 <EphemeralDock side="left" top="120px" bind:host={railLeftHost} />
 <EphemeralDock side="right" bind:host={railRightHost} />

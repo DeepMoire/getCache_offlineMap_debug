@@ -35,13 +35,32 @@ import { describe, expect, it } from "vitest";
 const CHILD = fileURLToPath(new URL("..", import.meta.url));
 const EXT = new Set([".svelte", ".ts", ".js", ".css", ".json"]);
 
+/**
+ * TESTS ARE NOT SOURCES.
+ *
+ * The line this guard defends is the BUILD boundary: a file a parent bundles
+ * must not name that parent. A `*.test.*` file never crosses it — vitest runs
+ * it here, no parent ever bundles it — so it is on the guard's own side of the
+ * line. Better than that: the contract and lockstep tests EXIST to look at the
+ * parents (`lib/contract/oneComponent.test.ts` joins "ReTreever" and "rapper"
+ * on purpose; `grid.lockstep.test.ts` reads ReTreever's Worker grid) and skip
+ * when a parent is absent. Eight such lines went red on 28 Aug 2026 and every
+ * one was a test doing its job.
+ *
+ * A test that DOES depend on a parent at runtime and forgets to skip fails
+ * loud and red in a bare clone — the opposite of the silent "it resolves, the
+ * page renders" hole this file is about. So tests are excluded by SHAPE, in
+ * the walker, rather than each one being listed here.
+ */
+const isTest = (name: string) => /\.test\.[^.]+$/.test(name);
+
 function sources(dir: string, out: string[] = []): string[] {
 	for (const e of readdirSync(dir, { withFileTypes: true })) {
 		if (e.name === "node_modules" || e.name === "assets") continue;
 		if (e.name.startsWith(".")) continue;
 		const full = join(dir, e.name);
 		if (e.isDirectory()) sources(full, out);
-		else if (EXT.has(extname(e.name))) out.push(full);
+		else if (EXT.has(extname(e.name)) && !isTest(e.name)) out.push(full);
 	}
 	return out;
 }
@@ -101,8 +120,6 @@ describe("the child names no parent", () => {
 		const offenders: string[] = [];
 
 		for (const file of sources(CHILD)) {
-			// This file is ABOUT the rule; its prose names all three on purpose.
-			if (file.endsWith("noParentNames.test.ts")) continue;
 			const text = readFileSync(file, "utf8");
 			// Joined over two lines so a Symbol.for(...) that WRAPS is still
 			// recognised — the first version tested one line at a time and
