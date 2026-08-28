@@ -51,10 +51,12 @@ import {
 	installRawWallProtocol,
 	rawSourceSpec,
 	RAW_SOURCE,
-	// Used at onMapReady below but never imported — the wall mount threw
-	// `setRawWallBlindHandler is not defined` on EVERY load, so the blind-tile
-	// refresh never armed. Unrelated to the cursor work; found in the console
-	// while verifying it.
+	// BOTH of these are used at onMapReady below and BOTH were missing.
+	// The setter was added when `setRawWallBlindHandler is not defined` threw
+	// on every load; the handler it is HANDED was left out, so the next load
+	// threw `refreshRawTiles is not defined` from inside the callback instead.
+	// Half a fix moved the error one frame later — same broken self-heal.
+	refreshRawTiles,
 	setRawWallBlindHandler,
 } from "../../lib/onPhone/roads/rawWallProtocol";
 import { wallLayers } from "../../lib/onPhone/render/wallStyle";
