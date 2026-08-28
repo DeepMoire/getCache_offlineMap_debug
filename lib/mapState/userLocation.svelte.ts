@@ -10,7 +10,7 @@
  *
  * That is the whole lesson of the map move in one file. A route folder is an
  * ADDRESS — an import and a tag. Anything the rest of the app imports is a
- * library and belongs in $lib, where deleting a route cannot reach it.
+ * library and belongs in the host lib, where deleting a route cannot reach it.
  *
  * It stays in ReTreever and NOT in a child on purpose: background geolocation,
  * Capacitor plugins and notification permissions are tier-1 proprietary code a
@@ -34,9 +34,10 @@ import { toast } from "svelte-sonner";
 import { Capacitor } from "@capacitor/core";
 import { Geolocation } from "@capacitor/geolocation";
 import { safeFlyTo } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
-import { reportSwallowed } from "$lib/mobile/utils/reportSwallowed";
-import { reportGeoError } from "$lib/mobile/utils/reportGeoError";
-import { gpsIsGranted } from "$lib/mobile/utils/captureGps";
+// 28 Aug 2026: reportSwallowed / reportGeoError / gpsIsGranted now come from
+// the host through ../shared/mapHostPorts (ports.ui + ports.gps), handed to
+// createUserLocator — a child may not import the host lib.
+import type { MapHostPorts } from "../shared/mapHostPorts";
 
 const isNative = Capacitor.isNativePlatform();
 
@@ -209,7 +210,17 @@ export function createUserLocator(
     /** Tap the blue dot → the host shows the coordinate pill. Optional so every
      *  other caller (tests, demo scheduler) keeps the old one-arg shape. */
     onDotTap?: () => void,
+    /** The host's door (28 Aug 2026): `ui.reportSwallowed`, `gps.reportError`,
+     *  `gps.isGranted`. Optional to keep the old one/two-arg callers (tests,
+     *  demo scheduler) compiling; without it errors go to console.warn and
+     *  the permission check answers true (the platform prompt still applies). */
+    ports?: Pick<MapHostPorts, "ui" | "gps">,
 ): UserLocator {
+    const reportSwallowed = (scope: string, err: unknown, extra?: Record<string, unknown>) =>
+        ports ? ports.ui.reportSwallowed(scope, err, extra) : console.warn(scope, err, extra);
+    const reportGeoError = (scope: string, err: unknown, extra?: Record<string, unknown>) =>
+        ports ? ports.gps.reportError(scope, err, extra) : console.warn(scope, err, extra);
+    const gpsIsGranted = () => (ports ? ports.gps.isGranted() : Promise.resolve(true));
     let geolocateControl: unknown = null;
     let userLocationMarker: mapboxgl.Marker | null = null;
     /** True while the Marker class is being imported — see setOrUpdateUserMarker. */

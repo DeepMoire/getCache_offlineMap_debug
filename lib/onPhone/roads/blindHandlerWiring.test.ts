@@ -25,7 +25,7 @@ import { join } from "node:path";
  */
 
 const PAGE = readFileSync(
-	join(__dirname, "..", "..", "..", "routes", "demo", "+page.svelte"),
+	join(__dirname, "..", "..", "OfflineMapPage.svelte"),
 	"utf8",
 );
 

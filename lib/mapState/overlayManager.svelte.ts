@@ -8,13 +8,16 @@
 // map, offline V3/V4, preview), so each instance needs its own overlay state.
 // Same shape as createUserLocator(() => map).
 import type { Map as MapboxMap } from "mapbox-gl";
+// 28 Aug 2026: the host store + reportSwallowed now come IN through
+// ../shared/mapHostPorts (a child may not import the host lib); the two overlay
+// stores are siblings in this folder.
 import type {
-	MapSessionFeature,
-	MapStore,
-} from "$lib/mobile/stores/mapStore.svelte";
-import { overlayOpacity } from "$lib/mobile/stores/overlayOpacity.svelte";
-import { overlayVisibility } from "$lib/mobile/stores/overlayVisibility.svelte";
-import { reportSwallowed } from "$lib/mobile/utils/reportSwallowed";
+	MapHostFeature as MapSessionFeature,
+	MapHostPorts,
+	MapHostStore as MapStore,
+} from "../shared/mapHostPorts";
+import { overlayOpacity } from "./overlayOpacity.svelte";
+import { overlayVisibility } from "./overlayVisibility.svelte";
 import type { Coord } from "$parent/siblings/getCache_OnlineMap/lib/coord";
 import { toCoord } from "$parent/siblings/getCache_OnlineMap/lib/coord";
 
@@ -110,10 +113,17 @@ export interface OverlayManager {
 	hideWaiting(): void;
 }
 
+/**
+ * @param ports — the host's door (28 Aug 2026). Only `ports.ui.reportSwallowed`
+ *   is read here: the child cannot import the host's reporter, so the host
+ *   hands it in. Pick<> keeps callers/tests from having to build every port.
+ */
 export function createOverlayManager(
 	getMap: () => MapboxMap | null,
 	mapStore: MapStore,
+	ports: Pick<MapHostPorts, "ui">,
 ): OverlayManager {
+	const reportSwallowed = ports.ui.reportSwallowed;
 	let activeOverlay = $state<{ name: string } | null>(null);
 
 	/** EVERY overlay feature on the active map, in feature order. A map may
@@ -262,8 +272,9 @@ export function createOverlayManager(
 					{
 						// TEMP dev diagnostic (remove with /api/devlog): did
 						// stored labels reach the renderer on this device?
-						const { devlog } = await import("$lib/mobile/utils/devlog");
-						devlog({
+						// 28 Aug 2026: the host's devlog arrives via ports.ui.devlog
+						// (optional — a host without the diagnostic just skips it).
+						ports.ui.devlog?.({
 							evt: "overlay-mounted",
 							key: storageKey,
 							labels: feature.overlayLabels?.length ?? null,

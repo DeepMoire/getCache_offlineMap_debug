@@ -10,7 +10,7 @@
  *
  * That is the whole lesson of the map move in one file. A route folder is an
  * ADDRESS — an import and a tag. Anything the rest of the app imports is a
- * library and belongs in $lib, where deleting a route cannot reach it.
+ * library and belongs in the host lib, where deleting a route cannot reach it.
  *
  * It stays in ReTreever and NOT in a child on purpose: background geolocation,
  * Capacitor plugins and notification permissions are tier-1 proprietary code a
@@ -52,7 +52,9 @@ import type {
 import { LocalNotifications } from "@capacitor/local-notifications";
 import type { Feature, LineString } from "geojson";
 import { toast } from "svelte-sonner";
-import type { MapStore } from "$lib/mobile/stores/mapStore.svelte";
+// 28 Aug 2026: now comes from the host through ../shared/mapHostPorts (MapHostStore = the
+// slice of the host's MapStore this file touches).
+import type { MapHostStore as MapStore } from "../shared/mapHostPorts";
 import { getCurrentPositionOnce } from "./userLocation.svelte";
 
 const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>(

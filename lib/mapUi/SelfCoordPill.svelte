@@ -21,12 +21,13 @@
 -->
 <script lang="ts">
 import type { Map as MapboxMap } from "mapbox-gl";
-import Icon from "$lib/core/icon/Icon.svelte";
-import SharePicker, {
-    type ShareFormat,
-} from "$lib/mobile/components/ui/SharePicker.svelte";
+// Now comes from the host through mapHostPorts (28 Aug 2026). Icon and SharePicker render as ports.ui.*;
+// ShareFormat is the contract's MapShareRow (SharePicker's row shape).
+import type { MapHostPorts, MapShareRow as ShareFormat } from "../shared/mapHostPorts";
 
 type Props = {
+    /** The host's door — Icon + SharePicker come through here. */
+    ports: MapHostPorts;
     /** The map handle — used to project lng/lat → screen pixels. */
     map: MapboxMap | null;
     /** The coordinate to show, or null to hide the pill entirely. */
@@ -40,7 +41,7 @@ type Props = {
     onClose?: () => void;
 };
 
-let { map, coord, formats, onClose }: Props = $props();
+let { ports, map, coord, formats, onClose }: Props = $props();
 
 // Screen position of the coordinate, recomputed as the camera moves.
 let pos = $state<{ x: number; y: number } | null>(null);
@@ -100,7 +101,7 @@ const readout = $derived(
     >
         {readout}
 
-        <SharePicker {formats} side="above">
+        <ports.ui.SharePicker {formats} side="above">
             {#snippet trigger({ toggle })}
                 <button
                     class="rt-selfcoord__btn"
@@ -108,10 +109,10 @@ const readout = $derived(
                     aria-label="Share your GPS location"
                     title="Share your GPS location"
                 >
-                    <Icon name="share" size={16} />
+                    <ports.ui.Icon name="share" size={16} />
                 </button>
             {/snippet}
-        </SharePicker>
+        </ports.ui.SharePicker>
     </div>
 {/if}
 

@@ -13,35 +13,35 @@
   Shares the floating-surface + gesture shell with FeatureMapPopover.
 -->
 <script lang="ts">
-import { iconPath } from "$lib/mobile/utils/icons";
+// iconPath — now the child's own copy in ../shared/icons (28 Aug 2026).
+import { iconPath } from "../shared/icons";
 import type { Feature } from "geojson";
 import { onDestroy, onMount } from "svelte";
 import { fade } from "svelte/transition";
-import MapPopoverShell from "$parent/siblings/getCache_OfflineMap/lib/panels/MapPopoverShell.svelte";
-import Icon from "$lib/core/icon/Icon.svelte";
-import Quality704Deck from "$lib/mobile/components/Quality704Deck.svelte";
-import FaultChip from "$mobRoutes/quality704/FaultChip.svelte";
-import CelebrateHost from "$lib/mobile/animation/CelebrateHost.svelte";
-import { celebrate } from "$lib/mobile/animation/celebrate.svelte";
-import GoldButton from "$lib/mobile/components/ui/GoldButton.svelte";
-import { atvShare } from "$lib/mobile/utils/atvShare.js";
-import { loadInspection } from "$lib/mobile/stores/quality704Core.svelte.js";
-import {
-	plotByGpsKey,
-	type PlotPinData,
-	updateActivePlot,
-	setActiveSpeciesChoices,
-	plotFullCodeByGpsKey,
-	getPendingDrop,
-	pendingDropPinData
-} from "$lib/mobile/stores/quality704Plots.svelte.js";
-import { activeMapNumbering } from "$lib/mobile/stores/quality704Numbering.svelte.js";
-import { copyToClipboard } from "$lib/mobile/utils/copyToClipboard";
-import { reportSwallowed } from "$lib/mobile/utils/reportSwallowed";
-import type { PlotRow } from "../../../routes/quality704/q704";
-import type { MapShareFormat } from "$lib/mobile/utils/kmzExport";
+// MapPopoverShell — same child, so a RELATIVE import (28 Aug 2026).
+import MapPopoverShell from "../panels/MapPopoverShell.svelte";
+// Icon, GoldButton — now come from the host through mapHostPorts as `ports.ui.*` (28 Aug 2026).
+// Quality704Deck, FaultChip, CelebrateHost — now come from the host through
+// mapHostPorts as `ports.q704.*` (28 Aug 2026).
+// celebrate, atvShare — now come from the host through mapHostPorts `ports.q704.*` (28 Aug 2026).
+// loadInspection — now comes from the host through mapHostPorts `ports.q704.loadInspection` (28 Aug 2026).
+// plotByGpsKey, updateActivePlot, setActiveSpeciesChoices, plotFullCodeByGpsKey,
+// getPendingDrop, pendingDropPinData — now come from the host through mapHostPorts
+// `ports.q704.*`; PlotPinData → MapQ704PlotPinData from the contract (28 Aug 2026).
+// activeMapNumbering — now comes from the host through mapHostPorts `ports.q704.*` (28 Aug 2026).
+// copyToClipboard, reportSwallowed — now come from the host through mapHostPorts `ports.ui.*` (28 Aug 2026).
+// PlotRow → MapQ704PlotRow, MapShareFormat — both from the contract; the old
+// three-level relative climb out of the child to routes/quality704/q704 is gone (28 Aug 2026).
+import type {
+	MapHostPorts,
+	MapQ704DeckExports,
+	MapQ704PlotPinData,
+	MapQ704PlotRow,
+	MapShareFormat,
+} from "../shared/mapHostPorts";
 
 let {
+	ports,
 	feature = null,
 	pendingPlotNo = null,
 	bbox,
@@ -51,6 +51,10 @@ let {
 	onClose,
 	onOpenInForm,
 }: {
+	// The host's door — icons, clipboard, and (optionally) the quality-704 plot
+	// stores. `ports.q704` is OPTIONAL: a host with no inspections (the offline
+	// debugger) leaves it out and this popover renders nothing. (28 Aug 2026)
+	ports: MapHostPorts;
 	// VIEW mode: an existing, counted plot's map feature (a real DB-backed pin).
 	feature?: Feature | null;
 	// CREATE mode: the in-flight pending drop's plot number. When set, there is NO
@@ -65,6 +69,15 @@ let {
 	// Jump to the Quality 704 form, focused on this plot number.
 	onOpenInForm: (plotNo: number) => void;
 } = $props();
+
+// The optional quality-704 group. `const` so the `{#if q704}` narrowing in the
+// markup holds inside nested blocks; every store call below goes through it and
+// no-ops (null / "") when the host has no inspections. (28 Aug 2026)
+const q704 = $derived(ports.q704);
+// `use:atvShare` needs a local action — bound here to the host's. (28 Aug 2026)
+function atvShare(node: HTMLElement) {
+	return q704 ? q704.atvShare(node) : undefined;
+}
 
 // NOTE — this popover NEVER discards a plot. Unmounting is not a data event: a
 // store re-render can unmount+remount it freely and the plot rides through
@@ -82,12 +95,13 @@ const isCreate = $derived(pendingPlotNo != null);
 // swiping a fresh plot to file never swapped the popover to the read-only card
 // and never revealed the header Edit pencil until a full close/reopen.
 let plotVersion = $state(0);
-const plot = $derived.by<PlotPinData | null>(() => {
+const plot = $derived.by<MapQ704PlotPinData | null>(() => {
 	void plotVersion;
+	if (!q704) return null;
 	// CREATE: render the popover from the in-memory pending drop (no store row yet).
-	if (isCreate) return pendingDropPinData();
+	if (isCreate) return q704.pendingDropPinData();
 	// VIEW: an existing plot, read from the database via its pin.
-	return mapFeatureKey ? plotByGpsKey(mapFeatureKey) : null;
+	return mapFeatureKey ? q704.plotByGpsKey(mapFeatureKey) : null;
 });
 
 // Fallback number from the pin's own type key (`plot:N`) if the row lookup
@@ -110,7 +124,7 @@ const displayNo = $derived(plot?.displayNo || plot?.plotNo || pinPlotNo);
 // The plot NUMBER is the identity. The full Open LoCode (Plus Code) rides beneath
 // the title as a faint, copyable sub-line — always shown when the plot has a GPS
 // fix to encode. `copyLoCode` writes the FULL code to the clipboard.
-const plotFullCode = $derived(plotFullCodeByGpsKey(mapFeatureKey));
+const plotFullCode = $derived(q704 ? q704.plotFullCodeByGpsKey(mapFeatureKey) : "");
 // The locally-varying TAIL of the full code — the 3 chars before the `+` through
 // the end (e.g. 87G3H2PG+QFG → 2PG+QFG). Shown as a bright accent beside the plot
 // number so the plot reads as "#33 · 2PG+QFG" at a glance; the full code stays on
@@ -125,7 +139,7 @@ let loCodeCopyFailed = $state(false); // clipboard blocked → the button flashe
 let loCodeCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 async function copyLoCode() {
 	if (!plotFullCode) return;
-	const ok = await copyToClipboard(plotFullCode);
+	const ok = await ports.ui.copyToClipboard(plotFullCode);
 	loCodeCopied = ok;
 	loCodeCopyFailed = !ok;
 	if (loCodeCopiedTimer) clearTimeout(loCodeCopiedTimer);
@@ -169,9 +183,9 @@ let block = $state({
 	totalHa: null as number | null,
 	speciesChoices: [] as string[],
 });
-let rows = $state<PlotRow[]>([]);
+let rows = $state<MapQ704PlotRow[]>([]);
 let hydrated = $state(false);
-let deck = $state<Quality704Deck | null>(null);
+let deck = $state<MapQ704DeckExports | null>(null);
 // The deck region — the celebration arm's target (reward plays over the deck).
 let rewardTargetEl = $state<HTMLElement | null>(null);
 
@@ -213,7 +227,9 @@ onDestroy(() => {
 });
 
 onMount(async () => {
-	const saved = await loadInspection();
+	// No q704 host → nothing to load; stay un-hydrated so the write effects never run.
+	if (!q704) return;
+	const saved = await q704.loadInspection();
 	const want = plot?.plotNo || pinPlotNo;
 	if (saved) {
 		block = { ...saved.block, speciesChoices: saved.block.speciesChoices ?? [] };
@@ -233,7 +249,7 @@ onMount(async () => {
 	// FIRST + ONLY write, via updateActivePlot → promotion. (Without this the pill +
 	// swipe track vanished for a just-dropped plot — the reader assumed a store row.)
 	if (rows.length === 0) {
-		const pend = getPendingDrop();
+		const pend = q704.getPendingDrop();
 		if (pend && pend.plotNo === want) {
 			rows = [
 				{
@@ -284,7 +300,7 @@ let saveFailed = $state(false);
 const missingReported = new Set<number>();
 
 $effect(() => {
-	if (!hydrated) return;
+	if (!hydrated || !q704) return;
 	// Snapshot the committed rows' data OUTSIDE any state write, so this effect's
 	// reactive dependency is ONLY the rows (never plotVersion). Writing plotVersion
 	// unconditionally here re-triggered the render, which re-touched rows, which
@@ -296,7 +312,7 @@ $effect(() => {
 	for (const r of rows) {
 		if (r.plotNo == null) continue; // the trailing blank has no number yet.
 		if (!r.committed) continue; // UNCOMMITTED → buffered in memory, not saved.
-		const outcome = updateActivePlot(r.plotNo, {
+		const outcome = q704.updateActivePlot(r.plotNo, {
 			planted: r.planted,
 			plantableSpotsOverride: r.plantableSpotsOverride,
 			plantableSpots: r.plantableSpots,
@@ -313,7 +329,7 @@ $effect(() => {
 			missing = true;
 			if (!missingReported.has(r.plotNo)) {
 				missingReported.add(r.plotNo);
-				reportSwallowed(
+				ports.ui.reportSwallowed(
 					"PlotMapPopoverV2:commit",
 					new Error(
 						`updateActivePlot: no ACTIVE row carries plot #${r.plotNo} — the committed count was NOT persisted`,
@@ -336,8 +352,8 @@ $effect(() => {
 // cheap. This is the write the page gets for free via persistInspection; the popover
 // (targeted writes only) needs it explicitly, or per-map species never persist here.
 $effect(() => {
-	if (!hydrated) return;
-	setActiveSpeciesChoices([...block.speciesChoices]);
+	if (!hydrated || !q704) return;
+	q704.setActiveSpeciesChoices([...block.speciesChoices]);
 });
 
 
@@ -351,6 +367,9 @@ function requestClose() {
 
 </script>
 
+<!-- No quality-704 host (ports.q704 absent) → render NOTHING. The offline
+     debugger host has no inspections; the popover must never throw. (28 Aug 2026) -->
+{#if q704}
 <MapPopoverShell {bbox} {containerWidth} {containerHeight} isPoint={true} wide={true} scrollLocked={focusing}>
 	<div class="plot-pop">
 		<!-- Header: quality glyph + "Quality plot" + actions -->
@@ -367,26 +386,26 @@ function requestClose() {
 			     the header row never wraps. -->
 			{#if counted}
 				<span class="pp-edit">
-					<GoldButton
+					<ports.ui.GoldButton
 						size="sm"
 						ariaLabel="Edit plot in form"
 						title="Edit"
 						onclick={() => onOpenInForm(plotNo)}
 					>
-						{#snippet icon()}<Icon name="edit-tilt" size={18} />{/snippet}
-					</GoldButton>
+						{#snippet icon()}<ports.ui.Icon name="edit-tilt" size={18} />{/snippet}
+					</ports.ui.GoldButton>
 				</span>
 			{/if}
 			<!-- Share only exists for a COUNTED plot. In CREATE mode the plot is
 			     half-done (session-only, no counts yet) — nothing to share. -->
 			{#if counted}
 				<button class="pp-icon" aria-label="Share plot" title="Share" use:atvShare onclick={() => onShare("getcache")}>
-					<Icon name="share" size={18} />
+					<ports.ui.Icon name="share" size={18} />
 				</button>
 			{/if}
 			<!-- No delete: a plot pin is the plot's key; it can't be deleted from
 			     here (convention shared with the feature popover). -->
-			<button class="rt-popover-close" aria-label="Close" title="Close" onclick={requestClose}><Icon name="close-x" /></button>
+			<button class="rt-popover-close" aria-label="Close" title="Close" onclick={requestClose}><ports.ui.Icon name="close-x" /></button>
 		</div>
 
 		<!-- Title = the permanent plot NUMBER (read-only — it's the key). The
@@ -461,16 +480,16 @@ function requestClose() {
 			     the popover swaps to the read-only card (avoids a jarring mid-animation
 			     swap the instant the count is written). -->
 			<div class="pp-deck" bind:this={rewardTargetEl} in:fade={{ duration: 180 }} out:fade={{ duration: 160 }}>
-				<Quality704Deck
+				<q704.Quality704Deck
 					bind:this={deck}
 					bind:block
 					bind:rows
 					showHeader
 					singlePlot
 					mapNumberFor={(r) =>
-						(r.gpsFeatureKey && activeMapNumbering().get(r.gpsFeatureKey)) || 0}
+						(r.gpsFeatureKey && q704.activeMapNumbering().get(r.gpsFeatureKey)) || 0}
 					onFocusingChange={onDeckFocusingChange}
-					onReward={() => celebrate.onInputComplete()}
+					onReward={() => q704.celebrate.onInputComplete()}
 					autoRestoreMissed={false}
 				/>
 			</div>
@@ -507,7 +526,7 @@ function requestClose() {
 				     tightened via its CSS-var knobs to footnote size. -->
 				<div class="pp-fault-strip">
 					{#each faultGroups as [code, count] (code)}
-						<FaultChip {code} {count} />
+						<q704.FaultChip {code} {count} />
 					{/each}
 				</div>
 			{/if}
@@ -529,7 +548,8 @@ function requestClose() {
      CelebrateHost now portals into the phone frame at Z_HANDS (above the footer,
      clipped to the bezel), so no per-host zIndex is needed — it clears the popover
      surface AND the footer by default. -->
-<CelebrateHost target={rewardTargetEl} />
+<q704.CelebrateHost target={rewardTargetEl} />
+{/if}
 
 <style>
 	.plot-pop {

@@ -11,13 +11,15 @@
   tracking singleton and owns the stop.
 -->
 <script lang="ts">
-import Icon from "$lib/core/icon/Icon.svelte";
-import MaskedIcon from "$lib/mobile/components/ui/MaskedIcon.svelte";
+// Now comes from the host through mapHostPorts (28 Aug 2026).
+import type { MapHostPorts } from "../shared/mapHostPorts";
 
 let {
+    ports,
     active,
     onStop,
 }: {
+    ports: MapHostPorts;
     active: boolean;
     onStop: () => void;
 } = $props();
@@ -25,9 +27,9 @@ let {
 
 {#if active}
     <button class="tracking-strip" onclick={onStop} title="Stop tracking">
-        <Icon name="close" size={22} />
+        <ports.ui.Icon name="close" size={22} />
         <span class="tracking-strip__label">TRACKING</span>
-        <MaskedIcon src="/mobileAssets/tracks_goldV3.webp" size={30} color="var(--color-accent)" />
+        <ports.ui.MaskedIcon src="/mobileAssets/tracks_goldV3.webp" size={30} color="var(--color-accent)" />
     </button>
 {/if}
 

@@ -3,9 +3,9 @@ import type { Reroute } from "@sveltejs/kit";
 /**
  * A CLOSED LOOP — every url this install can be given lands on a real page.
  *
- * THE DEFAULT is /offline/debug. "/" resolves here, the nav logo links here, and
- * the dev server prints it. THE SECOND view is /offline. Between them, plus
- * /demo, this child's standalone preview, that is the WHOLE surface of a solo install.
+ * THE DEFAULT is /offline. "/" resolves here, the nav logo links here, and the
+ * dev server prints it. It is also the ONLY view: the debug rails are a toggle
+ * on the map, not a second url. That is the WHOLE surface of a solo install.
  *
  * WHY ANYTHING ELSE COMES BACK RATHER THAN 404ING.
  * Someone who installed one child from npm has no other tier and no second
@@ -28,8 +28,8 @@ import type { Reroute } from "@sveltejs/kit";
  * KEEP IN STEP with this child's `defaultPath` in retreeved/childRegistry.ts —
  * that record is what the nav and the printed url read.
  */
-const SERVED = ["/offline", "/demo"];
-const DEFAULT = "/offline/debug";
+const SERVED: string[] = [];
+const DEFAULT = "/offline";
 
 export const reroute: Reroute = ({ url }) => {
 	// The DEFAULT counts as served too — it is the one url guaranteed to exist.

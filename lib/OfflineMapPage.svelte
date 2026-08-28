@@ -1,6 +1,14 @@
 <script lang="ts">
 /**
- * /offline/debug — the offline map engine, running on nothing.
+ * OfflineMapPage — THE offline map. One component, every tier mounts it.
+ *
+ * Served at /offline by this child and by ReTreever. Lived at routes/demo/
+ * from 23–28 Aug 2026: it was lifted out of ReTreever as the DEBUG map,
+ * named "demo" as the standalone preview, and /offline was bolted on as a
+ * wrapper "for now". The engine IS the page, so it lives in lib/ under its
+ * real name and routes/ holds only the URL that mounts it.
+ *
+ * It runs on nothing.
  *
  * THIS PAGE IS THE POINT OF THE MIGRATION. It proves the engine has no hidden
  * ties to ReTreever: no TinyBase, no Supabase, no auth, no mapStore. Its entire
@@ -48,9 +56,9 @@ import handPhoneUrl from "$parent/retreeved/sharedAssets/hand_phoneV3.webp";
 // stock arrow. The full-size hand_shovel_cursor.webp (24 KB) is over that
 // line, which is why the shovel silently vanished. Keep the _100 cut here.
 import grabCursorUrl from "$parent/retreeved/sharedAssets/hand_shovel_cursor_100.webp";
-import { initializeOfflineMap } from "../../lib/onPhone/render/offlineMapInit";
-import { buildOfflineBaseStyle } from "../../lib/onPhone/render/offlineBaseStyle";
-import { v4TransformRequest } from "../../lib/r2Worker/local_dev/roads/packDownload";
+import { initializeOfflineMap } from "./onPhone/render/offlineMapInit";
+import { buildOfflineBaseStyle } from "./onPhone/render/offlineBaseStyle";
+import { v4TransformRequest } from "./r2Worker/local_dev/roads/packDownload";
 import {
 	installRawWallProtocol,
 	rawSourceSpec,
@@ -62,26 +70,36 @@ import {
 	// Half a fix moved the error one frame later — same broken self-heal.
 	refreshRawTiles,
 	setRawWallBlindHandler,
-} from "../../lib/onPhone/roads/rawWallProtocol";
-import { wallLayers } from "../../lib/onPhone/render/wallStyle";
-import { createSatelliteMount } from "../../lib/onPhone/satellite/mountSatellite";
-import { cameraFromUrl } from "../../lib/shared/cameraFromUrl";
-import { attachDoubleTapToPin } from "../../lib/shared/doubleTapToPin";
-import { startOfflineBakeService } from "../../lib/onPhone/bake/bakeService.svelte";
-import type { HostPorts } from "../../lib/shared/hostPorts";
-import OfflineWorkMeter from "../../lib/shared/OfflineWorkMeter.svelte";
-import OfflineBlobPanel from "../../lib/panels/OfflineBlobPanel.svelte";
-import OfflineConfigPanel from "../../lib/panels/OfflineConfigPanel.svelte";
-import PinLibrary from "../../lib/panels/PinLibrary.svelte";
+} from "./onPhone/roads/rawWallProtocol";
+import { wallLayers } from "./onPhone/render/wallStyle";
+import { createSatelliteMount } from "./onPhone/satellite/mountSatellite";
+import { cameraFromUrl } from "./shared/cameraFromUrl";
+import { attachDoubleTapToPin } from "./shared/doubleTapToPin";
+import { startOfflineBakeService } from "./onPhone/bake/bakeService.svelte";
+import type { HostPorts } from "./shared/hostPorts";
+/* THE TIER PILL — ON THE PAGE, because this file IS the page.
+   It lived in SharedNav.svelte, which is the NAV. Rendering it there meant it
+   only existed where a nav existed, and the two tiers do not render the same
+   nav — so the one real tier switch was present on one server and missing on
+   the other. Twice it was "moved off the nav" by relocating it within that
+   same file, which changed nothing: the file is the nav. It is now mounted
+   here, beside the stage, so every tier that serves this page gets it. */
+import ParentPill from "$parent/retreeved/sharedComponents/ParentPill/ParentPill.svelte";
+import { TIER_HOME, otherTierOrigin, otherTierPath } from "$parent/retreeved/sharedComponents/sharedNav/tierRoutes";
+import { page as sveltePage } from "$app/state";
+import OfflineWorkMeter from "./shared/OfflineWorkMeter.svelte";
+import OfflineBlobPanel from "./panels/OfflineBlobPanel.svelte";
+import OfflineConfigPanel from "./panels/OfflineConfigPanel.svelte";
+import PinLibrary from "./panels/PinLibrary.svelte";
 import {
 	pinAssetPath,
 	type PinKey,
-} from "../../lib/shared/icons";
-import { satImageKey } from "../../lib/onPhone/satellite/satelliteImage";
+} from "./shared/icons";
+import { satImageKey } from "./onPhone/satellite/satelliteImage";
 import {
 	LAYER_TOGGLES,
 	OPT_IN_LAYERS,
-} from "../../lib/onPhone/render/wallLegend";
+} from "./onPhone/render/wallLegend";
 
 /** THE ENTIRE DATA LAYER. Add a pin here and the engine bakes it. */
 const PINS: Array<{ name: string; lngLat: [number, number] }> = [
@@ -171,7 +189,63 @@ let {
 	 */
 	cards,
 	hostPorts,
-}: { rails?: boolean; cards?: boolean; hostPorts?: HostPorts } = $props();
+	/**
+	 * THE PHONE RIG IS FOR A HOST THAT HAS NO PHONE. Standalone (rapper) this
+	 * component IS the phone: the 452×936 rig, the hand, the gold bezel, the
+	 * rails either side. A host that already draws a phone around its routes
+	 * — ReTreever's (getcache) shell — passes `framed={false}` and the rig
+	 * collapses to "fill the box I was given": no bezel, no hand, no scale,
+	 * and the rails become an overlay inside that box. Without it you get a
+	 * phone inside a phone, orange edge and all (seen 28 Aug 2026).
+	 * Same shape as `rails`: one component, one boolean, the host decides.
+	 */
+	framed = true,
+	/**
+	 * WHERE THE DEV CHROME GOES. The tier pill, the `debug` toggle and the
+	 * two instrument rails are transient — they exist in `vite dev` and must
+	 * not ship. Their DATA is this component's (layers, blobs, dropped pins,
+	 * wall status), so they stay owned here; but their PLACE is the host's.
+	 * A page hands in an element — the content box of an EphemeralCard from
+	 * `$parent/retreeved/sharedComponents/effemeralCard` — and the nodes are
+	 * moved into it, wiring, state and scoped styles intact. Absent, they sit
+	 * on the stage as before, which is what a standalone rapper checkout gets.
+	 */
+	debugHost,
+	/**
+	 * WHERE THE RAILS GO. Separate from `debugHost` because they are a
+	 * different kind of thing: the tray holds chrome every page has; the
+	 * rails are this map's own instruments and are large. A page gives each
+	 * an EphemeralDock (same folder as the card). Unset, they stay on the
+	 * stage beside the phone, as rapper draws them.
+	 */
+	railLeftHost,
+	railRightHost,
+}: {
+	rails?: boolean;
+	cards?: boolean;
+	hostPorts?: HostPorts;
+	framed?: boolean;
+	debugHost?: HTMLElement;
+	railLeftHost?: HTMLElement;
+	railRightHost?: HTMLElement;
+} = $props();
+
+/**
+ * PORTAL — move a node into `target`, follow it if it changes, put nothing
+ * back on destroy (Svelte tears the node down itself). A no-op without a
+ * target, so every `use:portal` below is inert until a host asks.
+ */
+function portal(node: HTMLElement, target?: HTMLElement) {
+	if (target) target.appendChild(node);
+	return {
+		update(next?: HTMLElement) {
+			if (next) next.appendChild(node);
+		},
+		destroy() {
+			node.remove();
+		},
+	};
+}
 
 /**
  * THE DEBUG PANELS. One boolean. A button flips it.
@@ -201,6 +275,33 @@ let showPanels = $state(cards ?? rails);
  * gets, EVERY part of the page gets the same one.
  */
 const ports = $derived(hostPorts ?? fixturePorts);
+
+/* Tier facts come from the mounting parent's injected env, exactly as they did
+   when SharedNav computed them. Empty in an npm install and on a deployed
+   build, which is what keeps the pill dev-only without a `dev` check here. */
+const ENV_T = import.meta.env as Record<string, string | undefined>;
+const T_TIER = ENV_T.VITE_RAPPER_TIER ?? "";
+const T_OTHER = ENV_T.VITE_OTHER_TIER ?? "";
+const T_SLOT = (ENV_T.VITE_TIER_SLOT ?? "right") as "left" | "right";
+const T_OTHER_ORIGIN = ENV_T.VITE_OTHER_ORIGIN;
+const T_OTHER_HOME = ENV_T.VITE_OTHER_HOME;
+let T_ROUTES: any[] = [];
+try {
+	T_ROUTES = JSON.parse(ENV_T.VITE_TIER_ROUTES ?? "[]");
+} catch {
+	T_ROUTES = [];
+}
+const tLeft = $derived(T_SLOT === "left" ? T_TIER : T_OTHER);
+const tRight = $derived(T_SLOT === "left" ? T_OTHER : T_TIER);
+const tOtherPath = $derived(otherTierPath(sveltePage.url.pathname, T_ROUTES, T_OTHER_HOME));
+const tOtherOrigin = $derived(
+	otherTierOrigin(tOtherPath, T_ROUTES.map((r: any) => ({ ...r, path: r.otherPath ?? r.path }))),
+);
+const tHref = $derived(
+	T_OTHER_ORIGIN
+		? (tOtherOrigin ?? T_OTHER_ORIGIN) + (tOtherPath ?? TIER_HOME) + sveltePage.url.search
+		: undefined,
+);
 
 let activePin = $state("pin");
 
@@ -559,7 +660,10 @@ onMount(() => {
 <!-- --grab-cursor carries the COMPLETE url() token (see .map-canvas rules):
      the bundler rewrites `grabCursorUrl` to the built asset path, so the cursor
      resolves in every tier without any tier-specific URL in the CSS. -->
-<div class="stage" style="--grab-cursor: url({grabCursorUrl});">
+<div class="stage" class:unframed={!framed} style="--grab-cursor: url({grabCursorUrl});">
+	{#if T_TIER}
+		<div class="tier-pill" use:portal={debugHost}><ParentPill leftLabel={tLeft} rightLabel={tRight} current={T_TIER} href={tHref} /></div>
+	{/if}
 	<!-- THE CAMERA BADGE. OUTSIDE {#if showPanels} on purpose: /offline is the route
 	     you paste a coordinate into, and it is the route with no rails to
 	     report anything. Both routes therefore answer "did my URL land?" the
@@ -571,7 +675,7 @@ onMount(() => {
 	     sits 15px clear of the phone — see .stage's gap and, more importantly,
 	     the margin-inline on .rig that makes that 15px real. -->
 	{#if showPanels}
-	<aside class="rail left">
+	<aside class="rail left" use:portal={railLeftHost}>
 		<OfflineWorkMeter
 			docked
 			route="debug/map"
@@ -593,7 +697,7 @@ onMount(() => {
 		<!-- The hand is scenery, so it is opt-IN: only a host lending its style
 		     asks for it. Without one the phone stands on plain black, which is
 		     what a value-only demo should look like. -->
-		{#if decor}
+		{#if decor && framed}
 			<img
 				class="hand"
 				src={handPhoneUrl}
@@ -612,6 +716,7 @@ onMount(() => {
 		<button
 			type="button"
 			class="debug-toggle"
+			use:portal={debugHost}
 			class:on={showPanels}
 			aria-pressed={showPanels}
 			onclick={() => (showPanels = !showPanels)}
@@ -666,7 +771,7 @@ onMount(() => {
 
 	<!-- RIGHT RAIL — ONE component, mirroring the left. -->
 	{#if showPanels}
-	<aside class="rail right">
+	<aside class="rail right" use:portal={railRightHost}>
 		<OfflineConfigPanel {layers} />
 
 		<!-- ONE pin library, not two. The NEXT PIN picker used to live here, but
@@ -735,6 +840,14 @@ onMount(() => {
 /* THE STAGE — fills the SLOT ITS HOST GAVE IT, not the viewport.
    `container-type: size` is what makes 100cqh below resolve against THIS box,
    which is how the phone gets fitted to the space available. */
+/* The tier pill sits over the stage, top-left; the map's own badges (camera
+   readout, debug) own the top-right. Inside .stage so it scopes with it. */
+.tier-pill {
+	position: absolute;
+	top: 0.5rem;
+	left: 0.6rem;
+	z-index: 60;
+}
 .stage {
 	/* absolute, NOT fixed. This is the whole header/footer fix.
 	   `fixed` anchors to the VIEWPORT, so the stage covered the host's top bar
@@ -900,6 +1013,28 @@ onMount(() => {
 .map-canvas {
 	position: absolute;
 	inset: 0;
+}
+/* UNFRAMED — the host already owns the phone (see the `framed` prop). The rig
+   stops being a fixed-size scaled prop and becomes the whole stage; bezel and
+   hand go with it; the rails slide over the map instead of standing beside
+   it, because a 452px screen has no "beside". Same map, same panels, same
+   camera. */
+.stage.unframed {
+	background: none;
+	background-image: none;
+	gap: 0;
+}
+.stage.unframed .rig {
+	align-self: stretch;
+	flex: 1 1 auto;
+	width: auto;
+	height: auto;
+	transform: none;
+	margin-inline: 0;
+}
+.stage.unframed .phone {
+	border-radius: 0;
+	outline: none;
 }
 /* THE GRAB HAND. MapLibre ships a stock white glove for `grab`/`grabbing`,
    which reads as "generic web map" — the opposite of what this demo is for.

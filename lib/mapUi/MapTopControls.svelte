@@ -8,17 +8,19 @@
     destination is the caller's — pass crowMode + onCrowToggle.
 -->
 <script lang="ts">
-import CrowSwitch from "./CrowSwitch.svelte";
-import {
-    assetFacts,
-    framePath,
-} from "$lib/mobile/animation/registry_anime/sceneRegistry";
+// Now comes from the host through mapHostPorts (28 Aug 2026).
+// CrowSwitch renders as ports.ui.CrowSwitch; the scene registry's
+// assetFacts/framePath are ports.scenes (OPTIONAL — a host without frame
+// animation gets a plain, static eye and no timers, never a throw).
+import type { MapHostPorts } from "../shared/mapHostPorts";
 
 let {
+    ports,
     mapOnly = $bindable(false),
     crowMode,
     onCrowToggle,
 }: {
+    ports: MapHostPorts;
     mapOnly?: boolean;
     crowMode: "online" | "offline";
     onCrowToggle: () => void;
@@ -29,15 +31,18 @@ let {
 //   eye_CLOSE plays when toggling off (open → closed, ends on closed)
 // Frame counts + rate come from THE REGISTRY — eyeBlink.svelte.ts plays the
 // same two folders (faster) and must not carry a second copy of these numbers.
-const EYE_OPEN_FRAMES = assetFacts("eye_OPEN_20fps").frameCount;
-const EYE_CLOSE_FRAMES = assetFacts("eye_CLOSE_20fps").frameCount;
-const EYE_FRAME_MS = 1000 / assetFacts("eye_OPEN_20fps").fps; // 20fps → 50ms
+// No `scenes` port → 1 frame each, and the timer ends on its first tick.
+const scenes = ports.scenes;
+const EYE_OPEN_FRAMES = scenes ? scenes.assetFacts("eye_OPEN_20fps").frameCount : 1;
+const EYE_CLOSE_FRAMES = scenes ? scenes.assetFacts("eye_CLOSE_20fps").frameCount : 1;
+const EYE_FRAME_MS = scenes ? 1000 / scenes.assetFacts("eye_OPEN_20fps").fps : 50; // 20fps → 50ms
 let eyePlaying = $state<"open" | "close" | null>(null);
 let eyeFrame = $state(1);
 let eyeTimer: ReturnType<typeof setInterval> | null = null;
 let navTimer: ReturnType<typeof setTimeout> | null = null;
 
 function playEye(dir: "open" | "close") {
+    if (!scenes) return; // plain fallback: no animation without a scene registry
     if (eyeTimer) clearInterval(eyeTimer);
     eyePlaying = dir;
     eyeFrame = 1;
@@ -67,11 +72,12 @@ function toggleEye() {
 }
 
 const eyeSrc = $derived.by(() => {
-    if (eyePlaying === "open") return framePath("eye_OPEN_20fps", eyeFrame);
-    if (eyePlaying === "close") return framePath("eye_CLOSE_20fps", eyeFrame);
+    if (!scenes) return ""; // no registry → no frame art; the button still toggles
+    if (eyePlaying === "open") return scenes.framePath("eye_OPEN_20fps", eyeFrame);
+    if (eyePlaying === "close") return scenes.framePath("eye_CLOSE_20fps", eyeFrame);
     return mapOnly
-        ? framePath("eye_OPEN_20fps", EYE_OPEN_FRAMES)
-        : framePath("eye_CLOSE_20fps", EYE_CLOSE_FRAMES);
+        ? scenes.framePath("eye_OPEN_20fps", EYE_OPEN_FRAMES)
+        : scenes.framePath("eye_CLOSE_20fps", EYE_CLOSE_FRAMES);
 });
 
 // Measure the top bar at runtime → --top-bar-h so the stack anchors to its
@@ -113,13 +119,18 @@ $effect(() => {
         aria-label={mapOnly ? "Show tools" : "Hide everything but the map"}
         aria-pressed={mapOnly}
     >
-        <img class="eye-frame" src={eyeSrc} alt="" />
+        {#if eyeSrc}
+            <img class="eye-frame" src={eyeSrc} alt="" />
+        {:else}
+            <!-- Plain fallback when the host has no scene registry. -->
+            <span class="eye-frame" aria-hidden="true">{mapOnly ? "◉" : "◎"}</span>
+        {/if}
     </button>
 
     <!-- Crow stacked directly below the eye, same box so the centered art
          lines up on the eye's axis. -->
     <div class="crow-slot">
-        <CrowSwitch mode={crowMode} onToggle={onCrowToggle} />
+        <ports.ui.CrowSwitch mode={crowMode} onToggle={onCrowToggle} />
     </div>
 </div>
 

@@ -9,11 +9,14 @@
 -->
 <script lang="ts">
 import type { Feature } from "geojson";
-import FeatureDetail from "./FeatureDetail.svelte";
-import MapPopoverShell from "$parent/siblings/getCache_OfflineMap/lib/panels/MapPopoverShell.svelte";
-import type { MapShareFormat } from "$lib/mobile/utils/kmzExport";
+// FeatureDetail is host-owned (it edits the host's store) — it now arrives as
+// ports.ui.FeatureDetail through mapHostPorts (28 Aug 2026).
+import MapPopoverShell from "../panels/MapPopoverShell.svelte";
+// Now comes from the host through mapHostPorts (28 Aug 2026).
+import type { MapHostPorts, MapShareFormat } from "../shared/mapHostPorts";
 
 let {
+    ports,
     feature,
     bbox,
     containerWidth,
@@ -27,6 +30,7 @@ let {
     onContacts,
     onBlock,
 }: {
+    ports: MapHostPorts;
     feature: Feature;
     bbox: { minX: number; minY: number; maxX: number; maxY: number };
     containerWidth: number;
@@ -48,7 +52,7 @@ const isPoint = $derived(feature.geometry?.type === "Point");
     <!-- Pins / lines / polygons get an easy delete (the garbage can beside Share).
          The host confirms + removes from mapStore. (Quality-704 PLOT pins use their
          own popover and intentionally have NO trash — a plot pin is its key.) -->
-    <FeatureDetail
+    <ports.ui.FeatureDetail
         {feature}
         {onShare}
         {onSave}

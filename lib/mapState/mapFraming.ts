@@ -3,8 +3,10 @@
 // Extracted from MapDrawControls.svelte; the camera-call functions that
 // consume these (frameBox / frameFeature / frameActiveMap) stay in the
 // component since they touch selection + viewport state.
-import { isNullIsland } from "$lib/mobile/stores/mapViewport";
-import type { MapSessionFeature } from "$lib/mobile/stores/mapStore.svelte";
+// 28 Aug 2026: moved into the child — sibling store + the host-store contract
+// (MapHostFeature stands in for the host's MapSessionFeature) via ../shared/mapHostPorts.
+import { isNullIsland } from "./mapViewport";
+import type { MapHostFeature } from "../shared/mapHostPorts";
 
 export type LngLatBox = {
     minLng: number;
@@ -73,7 +75,7 @@ export function unionBox(boxes: (LngLatBox | null)[]): LngLatBox | null {
 // Resolve ONE feature's extent. Shapes read geometry; overlay features
 // read the bounds stamped on the feature row at import time.
 export async function resolveFeatureBounds(
-    f: MapSessionFeature,
+    f: MapHostFeature,
 ): Promise<LngLatBox | null> {
     if (f.geometry) {
         const gb = geometryBounds(f.geometry.geometry);

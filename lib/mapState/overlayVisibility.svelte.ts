@@ -14,7 +14,8 @@
 // visibility toggle here; it only exists while you're actively measuring. The Legend
 // still LISTS it (it's a real mark you make), it just isn't hideable.
 
-import { browser } from "$app/environment";
+// 28 Aug 2026: a child may not import SvelteKit's app/environment — same test, inline.
+const browser = typeof window !== "undefined";
 
 // NOTE — `fires` is NOT one of the user's own marks; it is the wildfire hotspot
 // layer, and it is the one kind here that is not really "yours to declutter".

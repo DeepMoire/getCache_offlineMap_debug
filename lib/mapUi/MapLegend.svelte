@@ -39,21 +39,36 @@
 <script lang="ts">
 import { cubicOut } from "svelte/easing";
 import { fly } from "svelte/transition";
+// These stores moved into this child with the legend (28 Aug 2026).
 import {
 	FIRE_HIDE_TTL_MS,
 	type OverlayKind,
 	overlayVisibility,
-} from "$lib/mobile/stores/overlayVisibility.svelte";
+} from "../mapState/overlayVisibility.svelte";
 import {
 	overlayOpacity,
 	polygonOpacity,
-} from "$lib/mobile/stores/overlayOpacity.svelte";
-import { overlayPortal } from "$lib/mobile/utils/overlayPortal";
-import { createEyeToggle } from "$lib/mobile/animation/eyeBlink.svelte";
+} from "../mapState/overlayOpacity.svelte";
+// Now comes from the host through mapHostPorts (28 Aug 2026).
+// overlayPortal and createEyeToggle are ports.ui.*.
+import type { MapHostPorts } from "../shared/mapHostPorts";
+
+let {
+	ports,
+	onClose,
+	basemapRows = [],
+}: {
+	ports: MapHostPorts;
+	onClose: () => void;
+	// Basemap line/fill rows (roads, water, …) — route-specific, optional.
+	basemapRows?: readonly LegendRow[];
+} = $props();
+// `use:` wants a plain identifier, so the host's action is bound locally.
+const overlayPortal = ports.ui.overlayPortal;
 
 // Toggle eyes — hiding a type plays the close sequence (rests closed), showing
 // plays open (rests open). Keyed by overlay kind so only the tapped row moves.
-const eyeToggle = createEyeToggle();
+const eyeToggle = ports.ui.createEyeToggle();
 $effect(() => () => eyeToggle.destroy());
 
 function toggleKind(kind: OverlayKind) {
@@ -105,14 +120,6 @@ const fireOn = $derived(overlayVisibility.isVisible(FIRE_ROW.kind));
  *  a LIT row, THEN the row dims. */
 const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 
-let {
-	onClose,
-	basemapRows = [],
-}: {
-	onClose: () => void;
-	// Basemap line/fill rows (roads, water, …) — route-specific, optional.
-	basemapRows?: readonly LegendRow[];
-} = $props();
 </script>
 
 <!-- Same window-blind motion as the InputPopover top drawers (fly from above,

@@ -1,18 +1,29 @@
 <script lang="ts">
 /**
- * /offline — the offline map WITHOUT the debug rails.
+ * /offline — the URL. The page is ../../lib/OfflineMapPage.svelte.
  *
- * Same page as /offline/debug, same engine, same fixtures; `rails={false}` hides
- * the two debug panels. Deliberately NOT a second copy of the page: the engine
- * wiring is the part that drifts, and two copies of it would drift apart the
- * first time either one is touched.
+ * A route file is a mount, nothing more: SvelteKit needs a file under routes/
+ * to answer a URL, and the engine is a component every tier imports. Keep the
+ * logic in the component; two copies of the wiring drift the first time
+ * either is touched.
  *
- * NOTE this is not ReTreever's real /offline. That one imports $lib in eleven
- * places — mapStore, MapTopControls, MapLegend, toast icons — which is tier-1
- * proprietary code a child must never carry. This is the fixture-backed view:
- * honest about being a demo, and it runs on nothing.
+ * DEV CHROME GOES TO THE SAME SURFACES ON EVERY TIER. The tier pill and the
+ * `debug` toggle go in the shared EphemeralCard; the two instrument rails go
+ * in an EphemeralDock each. Both live in `$parent/retreeved/…` — ReTreever
+ * owns them, syncRetreeved.sh carries them here — and both render only in
+ * `vite dev`, so nothing here reaches a build. ReTreever's /offline mounts
+ * exactly this, plus `framed={false}` because it already has a phone.
  */
-import Demo from "../demo/+page.svelte";
+import OfflineMapPage from "../../lib/OfflineMapPage.svelte";
+import EphemeralCard from "$parent/retreeved/sharedComponents/effemeralCard/EphemeralCard.svelte";
+import EphemeralDock from "$parent/retreeved/sharedComponents/effemeralCard/EphemeralDock.svelte";
+
+let debugHost = $state<HTMLElement>();
+let railLeftHost = $state<HTMLElement>();
+let railRightHost = $state<HTMLElement>();
 </script>
 
-<Demo />
+<OfflineMapPage {debugHost} {railLeftHost} {railRightHost} />
+<EphemeralCard title="offline map" bind:host={debugHost} />
+<EphemeralDock side="left" top="150px" bind:host={railLeftHost} />
+<EphemeralDock side="right" bind:host={railRightHost} />

@@ -69,7 +69,7 @@ function framedKey(): string {
  *  always lands on a live demo). The two MUST be the same spot so the
  *  online↔offline crow toggle lands in the same place — they were once two
  *  independent literals whose comments begged them to match. */
-export { MAP_HOME_CENTER } from "$parent/siblings/getCache_OfflineMap/lib/shared/homeCentre";
+export { MAP_HOME_CENTER } from "../shared/homeCentre"; // 28 Aug 2026: relative — same child
 
 /** THE sandbox home — every sandbox opens here by default: centred on the
  *  seeded practice map (the GTUser block), user-picked coordinate + zoom.

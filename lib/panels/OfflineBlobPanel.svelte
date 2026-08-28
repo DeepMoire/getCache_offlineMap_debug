@@ -219,9 +219,9 @@ onMount(() => {
 		color: #f3f1e9;
 		/* Sits directly under OfflineWorkMeter in the rail — a small gap (not a
 		   seam) keeps them read as two clearly separate cards, matching how
-		   this debugger already renders live (see .rail gap in demo/+page).
+		   this debugger already renders live (see .rail gap in OfflineMapPage).
 		   No max-width here: the rail itself already caps width (see .rail in
-		   demo/+page.svelte) — a second, narrower cap on top of that just
+		   OfflineMapPage.svelte) — a second, narrower cap on top of that just
 		   starves the card with dead space it can't use. */
 		width: 100%;
 		box-sizing: border-box;

@@ -59,7 +59,7 @@
  */
 let ParentPill = $state<any>(null);
 if (import.meta.env.DEV) {
-	import("$parent/retreeved/sharedComponents/sharedNav/ParentPill/ParentPill.svelte").then(
+	import("$parent/retreeved/sharedComponents/ParentPill/ParentPill.svelte").then(
 		(m) => {
 			ParentPill = m.default;
 		},
@@ -80,10 +80,13 @@ import {
 	servesOtherSide,
 	type OtherSideStatus,
 } from "$parent/retreeved/sharedComponents/sharedNav/tierRoutes";
-import {
-	RETREEVER_LANDING,
-	RETREEVER_TIER_ROUTES,
-} from "$lib/core/tierRouteTable";
+// The host's tier route table now comes in as ports.tier through mapHostPorts
+// (28 Aug 2026). OPTIONAL: a host with no tier table renders no dock at all.
+import type { MapHostPorts } from "../shared/mapHostPorts";
+
+let { ports }: { ports: MapHostPorts } = $props();
+const RETREEVER_LANDING = ports.tier?.landing ?? "/";
+const RETREEVER_TIER_ROUTES = ports.tier?.routes ?? [];
 
 /**
  * The two parents, by ORIGIN. Only the host changes — the path is translated
@@ -108,14 +111,17 @@ import {
  * `import.meta.env.DEV` is a compile-time constant, so in a production build
  * this whole branch is unreachable and the strings go with it.
  */
-const RETREEVER = import.meta.env.DEV ? "http://retreever.localhost:5173" : "";
-const RAPPER = import.meta.env.DEV ? "http://localhost:5174" : "";
+// The origins, names and "which one is serving" now come from the HOST through
+// ports.tier (28 Aug 2026): this file lives in a child, and a child may not
+// name a parent. The host keeps the strings inside its own DEV branch.
+const LEFT_ORIGIN = ports.tier?.left.origin ?? "";
+const RIGHT_ORIGIN = ports.tier?.right.origin ?? "";
 
 
 /** The two halves, in FIXED order. rapper passes the same pair, so the
  *  control is identical on both servers and only the highlight moves. */
-const LEFT = "retreever";
-const RIGHT = "rapper";
+const LEFT = ports.tier?.left.name ?? "";
+const RIGHT = ports.tier?.right.name ?? "";
 
 /**
  * Which parent is serving THIS page — read, not guessed.
@@ -124,9 +130,7 @@ const RIGHT = "rapper";
  * the server that actually responded. Nothing here decides anything; it only
  * reports what already happened.
  */
-const onRapper = $derived(
-	typeof location !== "undefined" && location.port === "5174",
-);
+const onRapper = $derived(ports.tier?.onRight ?? false);
 
 /**
  * Same page, other parent.
@@ -143,7 +147,7 @@ const onRapper = $derived(
  * other parent's root, and hydration corrects it.
  */
 const target = $derived.by(() => {
-	const base = onRapper ? RETREEVER : RAPPER;
+	const base = onRapper ? LEFT_ORIGIN : RIGHT_ORIGIN;
 	if (typeof location === "undefined") return base;
 	const here = location.pathname.replace(/\/+$/, "") || "/";
 	// Leaving rapper: its child mirrors ReTreever's paths one-for-one now, so
@@ -278,7 +282,7 @@ $effect(() => {
      would be worse than a floating control — it floats, but top-right where
      you look first. rapper has no such navbar and puts the same pill inline in
      its dev bar. -->
-{#if dev && ParentPill}
+{#if dev && ports.tier && ParentPill}
 <div
 	bind:this={pillEl}
 	class="host-pill-dock"

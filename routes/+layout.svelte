@@ -213,39 +213,21 @@ const GH_ICON = ghIconUrl;
 const child = CHILD;
 
 /**
- * THE FEATURE FLAG — is the trailer hitched to the truck?
+ * THE DECOR — rapper lends the child its full-dress backdrop and hand.
  *
- * A child is a trailer. Hitched to ReTreever it gets app.css, the utils, the
- * whole parent app: full dress. Unhitched it must still STAND — plainer, fewer
- * features, but RUNNING. What it must never do is collapse.
+ * A child is a trailer. Hitched to a parent it gets the artwork; standing
+ * alone it must still RUN, plainer. rapper is the SURROGATE PARENT, so it
+ * supplies the decor itself — a surrogate stands in, or it is not one.
  *
- * So this switch does not GRANT anything. It REMOVES, so whoever has the
- * parent can see what a developer without it sees. Off is the honest view.
- *
- * WHAT IT CANNOT DO, AND WHY THAT IS FINE. This flips CSS variables at
- * RUNTIME. Coupling to ReTreever is import statements, resolved at BUILD — by
- * the time this checkbox exists, an import either compiled or it did not. So
- * this cannot air-gap anything, and must never be asked to: the real wall is
- * the ABSENCE of a `$lib` alias in svelte.config.js, which makes a child that
- * reaches for ReTreever fail to build. See harnessIsolation.test.ts.
- *
- * This flag is the DECOR half of the same idea, and only that half.
- *
+ * THIS USED TO BE A RUNTIME TOGGLE (`hitched`), driving a pill in the corner
+ * that looked identical to the nav's tier switcher. It was deleted 28 Aug 2026
+ * because it could not do what it claimed: hitching is IMPORT RESOLUTION,
+ * settled at BUILD time, so by the time a button exists the imports either
+ * compiled or they did not. A runtime switch for a build-time fact is a
+ * costume. The honest control is the tier switcher, which changes SERVER —
+ * `getcache.localhost:5173` really is ReTreever, `localhost:5174` really is
+ * rapper. Do not reintroduce a local toggle here.
  */
-/**
- * THE SWITCH IS ALWAYS LIVE IN RAPPER. It used to be gated on
- * `parentHere` — measured by asking whether ReTreever's `--rt-bg` resolved.
- * In rapper it never does (no app.css here, by design), so the checkbox
- * was permanently greyed: a switch that could not move, in the one place you
- * most need to see it move. Backwards. rapper is the SURROGATE PARENT —
- * it is precisely where both states must be viewable.
- *
- * So rapper now SUPPLIES the decor itself when the flag is on, and
- * withholds it when off. That is what a surrogate does: it stands in.
- */
-// hitched=true reads as "rapper" is off — the pill LABELS the state, no boolean word.
-let hitched = $state(true);
-const featureOn = $derived(hitched);
 
 let { children } = $props();
 </script>
@@ -257,16 +239,15 @@ let { children } = $props();
 	     harness mark on a Get Cache page. -->
 	<title>{`${CHILD.owner} — ${CHILD.name}`}</title>
 	<link rel="icon" href={logoUrl} />
-	{#if dev && featureOn}
+	{#if dev}
 		<!-- FEATURE FLAG ON — HITCHED. rapper stands in for the parent and
 		     lends the child its full-dress version: the child reads --host-decor
 		     and puts back its backdrop and hand, and the artwork then provides
 		     the phone's edge, so the plain gold bezel steps aside.
 
-		     OFF sets NOTHING AT ALL. That is the point: unhitched is not a
-		     stripped-down variant we compute, it is simply the absence of a
-		     parent. What you see with the box unticked is what a developer who
-		     has never had ReTreever sees. The assets here are RAPPER's own —
+		     Gated on `dev` alone now. It was `dev && featureOn`, where
+		     featureOn was a corner toggle — deleted, see above. The assets
+		     here are RAPPER's own —
 		     imported at the top of this file, not fetched from ReTreever — and a
 		     surrogate supplies its own, or it is not a surrogate. -->
 		<!-- WHY THE URL IS INTERPOLATED AND NOT WRITTEN OUT.
@@ -332,36 +313,6 @@ let { children } = $props();
 		routes={TIER_ROUTES}
 		selfRepo={THIS_TIER || undefined}
 	/>
-	<!-- THE HITCH FLAG — this child's own control, not the tier switcher.
-	     Same pill SHAPE, different question: the switcher asks which tier is
-	     serving the page, this asks whether the surrogate parent is lending
-	     its decor. Kept here because only this child has the decor to lend.
-
-	     WORKSPACE ONLY, and NOT gated on `dev` like the bar above it.
-	     `import.meta.env.DEV` is TRUE for `npm run dev`, which is exactly what
-	     someone who installed this from npm runs — so this control shipped to
-	     them, offering a choice between "retreever" and "rapper" when they have
-	     neither. It is also meaningless on a deployed build, for the same
-	     reason: the thing it toggles is which HostPorts fixture is wired in
-	     while developing against the two tiers side by side.
-
-	     `THIS_TIER` is the honest signal, and it is one already computed: it
-	     comes from the mounting parent's injected tier facts, which rapper now
-	     emits only when a sibling parent exists on disk. Empty in an npm
-	     install and empty in a deployed build; set only in the workspace this
-	     control is for. -->
-	{#if THIS_TIER}
-	<div class="hitch">
-		<button
-			type="button"
-			class="pill"
-			onclick={() => (hitched = !hitched)}
-			title="Which HostPorts object is wired in right now — retreeverPorts.ts (proprietary, in ReTreever) or the child's own literal fixture. See docs/TODO.md 'The pill'."
-		>
-			<span class:on={hitched}>retreever</span><span class:on={!hitched}>rapper</span>
-		</button>
-	</div>
-	{/if}
 {/if}
 
 <main>
@@ -369,30 +320,6 @@ let { children } = $props();
 </main>
 
 <style>
-	/* THE PILL. Two halves in one rounded box, states the FACT ("retreever" /
-	   "rapper") instead of a bare checkbox with a caption. One state is always
-	   lit; the lit half names which HostPorts object is live right now. */
-	.pill {
-		display: inline-flex;
-		border: 1px solid #333;
-		border-radius: 999px;
-		overflow: hidden;
-		background: #111;
-		cursor: pointer;
-		font: inherit;
-		padding: 0;
-		white-space: nowrap;
-	}
-	.pill span {
-		padding: 0.25rem 0.7rem;
-		color: #888;
-		font-size: 0.8rem;
-	}
-	.pill span.on {
-		background: var(--color-gold-bar, #f5a119);
-		color: #111;
-		font-weight: 600;
-	}
 	/* The child's OWN dev shell, standalone (port 5174 / this checkout's
 	   `npm run dev`). It has to be a real, positioned, SIZED box because the
 	   stage inside it is `position: absolute; inset: 0` — absolute needs a

@@ -17,18 +17,22 @@ import { isFiniteCoord } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
 // Pins render on BOTH maps: the online one is Mapbox, the offline one
 // (/mobile/offlinev4) is MapLibre. A Mapbox Marker attached to a MapLibre map
 // throws "e2._addMarker is not a function" and takes the whole map down.
-import { markerCtor } from "$parent/siblings/getCache_OfflineMap/lib/shared/rendererOf";
+// 28 Aug 2026: everything below is now in-child (relative) or arrives through
+// ../shared/mapHostPorts — EmojiPin via ports.ui, the store as MapHostStore,
+// plotByGpsKey via the optional ports.q704 (absent on hosts without inspections).
+import { markerCtor } from "../shared/rendererOf";
 import {
     iconPath,
     parseEmojiPin,
     parsePinKey,
     pinAssetPath,
-} from "$lib/mobile/utils/icons";
+} from "../shared/icons";
 import { mount } from "svelte";
-import EmojiPin from "$lib/mobile/components/ui/EmojiPin.svelte";
-import type { MapStore } from "$lib/mobile/stores/mapStore.svelte";
-import { overlayVisibility } from "$lib/mobile/stores/overlayVisibility.svelte";
-import { plotByGpsKey } from "$lib/mobile/stores/quality704Plots.svelte";
+import type {
+    MapHostPorts,
+    MapHostStore as MapStore,
+} from "../shared/mapHostPorts";
+import { overlayVisibility } from "./overlayVisibility.svelte";
 
 type PinMarker = { key: string; pinTypeKey: string; marker: mapboxgl.Marker };
 
@@ -156,6 +160,11 @@ function auditDuplicatePlotPins(
 export interface PinMarkersDeps {
     getMap: () => MapboxMap | null;
     mapStore: MapStore;
+    /** The host's door (28 Aug 2026): `ui.EmojiPin` is mounted for emoji pins;
+     *  `q704?.plotByGpsKey` resolves a plot pin's live row. q704 is optional —
+     *  a host without inspections gets the baked `plot:N` label and nothing
+     *  throws. */
+    ports: Pick<MapHostPorts, "ui" | "q704">;
     getOffline: () => boolean;
     /** mapFeatureKey of the selected feature (popover open), or null — drives
      *  the selected plot marker's gold "Plot N" pill. */
@@ -175,7 +184,7 @@ export interface PinMarkers {
 }
 
 export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
-    const { getMap, mapStore } = deps;
+    const { getMap, mapStore, ports } = deps;
     // Tip on the spot, EVERY route — the pin art is a teardrop whose point IS
     // the coordinate. (The offline map once centre-anchored its pins, which put
     // the same GPS coord half a pin north of where the online map showed it.)
@@ -530,7 +539,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         const emojiChar = parseEmojiPin(pinTypeKey);
         if (emojiChar) {
             btn.classList.add("map-pin-emoji");
-            mount(EmojiPin, {
+            mount(ports.ui.EmojiPin, {
                 target: btn,
                 props: { char: emojiChar, size: 30 },
             });
@@ -763,7 +772,10 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             // pm.key is the pin's mapFeatureKey = the plot row's gpsFeatureKey, so
             // plotByGpsKey resolves the live row — re-checked EVERY sync(), so an
             // edit (or a merge/delete that re-flows numbers) shows live.
-            const plot = plotByGpsKey(pm.key);
+            // ports.q704 is absent on hosts without inspections → null → baked label.
+            const plot = (ports.q704?.plotByGpsKey(pm.key) ?? null) as {
+                displayNo?: number | string | null;
+            } | null;
             // THE DYNAMIC NUMBER. The pin label is the plot's per-MAP rank
             // (plot.displayNo), NOT the frozen `plot:N` baked into the feature at
             // drop time. So as surveys merge onto one map the labels re-flow into a

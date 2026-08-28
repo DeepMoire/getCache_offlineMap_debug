@@ -16,7 +16,8 @@
   state, so it can't open the draw palette.
 -->
 <script lang="ts">
-import { iconPath } from "$lib/mobile/utils/icons";
+// iconPath lives in this child now (28 Aug 2026).
+import { iconPath } from "../shared/icons";
 // Cursor art comes from `$parent/retreeved/sharedAssets` — retreeved/ is the SINGLE
 // SOURCE OF TRUTH for shared art. It used to be the static URL
 // `/mobileAssets/...`, which only resolves on this server, so a child or
@@ -31,18 +32,21 @@ import type { Map as MapboxMap } from "mapbox-gl";
 import { area, length as turfLength } from "@turf/turf";
 // The ruler runs on BOTH maps (online = Mapbox, offline = MapLibre). A Marker
 // from the wrong library throws "_addMarker is not a function" on addTo.
-import { markerCtor } from "$parent/siblings/getCache_OfflineMap/lib/shared/rendererOf";
+import { markerCtor } from "../shared/rendererOf";
 import type { Lnglat } from "$parent/siblings/getCache_OnlineMap/lib/mapDraw";
-import Icon from "$lib/core/icon/Icon.svelte";
-import { formatHectares, formatMeasureDist } from "$parent/siblings/getCache_OfflineMap/lib/panels/measureFormat";
-import SharePicker, {
-    type ShareFormat,
-} from "$lib/mobile/components/ui/SharePicker.svelte";
-import { copyToClipboard } from "$lib/mobile/utils/copyToClipboard";
-import { type Rect, mapKeepOutRects, shiftClear } from "$parent/siblings/getCache_OfflineMap/lib/shared/mapKeepOut";
-import type { MapShareFormat } from "$lib/mobile/utils/kmzExport";
+import { formatHectares, formatMeasureDist } from "../panels/measureFormat";
+import { type Rect, mapKeepOutRects, shiftClear } from "../shared/mapKeepOut";
+// Now comes from the host through mapHostPorts (28 Aug 2026). Icon and SharePicker render as
+// ports.ui.*, copyToClipboard is ports.ui.copyToClipboard, ShareFormat is the
+// contract's MapShareRow and MapShareFormat is defined in the contract.
+import type {
+    MapHostPorts,
+    MapShareFormat,
+    MapShareRow as ShareFormat,
+} from "../shared/mapHostPorts";
 
 let {
+    ports,
     map,
     measureEvent = $bindable(null),
     armKind = $bindable(null),
@@ -56,6 +60,7 @@ let {
     gridSnap,
     setGridGlow,
 }: {
+    ports: MapHostPorts;
     map: MapboxMap | null;
     // Seed from the host's double-tap gesture: plant the first ruler node.
     measureEvent?: { lng: number; lat: number; n: number } | null;
@@ -1125,7 +1130,7 @@ async function sharePoint() {
     const p = verts[0];
     if (!p) return;
     const text = `${p[1].toFixed(5)}, ${p[0].toFixed(5)}`;
-    const ok = await copyToClipboard(text);
+    const ok = await ports.ui.copyToClipboard(text);
     copied = ok;
     copyFailed = !ok;
     if (copiedTimer) clearTimeout(copiedTimer);
@@ -1253,7 +1258,7 @@ $effect(() => {
                 {:else if copyFailed}
                     Couldn't copy
                 {:else}
-                    <Icon name="copy" size={13} style="flex-shrink:0" />
+                    <ports.ui.Icon name="copy" size={13} style="flex-shrink:0" />
                     Copy
                 {/if}
             </button>
@@ -1272,20 +1277,20 @@ $effect(() => {
                     <!-- side="below": the ruler popover hugs the top of the map,
                          so an upward menu overlaps the app header and reads as
                          "coming out of the top menu", not out of this button. -->
-                    <SharePicker formats={shareFormats} side="below">
+                    <ports.ui.SharePicker formats={shareFormats} side="below">
                         {#snippet trigger({ toggle })}
                             <button class="measure-btn measure-share" onclick={toggle} title="Save &amp; share">
-                                <Icon name="upload" size={13} style="flex-shrink:0" />
+                                <ports.ui.Icon name="upload" size={13} style="flex-shrink:0" />
                                 Share
                             </button>
                         {/snippet}
-                    </SharePicker>
+                    </ports.ui.SharePicker>
                 {/if}
                 <button class="measure-btn measure-save" onclick={() => persist(false)} title="Save">
                     {#if isPolygon}
-                        <Icon name="pentagon" size={13} style="flex-shrink:0" />
+                        <ports.ui.Icon name="pentagon" size={13} style="flex-shrink:0" />
                     {:else}
-                        <Icon name="share-nodes" size={13} style="flex-shrink:0" />
+                        <ports.ui.Icon name="share-nodes" size={13} style="flex-shrink:0" />
                     {/if}
                     Save
                 </button>

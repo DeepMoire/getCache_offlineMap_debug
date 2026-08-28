@@ -32,14 +32,14 @@ answers, which is exactly how a full day was lost on 27 Aug 2026.
 There is ONE offline map component:
 
 ```
-getCache_OfflineMap/routes/demo/+page.svelte
+getCache_OfflineMap/lib/OfflineMapPage.svelte
 ```
 
 Everything renders THAT FILE. Not a copy, not a "shared base", not a wrapper
 with logic in it. Reach it through the `$parent` alias:
 
 ```ts
-import OfflineMap from "$parent/siblings/getCache_OfflineMap/routes/demo/+page.svelte";
+import OfflineMap from "$parent/siblings/getCache_OfflineMap/lib/OfflineMapPage.svelte";
 ```
 
 If you find yourself writing map code outside that component, stop — you are
@@ -77,13 +77,29 @@ repo.
 
 The parent reaches all of it as `$parent/siblings/getCache_OfflineMap/...`.
 
-**Still in ReTreever, on purpose** — each imports a store, the icon system or
-a proprietary component, so crossing means a `hostPorts` prop first:
-`mapFraming`, `MapLegend`, `overlayManager`, `pinMarkers`, `SnakeRuler`,
-`DrawPalette`, `SelfCoordPill`, `TrackingStrip`, `vertexDrag`, `tracking`,
-`userLocation`, `FeatureMapPopover`, `PlotMapPopoverV2`, `MapTopControls`,
-`HostPillDock`, `onlineMapHitchState`, and the stores (`mapStore`,
-`mapViewport`, `lastMapRoute`).
+**Map UI and map state — moved 28 Aug 2026, behind `ports`:**
+
+| What | Where it is now |
+|---|---|
+| `MapLegend`, `SnakeRuler`, `DrawPalette`, `SelfCoordPill`, `TrackingStrip`, `MapTopControls`, `FeatureMapPopover`, `PlotMapPopoverV2`, `HostPillDock` (+ its two tests) | `lib/mapUi/` |
+| `mapViewport`, `lastMapRoute`, `onlineMapHitchState`, `overlayVisibility`, `overlayOpacity`, `mapFraming`, `overlayManager`, `pinMarkers`, `vertexDrag`, `tracking`, `userLocation` (+ tests) | `lib/mapState/` |
+| **The contract** — `MapHostPorts { store, ui, gps, scenes?, tier?, q704? }` | `lib/shared/mapHostPorts.ts` |
+| ReTreever's implementation of it | `ReTreever/src/lib/mobile/offline/host/retreeverMapPorts.ts` |
+
+Every component takes a required `ports: MapHostPorts` prop; every store
+factory that needs the host takes it as a parameter (`createOverlayManager(getMap,
+store, ports)`, `createUserLocator(getMap, onDotTap, ports)`, `PinMarkersDeps.ports`,
+`tracking.start(store, name)`). The host's real `MapStore` is ASSIGNED to
+`MapHostStore` in retreeverMapPorts.ts — that assignment is the type-check at
+the boundary, and it already caught one wrong guess (`OverlayLabel`'s shape).
+
+**The one thing still in ReTreever on purpose:** `mapStore.svelte.ts` (2,570
+lines) — it IS the database (TinyBase, the snapshot uploader, the schema, 30
+importers across inbox/import/q704). It comes in as `ports.store`.
+
+**Declared pair:** this child imports `getCache_OnlineMap` (mapDraw, areaLabels,
+safeMap, coord, safeMarker) — stated in ReTreever's `childBoundary.test.ts`
+`DECLARED_CHILD_DEPS`, so the offline child ships WITH the online child.
 
 Read `routes/fires/v2/BISECT_STATE.md` before touching v2; it says why v2 is
 held back. `routes/fires/docs/FIRES_V2_ROUTE_PREP.md` is the wiring plan.

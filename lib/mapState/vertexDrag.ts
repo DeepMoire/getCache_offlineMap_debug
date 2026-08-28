@@ -19,7 +19,9 @@ import {
 } from "$parent/siblings/getCache_OnlineMap/lib/mapDraw";
 import { syncAreaLabels } from "$parent/siblings/getCache_OnlineMap/lib/areaLabels";
 import { isFiniteLngLat } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
-import type { MapStore } from "$lib/mobile/stores/mapStore.svelte";
+// 28 Aug 2026: now comes from the host through ../shared/mapHostPorts (MapHostStore = the
+// slice of the host's MapStore this file touches).
+import type { MapHostStore as MapStore } from "../shared/mapHostPorts";
 
 type GeomKind = "LineString" | "Polygon";
 type VertexDragState = {

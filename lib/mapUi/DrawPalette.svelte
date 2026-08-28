@@ -6,15 +6,18 @@
   (its own Save / ✕). This component is just the five buttons + active highlight.
 -->
 <script lang="ts">
-import Icon from "$lib/core/icon/Icon.svelte";
+// Now comes from the host through mapHostPorts (28 Aug 2026).
+import type { MapHostPorts } from "../shared/mapHostPorts";
 
 let {
+    ports,
     editActive,
     activeTool,
     onMode,
     onUndo,
     onExit,
 }: {
+    ports: MapHostPorts;
     editActive: boolean;
     activeTool: "polygon" | "line" | "pin" | null;
     onMode: (mode: "draw_polygon" | "draw_line_string" | "draw_pin") => void;
@@ -31,7 +34,7 @@ let {
             onclick={() => onMode('draw_line_string')}
             title="Draw line"
         >
-            <Icon name="share-nodes" size={20} />
+            <ports.ui.Icon name="share-nodes" size={20} />
             <span>LINE</span>
         </button>
         <button
@@ -40,7 +43,7 @@ let {
             onclick={() => onMode('draw_polygon')}
             title="Draw polygon"
         >
-            <Icon name="pentagon" size={20} />
+            <ports.ui.Icon name="pentagon" size={20} />
             <span>POLY</span>
         </button>
         <button
@@ -49,15 +52,15 @@ let {
             onclick={() => onMode('draw_pin')}
             title="Drop pin"
         >
-            <Icon name="map-pin" size={20} />
+            <ports.ui.Icon name="map-pin" size={20} />
             <span>PIN</span>
         </button>
         <button class="strip-btn" onclick={onUndo} title="Undo last point">
-            <Icon name="undo" size={20} />
+            <ports.ui.Icon name="undo" size={20} />
             <span>UNDO</span>
         </button>
         <button class="strip-btn strip-btn-exit" onclick={onExit} title="Exit draw mode">
-            <Icon name="close" size={16} />
+            <ports.ui.Icon name="close" size={16} />
         </button>
     </div>
 {/if}
