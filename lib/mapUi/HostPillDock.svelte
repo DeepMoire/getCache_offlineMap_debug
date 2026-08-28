@@ -59,7 +59,7 @@
  */
 let ParentPill = $state<any>(null);
 if (import.meta.env.DEV) {
-	import("$parent/retreeved/sharedComponents/ParentPill/ParentPill.svelte").then(
+	import("$parent/retreeved/sharedComponents/sharedNav/ParentPill/ParentPill.svelte").then(
 		(m) => {
 			ParentPill = m.default;
 		},
