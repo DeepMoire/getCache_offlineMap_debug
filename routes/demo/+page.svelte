@@ -51,6 +51,11 @@ import {
 	installRawWallProtocol,
 	rawSourceSpec,
 	RAW_SOURCE,
+	// Used at onMapReady below but never imported — the wall mount threw
+	// `setRawWallBlindHandler is not defined` on EVERY load, so the blind-tile
+	// refresh never armed. Unrelated to the cursor work; found in the console
+	// while verifying it.
+	setRawWallBlindHandler,
 } from "../../lib/onPhone/roads/rawWallProtocol";
 import { wallLayers } from "../../lib/onPhone/render/wallStyle";
 import { attachDoubleTapToPin } from "../../lib/shared/doubleTapToPin";
