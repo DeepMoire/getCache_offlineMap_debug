@@ -68,7 +68,13 @@ describe("tiles host must be configured by the app", () => {
 
 	it("still knows the local dev worker without any configuration", async () => {
 		const m = await freshModule();
-		// 127.0.0.1 is nobody's resource, so it stays hardcoded on purpose.
-		expect(m.LOCAL_DEV_HOST).toMatch(/^http:\/\/127\.0\.0\.1:/);
+		// The local tier stays hardcoded on purpose: it costs nobody anything.
+		// tiles-local.getcache.org is an A record pointing at 127.0.0.1 (live
+		// 27 Aug 2026), so naming it bills no one and reads as a tier rather
+		// than as a stray IP among two dotted hostnames. Loopback still
+		// accepted — it is what this resolves to.
+		expect(m.LOCAL_DEV_HOST).toMatch(
+			/^http:\/\/(127\.0\.0\.1|localhost|tiles-local\.getcache\.org):8787$/,
+		);
 	});
 });

@@ -107,10 +107,11 @@ export function isTilesHostConfigured(): boolean {
  * resolves to the developer's own machine, exactly as the bare IP did. It is a
  * NAME for localhost, not a server.
  *
- * ⚠️ UNTIL THAT RECORD EXISTS, keep the loopback address: a name with no DNS
- * is strictly worse than an ugly IP — it fails at resolution with no clue,
- * which is precisely the failure that cost 27 Aug 2026. Flip LOCAL_HOST_NAME
- * to the hostname the day the record is created, and not before.
+ * ✅ THE RECORD EXISTS as of 27 Aug 2026 — an A record on the getcache.org
+ * zone, DNS-only (unproxied; Cloudflare cannot proxy to a loopback address).
+ * It is the ONE tier added by hand: prod and dev have a Worker behind them and
+ * Cloudflare creates their records itself during `wrangler deploy`, refusing to
+ * adopt one you made first. See the long note in wrangler.toml.
  *
  * `npm run dev:local` in workers/offline-tiles serves it. That script seeds
  * wrangler's LOCAL R2 simulator with a public sample archive first, so it needs
@@ -118,7 +119,10 @@ export function isTilesHostConfigured(): boolean {
  * outside contributor can reach. `wrangler dev --remote` still works if you DO
  * have credentials and want the real planet archive.
  */
-const LOCAL_HOST_NAME = "127.0.0.1:8787"; // → "tiles-local.getcache.org" once DNS exists
+// MEASURED 27 Aug 2026: `dig +short A tiles-local.getcache.org` → 127.0.0.1.
+// The record is live, so the name is now safe to use — a name with no DNS is
+// strictly worse than an IP, which is what cost 27 Aug.
+const LOCAL_HOST_NAME = "tiles-local.getcache.org:8787";
 export const LOCAL_DEV_HOST = `http://${LOCAL_HOST_NAME}`;
 
 /**

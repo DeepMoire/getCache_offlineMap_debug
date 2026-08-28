@@ -80,7 +80,7 @@ describe("tile hostnames — dev, prod, local and nothing else", () => {
 		// the day it exists. Anything else means local silently became remote,
 		// which bills someone for a tier advertised as free.
 		expect(LOCAL_DEV_HOST).toMatch(
-			/^https?:\/\/(127\.0\.0\.1:8787|localhost:8787|tiles-local\.getcache\.org)$/,
+			/^https?:\/\/(127\.0\.0\.1|localhost|tiles-local\.getcache\.org):8787$/,
 		);
 	});
 });
