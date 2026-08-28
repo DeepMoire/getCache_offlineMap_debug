@@ -66,6 +66,7 @@ repo.
 |---|---|
 | Fires engine (27 files, v1 + v2 + masks) | `routes/fires/` |
 | Fires Worker half | `lib/r2Worker/firesWorker.ts` — `ReTreever/workers/offline-tiles` imports it back through a wrangler `[alias]`, never a `../` climb |
+| Offline map docs (plan, spec, history, tree target) | `docs/` — start at `docs/README.md` |
 | Fires docs | `routes/fires/docs/` (`WILDFIRE_LAYER*.md`, `fireAPIs.md`, `FIRES_V2_ROUTE_PREP.md`) |
 | Fire assets | `fire_icon.webp`, `fire_intensity/` — listed in `ASSETS.md`, fetched by `fetchAssets.sh` |
 | `assetRegion`, `anchors` | `lib/shared/` |
