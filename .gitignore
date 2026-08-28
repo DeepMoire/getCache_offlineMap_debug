@@ -2,3 +2,35 @@ node_modules/
 .svelte-kit/
 .DS_Store
 *.log
+
+# ── The basemap assets — NEVER commit ───────────────────────────────────────
+# ASSETS.md tells every contributor to run ./fetchAssets.sh, and that script's
+# default destination is static/mobileAssets/ right here. Until this rule
+# existed, following the documented workflow left 51 MB / 3,606 untracked
+# binary files in the working tree of a PUBLIC repo — and gitEr/shipAll.sh:212
+# and gitEr/publishChildren.sh:194 both stage with `git add -A`.
+#
+# Size is the smaller half. ASSETS.md states these are NOT AGPL: they are
+# Ground Truth Data's own imagery and derived basemap data, distributed
+# separately from the code. Committing them here would publish proprietary
+# assets into an AGPL repo.
+#
+# ReTreever/static/mobileAssets stays the single source of truth. Mirrors
+# rapper/.gitignore:144-146, which carries the same rule for the same reason.
+static/mobileAssets/
+
+# ── Environment variables & secrets ─────────────────────────────────────────
+# This repo is PUBLIC and is also packed into the npm tarball, and npm-packlist
+# honours this file. Mirrors ReTreever/.gitignore:89-106.
+.env
+.env.*
+.env.local
+!.env.example
+credentials*.json
+*.pem
+*.key
+secrets/
+.secrets/
+# Cloudflare Workers local secrets + state.
+.dev.vars
+.wrangler/
