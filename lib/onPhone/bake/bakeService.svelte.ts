@@ -29,6 +29,7 @@
  */
 
 import { isDownloadGuardTripped } from "../store/downloadGuard";
+import { registerWipeStopper } from "../store/wipe";
 import {
 	allCoverage,
 	backfillCoverageMirror,
@@ -1362,6 +1363,24 @@ export function startOfflineBakeService(hostPorts: HostPorts): () => void {
 		window.addEventListener("online", onOnline);
 		teardown.push(() => window.removeEventListener("online", onOnline));
 	}
+
+	// ⛔ TELL THE WIPE HOW TO STOP US. THIS IS WHY THE WIPE BUTTON DID NOTHING.
+	//
+	// MEASURED 27 Aug 2026, the user's console:
+	//   wipe blocked: {"gc-offlineTiles":"blocked","gc-offlineSatellite":
+	//   "blocked","rt-vectors":"blocked","rt-mapRegistry":"blocked"}
+	// All FOUR databases, while the panel read "baking… 23 areas to go".
+	//
+	// wipe.ts step 1 loops over `stoppers` to shut the app off the store before
+	// deleting, and its comment says exactly what happens otherwise: "a running
+	// service will re-open (and re-download into) the database the instant it is
+	// gone". But `registerWipeStopper` had ZERO callers repo-wide — the set was
+	// always empty, so step 1 iterated over nothing, waited 400 ms, and tried to
+	// delete four databases this service was actively writing to.
+	//
+	// The mechanism was written, exported and documented, and never connected.
+	// Same shape as setRawWallBlindHandler, found the same day.
+	teardown.push(registerWipeStopper(stopOfflineBakeService));
 
 	return stopOfflineBakeService;
 }
