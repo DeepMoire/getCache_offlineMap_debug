@@ -25,5 +25,5 @@ let railRightHost = $state<HTMLElement>();
 
 <OfflineMapPage {debugHost} {railLeftHost} {railRightHost} />
 <EphemeralCard title="offline map" bind:host={debugHost} />
-<EphemeralDock side="left" top="150px" bind:host={railLeftHost} />
+<EphemeralDock side="left" top="120px" bind:host={railLeftHost} />
 <EphemeralDock side="right" bind:host={railRightHost} />

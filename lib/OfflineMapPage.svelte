@@ -215,8 +215,8 @@ let {
 	 * WHERE THE RAILS GO. Separate from `debugHost` because they are a
 	 * different kind of thing: the tray holds chrome every page has; the
 	 * rails are this map's own instruments and are large. A page gives each
-	 * an EphemeralDock (same folder as the card). Unset, they stay on the
-	 * stage beside the phone, as rapper draws them.
+	 * an EphemeralDock (same folder as the card). Unset, the panels have
+	 * nowhere to go and are not laid out — every tier passes both.
 	 */
 	railLeftHost,
 	railRightHost,
@@ -902,44 +902,13 @@ onMount(() => {
 	font-family: ui-monospace, monospace;
 }
 
-/* ── THE RAILS ───────────────────────────────────────────────────────────
-   ONE component per side. Everything on a side lives inside its rail, so the
-   panels share a stacking context, move together, and cannot slide behind the
-   hand. z-index beats the rig (2) so a panel is never swallowed by the art. */
+/* .rail / .rail.left used to lay the two rails out either side of the phone
+   on the stage. Every tier now hands them to an EphemeralDock (see the
+   railLeftHost / railRightHost props), so the stage never lays them out. */
 .rail {
-	position: relative;
-	z-index: 5;
 	display: flex;
 	flex-direction: column;
 	gap: 0.5rem;
-	/* The rails ABSORB the leftover width — this is what keeps the 15px gap
-	   honest. flex: 1 1 0 lets each rail grow into whatever the phone doesn't
-	   use, so no free space survives to be redistributed into the gap. The old
-	   fixed `width: clamp(...)` is gone: a fixed width leaves slack by
-	   definition, and slack is exactly what reopens the gap. min-width: 0 is
-	   required or flex refuses to shrink these below their content width. */
-	flex: 1 1 0;
-	min-width: 0;
-	/* NO max-width. A ceiling here would re-open the very gap this fix closed:
-	   once both rails hit it, the leftover width has nowhere to go and
-	   justify-content hands it straight back to the gaps. With 42rem that
-	   happened above 2*672 + 452 = 1796px of stage, i.e. on exactly the large
-	   monitors this debugger is used on. The rails are dense read-outs and are
-	   meant to fill what's available, so letting them grow without limit is
-	   also the behaviour we actually want; individual cards inside cap
-	   themselves if they need to. */
-	max-height: 100cqh;
-	overflow-y: auto;
-	/* No outer padding — the rail's outer edge butts against the stage's own
-	   edge, and its inner edge is held off the phone by .stage's gap alone
-	   (15px). Each card inside keeps its own internal padding for breathing
-	   room; a second, outer padding on top of that just reopens the gap this
-	   was fixing. */
-	padding: 0;
-	box-sizing: border-box;
-}
-.rail.left {
-	align-items: stretch;
 }
 
 /* ── THE RIG ─────────────────────────────────────────────────────────────

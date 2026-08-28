@@ -283,7 +283,7 @@ let { children } = $props();
 		     was the whole reason a JS-on-mount version was rejected. -->
 		<svelte:element
 			this={"style"}
-			>{`:root { --host-decor: 1; --demo-backdrop: url("${backdropUrl}"); --demo-bezel: none; }`}</svelte:element
+			>{`:root { --host-decor: 1; --demo-backdrop: url("${backdropUrl}"); --demo-bezel: none; --ephemeral-top: 72px; }`}</svelte:element
 		>
 	{/if}
 </svelte:head>
