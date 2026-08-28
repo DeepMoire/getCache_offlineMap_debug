@@ -2,7 +2,7 @@
 /**
  * ParentPill (ReTreever's mount) — THE PILL ITSELF IS NOT HERE.
  *
- * The component lives at the parent's retreeved/sharedComponents/sharedNav/ParentPill/ParentPill.svelte, one file above
+ * The component lives at the parent's retreeved/sharedComponents/ParentPill/ParentPill.svelte, one file above
  * both repos, and rapper renders the SAME file. This is only the wrapper that
  * supplies ReTreever's half of the facts and positions it.
  *
@@ -59,7 +59,7 @@
  */
 let ParentPill = $state<any>(null);
 if (import.meta.env.DEV) {
-	import("$parent/retreeved/sharedComponents/sharedNav/ParentPill/ParentPill.svelte").then(
+	import("$parent/retreeved/sharedComponents/ParentPill/ParentPill.svelte").then(
 		(m) => {
 			ParentPill = m.default;
 		},
