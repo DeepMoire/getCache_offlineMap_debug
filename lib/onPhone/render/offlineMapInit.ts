@@ -166,22 +166,11 @@ export function initializeOfflineMap(
 		// until asked. Answers the one question a screenshot can't: are pin
 		// coordinates being REWRITTEN by camera movement, or were they already
 		// wrong when they arrived? See pinDrift.ts.
-		// OPTIONAL, and reached through a computed specifier so TypeScript never
-		// tries to resolve it: pinDrift lives in the HOST app (ReTreever), not in
-		// the engine. A host that doesn't ship it — the rapper demo — simply gets no
-		// drift detector, which costs nothing since this block is DEV-only anyway.
-		// A statically-analysable import would make the engine unbuildable
-		// standalone, which is the whole thing this migration is undoing.
-		const pinDriftModule = "$lib/mobile/map/pinDrift";
-		void (
-			import(/* @vite-ignore */ pinDriftModule) as Promise<{
-				installPinDrift(m: unknown): void;
-			}>
-		)
-			.then((m) => m.installPinDrift(map))
-			.catch(() => {
-				/* codestyle-allow-swallow: host doesn't ship pinDrift — fine. */
-			});
+		// pinDrift moved INTO the engine (lib/shared/pinDrift.ts, 28 Aug 2026),
+		// so this is a plain lazy import now — no computed specifier, no host
+		// guessing. Still DEV-only and still lazy so it costs nothing on the
+		// production path.
+		void import("../../shared/pinDrift").then((m) => m.installPinDrift(map));
 	}
 
 	// Construction-time handle, BEFORE the style loads.

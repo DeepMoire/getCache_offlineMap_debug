@@ -61,10 +61,10 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 		hint: "pyramid",
 	},
 	// ⚠️ PLACES SITS ABOVE FIRES, on Chris's instruction 28 Aug 2026. The two
-	// pyramid rows (Labels, Places) now read together, and the two cluster rows
-	// (Fires, Hospitals) below them — the list groups by MECHANISM, which is
+	// pyramid rows (Labels, Hospitals) now read together, and the two cluster rows
+	// (Fires, Places) below them — the list groups by MECHANISM, which is
 	// what the hints name and what you are comparing when something is missing.
-	{ key: "hospitals", label: "Places", ids: ["v4-poi-hospital"], hint: "pyramid" },
+	{ key: "hospitals", label: "Hospitals", ids: ["v4-poi-hospital"], hint: "pyramid" },
 	// Fires: the SWITCH exists on Chris's 24 Aug 2026 instruction, but `ids` is
 	// empty because no v4-fire* layer exists in wallStyle.ts / wallLabels.ts
 	// yet — attaching one is separate work (see attachFireLayer() in the
@@ -74,7 +74,7 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 	// route — don't add a second fires entry. Ordinary toggle, no expiry (that
 	// rule is for the field-facing MapLegend.svelte only, not this debugger).
 	{ key: "fires", label: "Fires", ids: [], hint: "cluster" },
-	{ key: "camps", label: "Hospitals", ids: ["v4-poi-camp"], hint: "cluster" },
+	{ key: "camps", label: "Places", ids: ["v4-poi-camp"], hint: "cluster" },
 ] as const;
 
 /** Toggle keys `resetLayersAllOn()` must NOT force back on. Empty here —

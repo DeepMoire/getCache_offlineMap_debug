@@ -4,7 +4,7 @@ The demo at `routes/demo/+page.svelte` renders a real offline basemap. That
 basemap is **not in this repo** — it is ~50 MB of tiles, glyphs and imagery,
 which does not belong in git.
 
-Four assets are required, all served from `/mobileAssets/`:
+Six assets are required, all served from `/mobileAssets/`:
 
 | Asset | Size | What breaks without it |
 |---|---|---|
@@ -12,6 +12,8 @@ Four assets are required, all served from `/mobileAssets/`:
 | `getcache_DT_bg.webp` | 1.2 MB | demo page background |
 | `pin_library_small/` | 348 KB | pin sprites |
 | `hand_phoneV3.webp` | 164 KB | the phone bezel around the demo |
+| `fire_icon.webp` | — | the fire hotspot pin (`routes/fires/`) |
+| `fire_intensity/` | — | the five `N-fire_intensity.webp` severity icons |
 
 ## Getting them
 

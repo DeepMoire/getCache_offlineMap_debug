@@ -4,7 +4,7 @@
 set -euo pipefail
 
 DEST="${1:-static/mobileAssets}"
-NEEDED=(worldBase getcache_DT_bg.webp pin_library_small hand_phoneV3.webp)
+NEEDED=(worldBase getcache_DT_bg.webp pin_library_small hand_phoneV3.webp fire_icon.webp fire_intensity)
 
 # Candidates derive from THIS SCRIPT's location — never from the caller's
 # working directory, never from a home directory. Two things were wrong before:
