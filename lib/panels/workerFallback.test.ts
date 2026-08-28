@@ -79,3 +79,44 @@ describe("r2_dev tier is configurable", () => {
 		expect(LAYOUT).not.toMatch(/configureTilesDevHost\(\s*["'`]https?:/);
 	});
 });
+
+/**
+ * A DEAD TIER MUST BE RETRYABLE, NOT PERMANENTLY DISABLED.
+ *
+ * MEASURED 27 Aug 2026, Chris: "I went from production to local but I couldn't
+ * get back on to production again."
+ *
+ * Every reachable[] flag came from ONE probe at mount. tiles-prod.getcache.org
+ * had just been created and the resolver's negative cache had not expired, so
+ * that probe failed — and the row was rendered `disabled` from then on. A
+ * disabled button fires no click, so the action that would have re-tested the
+ * tier was the one action the UI made impossible. The Worker came up; the panel
+ * could not find out.
+ *
+ * A transient network result must never become permanent UI state.
+ */
+describe("a tier that failed once can be retried", () => {
+	it("worker rows are never rendered `disabled`", () => {
+		// Scoped to the Workers loop: the layers loop below it legitimately
+		// disables rows for a compile-time bisect, which is not a network state.
+		const workersBlock = PANEL.slice(
+			PANEL.indexOf("{#each TARGETS as t"),
+			PANEL.indexOf("{#if layers.length"),
+		);
+		expect(workersBlock).not.toContain("disabled=");
+	});
+
+	it("clicking a dead tier re-probes it instead of returning early", () => {
+		const pick = PANEL.slice(
+			PANEL.indexOf("async function pickTarget"),
+			PANEL.indexOf("async function probeAll"),
+		);
+		expect(pick).toContain("await probeTarget(t)");
+		// The old body was a bare `if (reachable[t] === false) return;`.
+		expect(pick).not.toMatch(/if \(reachable\[t\] === false\) return;/);
+	});
+
+	it("tells the user the row is clickable", () => {
+		expect(PANEL).toContain("CLICK TO RETRY");
+	});
+});

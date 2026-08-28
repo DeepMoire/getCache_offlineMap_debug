@@ -94,11 +94,39 @@ const TARGETS: {
 // must never make a working Worker look dead).
 let reachable = $state<Partial<Record<WorkerTarget, boolean>>>({});
 
-function pickTarget(t: WorkerTarget) {
-	// Refuse a target nothing is listening on. Silently switching to a dead
-	// Worker gives a map that never fills and no error — the failure shape this
-	// whole subsystem keeps producing. [[no-silent-fallbacks]]
-	if (reachable[t] === false) return;
+/** A tier currently being re-probed, so its row can say so. */
+let retrying = $state<WorkerTarget | null>(null);
+
+async function pickTarget(t: WorkerTarget) {
+	// A DEAD ROW RE-PROBES INSTEAD OF DOING NOTHING.
+	//
+	// ⛔ THE ROW USED TO BE `disabled`, WHICH IS WHY YOU COULD LEAVE A TIER AND
+	// NOT GET BACK. MEASURED 27 Aug 2026, Chris: "I went from production to
+	// local but I couldn't get back on to production again." Every reachable[]
+	// flag is set by ONE probe at mount. The tiles-prod DNS record was minutes
+	// old and its negative cache had not expired, so that single probe failed
+	// and the row was `disabled` from then on — the click that would have
+	// re-tested it could not fire, because a disabled button has no click.
+	//
+	// A transient network result was being stored as permanent state. The
+	// deploy fixed the Worker and the panel had no way to notice. Now a click
+	// on a dead row means "try again": we re-probe THAT tier and select it if
+	// it answers. Refusing a dead target is still right — silently switching to
+	// a Worker that isn't there gives a map that never fills and no error
+	// [[no-silent-fallbacks]] — but refusing must not be permanent.
+	if (reachable[t] === false) {
+		retrying = t;
+		const alive = await probeTarget(t);
+		reachable[t] = alive;
+		retrying = null;
+		if (!alive) {
+			console.warn(
+				`[tiles] ${t} still not answering. Click again to retry.`,
+			);
+			return;
+		}
+		console.info(`[tiles] ${t} is back — switching to it.`);
+	}
 	setWorkerTarget(t);
 	target = t;
 }
@@ -158,13 +186,18 @@ onMount(() => {
 			class="cfg-row"
 			class:sel={target === t.id}
 			class:dead={reachable[t.id] === false}
-			disabled={reachable[t.id] === false}
+			class:retrying={retrying === t.id}
 			onclick={() => pickTarget(t.id)}
 			title={reachable[t.id] === false
-				? `${t.label} is not answering — ${t.id === "localDev" ? "start it with `npm run dev:local` in workers/offline-tiles — no account needed" : "the Worker is unreachable from here"}`
+				? `${t.label} is not answering — CLICK TO RETRY. ${t.id === "localDev" ? "Start it with `npm run dev:local` in workers/offline-tiles — no account needed." : "The Worker was unreachable when last checked."}`
 				: t.hint}
 		>
 			<span class="cfg-label">{t.label}</span>
+			{#if retrying === t.id}
+				<span class="dead-tag">checking…</span>
+			{:else if reachable[t.id] === false}
+				<span class="dead-tag">retry</span>
+			{/if}
 			<span class="sw" class:sw-on={target === t.id}></span>
 		</button>
 	{/each}
@@ -251,8 +284,13 @@ onMount(() => {
 	font-weight: 600;
 }
 .cfg-row.dead {
-	opacity: 0.45;
-	cursor: not-allowed;
+	/* Dimmed but CLICKABLE — the click is the retry. `cursor: not-allowed`
+	   here told the user the row was a dead end, which is what it used to be. */
+	opacity: 0.55;
+	cursor: pointer;
+}
+.cfg-row.retrying {
+	opacity: 0.8;
 }
 .dead-tag {
 	flex: 1 1 auto;
