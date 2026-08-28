@@ -323,6 +323,7 @@ let { children } = $props();
 		views={[]}
 		ghIcon={GH_ICON}
 		pathname={page.url.pathname}
+		search={page.url.search}
 		tier={THIS_TIER}
 		otherTier={OTHER_TIER}
 		tierSlot={THIS_SLOT}

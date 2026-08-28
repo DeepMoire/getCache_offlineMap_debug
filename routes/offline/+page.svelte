@@ -15,4 +15,4 @@
 import Demo from "../demo/+page.svelte";
 </script>
 
-<Demo rails={false} />
+<Demo />

@@ -43,7 +43,11 @@ import handPhoneUrl from "$parent/retreeved/sharedAssets/hand_phoneV3.webp";
 // `/mobileAssets/...`, which a child cannot use — that path only exists on the
 // ReTreever server and 404s in a standalone checkout. Importing it makes the
 // bytes part of THIS build, so the cursor is correct in every tier.
-import grabCursorUrl from "$parent/retreeved/sharedAssets/hand_shovel_cursor.webp";
+// _100 = the 100px-wide cut. A CSS cursor image is IGNORED ENTIRELY above
+// ~128px in every browser — no warning, no fallback drawn, you just get the
+// stock arrow. The full-size hand_shovel_cursor.webp (24 KB) is over that
+// line, which is why the shovel silently vanished. Keep the _100 cut here.
+import grabCursorUrl from "$parent/retreeved/sharedAssets/hand_shovel_cursor_100.webp";
 import { initializeOfflineMap } from "../../lib/onPhone/render/offlineMapInit";
 import { buildOfflineBaseStyle } from "../../lib/onPhone/render/offlineBaseStyle";
 import { v4TransformRequest } from "../../lib/r2Worker/local_dev/roads/packDownload";
@@ -85,6 +89,7 @@ const PINS: Array<{ name: string; lngLat: [number, number] }> = [
 	{ name: "Vancouver", lngLat: [-123.1207, 49.2827] },
 	{ name: "Prince George", lngLat: [-122.7497, 53.9171] },
 ];
+
 
 /**
  * The host ports, implemented with literals. Compare with ReTreever's
@@ -145,9 +150,57 @@ onMount(() => {
  * wiring, which is the thing that drifts.
  */
 let {
-	rails = true,
+	/**
+	 * ⛔ DEFAULTS OFF. It used to default TRUE, which meant a route that said
+	 * nothing got the debugger — so /offline showed instrument panels and
+	 * /offline/debug showed the same thing, and the two urls were identical
+	 * for the wrong reason. Panels are opt-IN: a route that wants them says
+	 * so, and the plain map is what you get by default. */
+	rails = false,
+	/**
+	 * THE INSTRUMENT PANELS. Alias of `rails`, and the name ReTreever's two
+	 * routes pass — /offline renders this component bare, /offline/debug
+	 * renders it with `cards`. ONE WORD is the whole difference between the
+	 * map and the debugger.
+	 *
+	 * ⛔ Two names, one flag, deliberately: `rails` is what the layout CSS has
+	 * always called them and renaming it would touch every rule; `cards` is
+	 * what a route reads. A second boolean would be a second source of truth
+	 * for the same question — the exact mistake that produced two offline maps
+	 * (ReTreever's 1,702-line copy, deleted 27 Aug 2026).
+	 */
+	cards,
 	hostPorts,
-}: { rails?: boolean; hostPorts?: HostPorts } = $props();
+}: { rails?: boolean; cards?: boolean; hostPorts?: HostPorts } = $props();
+
+/**
+ * THE DEBUG PANELS. One boolean. A button flips it.
+ *
+ * That is the entire mechanism, and it replaces two routes, a redirect, a
+ * url-param reader, a popstate listener, a window event and a nav bridge —
+ * all of which existed to make a NAVIGATION behave like a toggle. A boolean
+ * is a toggle. Nothing navigates, so the map is never rebuilt, the camera
+ * cannot jump, and no pin can vanish. The debugger IS the map with this true.
+ *
+ * `cards`/`rails` still seed it, so a host that mounts <Demo cards /> opens
+ * with the panels up, exactly as before.
+ */
+let showPanels = $state(cards ?? rails);
+
+/**
+ * THE PORTS, RESOLVED ONCE — the map is the SAME MAP on every tier.
+ *
+ * `hostPorts ?? fixturePorts` used to be written out at all THREE call sites
+ * (the bake service, the marker loop, the blob panel). Three copies of one
+ * decision is three chances for them to disagree, and the visible symptom was
+ * the one that mattered: the same url on two servers drew different pins, so
+ * "/offline and /offline/debug are the same page" stopped being believable.
+ *
+ * Resolved here, once, and read everywhere. A tier that supplies ports gets
+ * its own data; a tier that supplies none gets the fixtures — but whatever it
+ * gets, EVERY part of the page gets the same one.
+ */
+const ports = $derived(hostPorts ?? fixturePorts);
 
 let activePin = $state("pin");
 
@@ -233,6 +286,13 @@ function addMarker(
 }
 let mapError = $state("");
 let wallStatus = $state("wall not mounted yet");
+/** WHERE THE MAP OPENED, as a string on the SCREEN — not in the console.
+ *  A URL camera that only reports itself to devtools is indistinguishable
+ *  from one that was ignored: you paste a coordinate, the map shows blank
+ *  because nothing is baked there, and "it moved" and "it did nothing" look
+ *  identical. This badge is the difference, and it renders on BOTH routes
+ *  (outside `{#if showPanels}`) because /offline is where you actually paste. */
+let cameraBadge = $state("");
 
 // Layer toggles, driving the CONFIG panel's `layers` section. Same shape the
 // real /offline route passes, so the panel behaves identically here.
@@ -281,7 +341,7 @@ const layers = $derived(
 );
 
 onMount(() => {
-	const stopBake = startOfflineBakeService(hostPorts ?? fixturePorts);
+	const stopBake = startOfflineBakeService(ports);
 	let cleanup: (() => void) | undefined;
 	let satMount: ReturnType<typeof createSatelliteMount> | undefined;
 	let satPoll: ReturnType<typeof setInterval> | undefined;
@@ -290,6 +350,13 @@ onMount(() => {
 		// fixture, so `?=58.7986,-122.6761` points BOTH routes at the same
 		// spot — see cameraFromUrl.ts. Absent, the first fixture pin stands.
 		const urlCam = cameraFromUrl(location.search);
+		// The badge states WHICH source won, always — "from the URL" vs the
+		// fixture default. Reporting only the success case would leave the
+		// ignored-param case silent, which is the case worth seeing.
+		cameraBadge = urlCam
+			? `${urlCam.center[1]}, ${urlCam.center[0]}` +
+				`${urlCam.zoom !== undefined ? ` · z${urlCam.zoom}` : ""} · from the URL`
+			: `${PINS[0].lngLat[1]}, ${PINS[0].lngLat[0]} · z9 · default (no coords in URL)`;
 		if (urlCam)
 			console.info(
 				`[map] opening at ${urlCam.center[1]},${urlCam.center[0]}` +
@@ -353,6 +420,36 @@ onMount(() => {
 				// wasn't a marker (markers stopPropagation above).
 				map.on("move", syncPopover);
 				map.on("zoom", syncPopover);
+				/**
+				 * THE ADDRESS BAR FOLLOWS THE MAP — the missing half of the camera.
+				 *
+				 * cameraFromUrl has always READ ?at=; nothing ever WROTE it. So the
+				 * only way to get a shareable coordinate was to hand-type one into
+				 * the address bar — exactly the chore the feature exists to remove.
+				 * Pan or zoom now and the url updates itself, so the url in front of
+				 * you is always the url that reproduces what you are looking at.
+				 *
+				 * `moveend`, not `move`: one write per gesture instead of one per
+				 * frame. `replaceState`, not `pushState`: panning must not stack
+				 * hundreds of entries that the back button then has to walk.
+				 *
+				 * lat,lng — human order, matching what cameraFromUrl parses, so the
+				 * url it writes is one it can read back. 6dp ≈ 0.1 m; more is noise.
+				 */
+				const writeCameraToUrl = () => {
+					const c = map.getCenter();
+					const at = `${c.lat.toFixed(6)},${c.lng.toFixed(6)}`;
+					const z = map.getZoom().toFixed(2);
+					history.replaceState(history.state, "", `?at=${at}&z=${z}`);
+					cameraBadge = `${at} · z${z}`;
+				};
+				// ON LOAD, NOT JUST ON MOVE. Writing only from `moveend` meant a
+				// freshly-opened page had a BARE url until you happened to drag —
+				// so the feature looked absent exactly when you went to check it,
+				// which is the whole reason it kept reading as "gone again".
+				// The url must describe the view from the first frame.
+				writeCameraToUrl();
+				map.on("moveend", writeCameraToUrl);
 				map.on("click", () => {
 					selectedIdx = null;
 					popAt = null;
@@ -407,7 +504,7 @@ onMount(() => {
 					satMount = createSatelliteMount(map);
 					const showPhotos = async (): Promise<void> => {
 						let shown = 0;
-						for (const p of (hostPorts ?? fixturePorts).places())
+						for (const p of ports.places())
 							for (const c of p.anchors) {
 								await satMount?.display(c);
 								if (satMount?.mounted().has(satImageKey(c))) shown++;
@@ -459,11 +556,17 @@ onMount(() => {
      the bundler rewrites `grabCursorUrl` to the built asset path, so the cursor
      resolves in every tier without any tier-specific URL in the CSS. -->
 <div class="stage" style="--grab-cursor: url({grabCursorUrl});">
+	<!-- THE CAMERA BADGE. OUTSIDE {#if showPanels} on purpose: /offline is the route
+	     you paste a coordinate into, and it is the route with no rails to
+	     report anything. Both routes therefore answer "did my URL land?" the
+	     same way, which is the same reason they share this one component. -->
+
+
 	<!-- LEFT RAIL — ONE component. Both read-outs live inside it so they share a
 	     stacking context and can never drift apart or slide under the hand. It
 	     sits 15px clear of the phone — see .stage's gap and, more importantly,
 	     the margin-inline on .rig that makes that 15px real. -->
-	{#if rails}
+	{#if showPanels}
 	<aside class="rail left">
 		<OfflineWorkMeter
 			docked
@@ -473,7 +576,7 @@ onMount(() => {
 			{focusedBlobName}
 		/>
 		<OfflineBlobPanel
-			places={(hostPorts ?? fixturePorts).places()}
+			places={ports.places()}
 			areaKeyOf={satImageKey}
 			onFocusedName={(name) => (focusedBlobName = name)}
 		/>
@@ -495,6 +598,23 @@ onMount(() => {
 			/>
 		{/if}
 		<div class="phone">
+		<!-- ⛔ INSIDE THE PHONE, not fixed to the viewport. Both of these were
+		     `position: fixed; top: 8px` — which is the PARENT'S HEADER. The nav
+		     bar (67px tall under rapper) painted over them, so the button was
+		     unclickable and the badge invisible, on every tier, and nobody
+		     could say why. Measured 28 Aug 2026 with elementFromPoint: the tier
+		     pill was on top. Anchored to the phone they sit on the map, in the
+		     child's own space, where no parent chrome can reach. -->
+		<button
+			type="button"
+			class="debug-toggle"
+			class:on={showPanels}
+			aria-pressed={showPanels}
+			onclick={() => (showPanels = !showPanels)}
+		>debug</button>
+		{#if cameraBadge}
+			<output class="camera-badge" aria-live="polite">{cameraBadge}</output>
+		{/if}
 			{#if mapError}
 				<div class="map-error">
 					<p>Map unavailable</p>
@@ -502,7 +622,7 @@ onMount(() => {
 				</div>
 			{/if}
 			<div bind:this={mapContainer} class="map-canvas"></div>
-
+			
 			<!-- THE PIN LIBRARY, ON THE MAP. Anchored under the selected pin and
 			     re-projected on every camera move, so it behaves like the app's
 			     feature popover rather than a panel off to one side. -->
@@ -541,7 +661,7 @@ onMount(() => {
 	</div>
 
 	<!-- RIGHT RAIL — ONE component, mirroring the left. -->
-	{#if rails}
+	{#if showPanels}
 	<aside class="rail right">
 		<OfflineConfigPanel {layers} />
 
@@ -560,6 +680,46 @@ onMount(() => {
 </div>
 
 <style>
+	
+	/* THE CAMERA BADGE — fixed to the viewport, not the stage, so it cannot be
+	   pushed off by a rail's flex-grow (see .rail) and reads the same on both
+	   routes. pointer-events:none keeps it from ever eating a map drag. */
+	.debug-toggle {
+		position: absolute;
+		/* The phone's top edge sits UNDER the parent's nav (67px on rapper).
+		   Clear it, or the button is clickable but half-hidden. */
+		top: 40px;
+		right: 12px;
+		z-index: 50;
+		padding: 4px 12px;
+		border: 1px solid #555;
+		border-radius: 999px;
+		background: rgb(0 0 0 / 0.78);
+		color: #ddd;
+		font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+		cursor: pointer;
+	}
+	.debug-toggle.on {
+		background: #e8b923;
+		border-color: #e8b923;
+		color: #111;
+	}
+
+	.camera-badge {
+		position: absolute;
+		top: 40px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 50;
+		padding: 4px 10px;
+		border-radius: 999px;
+		background: rgb(0 0 0 / 0.78);
+		color: #fff;
+		font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+		white-space: nowrap;
+		pointer-events: none;
+	}
+
 :global(html),
 :global(body) {
 	margin: 0;
