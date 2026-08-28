@@ -29,13 +29,19 @@
   Ns" number ticks up, and reads $state straight from workMeter.
 -->
 <script lang="ts">
+import "./devCard.css";
 import { dev } from "$app/environment";
 import { onMount } from "svelte";
-import { workStats, payloadStats, resetWorkStats } from "./workMeter.svelte";
+import {
+	workStats,
+	payloadStats,
+	resetWorkStats,
+} from "./workMeter.svelte";
 import { subscribeOfflineBake } from "../onPhone/bake/bakeService.svelte";
 import {
 	HEAP_NOTE,
 	collectFocusedBlobReport,
+	compactJson,
 	debugReportFilename,
 	type LngLatPin,
 } from "./debugReport";
@@ -215,7 +221,7 @@ async function copyJson() {
 	exporting = true;
 	exportMsg = "";
 	try {
-		const json = JSON.stringify(await buildReport(), null, 2);
+		const json = compactJson(await buildReport());
 		await navigator.clipboard.writeText(json);
 		flash("copied");
 	} catch (err) {
@@ -232,7 +238,7 @@ async function downloadJson() {
 	exporting = true;
 	exportMsg = "";
 	try {
-		const json = JSON.stringify(await buildReport(), null, 2);
+		const json = compactJson(await buildReport());
 		const url = URL.createObjectURL(
 			new Blob([json], { type: "application/json" }),
 		);
@@ -405,16 +411,14 @@ function fmtKb(kb: number): string {
 </script>
 
 {#if dev}
-	<div class="meter" class:docked={docked} class:collapsed={!open} bind:this={host}>
-		<div class="head-row">
+	<div class="meter dev-card" class:docked={docked} class:collapsed={!open} bind:this={host}>
+		<div class="head-row dev-card__head">
 			<button
 				class="head"
 				onclick={() => (open = !open)}
 				title="Offline work meter — counts what runs while you sit still"
 			>
-				<span class="dot" class:live={rows.some((r) => r.startedAt !== null)}
-				></span>
-				MAP DEBUGGER {open ? "▾" : "▸"}
+				<span class="dev-card__title">CURRENT SESSION</span> {open ? "▾" : "▸"}
 			</button>
 			<!-- ONE trigger, not two slabs. Two full-width gold buttons that
 			     differed only in verb ate the whole header and stamped the blob
@@ -431,7 +435,7 @@ function fmtKb(kb: number): string {
 					disabled={exporting}
 					aria-haspopup="menu"
 					aria-expanded={exportOpen}
-					title="Export this blob's metadata as JSON"
+					title="Export as JSON — the focused blob, layers, heap, the work meter (circuits, timings, probes), recent imports: one file"
 				>
 					{#if justDid !== null}
 						<span class="et-ok">✓</span>
@@ -450,6 +454,7 @@ function fmtKb(kb: number): string {
 								stroke-linejoin="round"
 							/>
 						</svg>
+						<span class="et-label">json</span>
 					{/if}
 				</button>
 
@@ -665,25 +670,7 @@ function fmtKb(kb: number): string {
 {/if}
 
 <style>
-/* Design tokens lifted from the "Map Debugger" design handoff (dark, gold
-   accent). Matched here rather than pulled from a shared token file — there
-   isn't one for this component pair yet (see OfflineBlobPanel.svelte, which
-   hardcodes the same values so the two cards stay one instrument). */
-.meter {
-	--bg: #0a0a0a;
-	--panel: #141414;
-	--panel3: #0f0f0f;
-	--border: rgba(255, 255, 255, 0.1);
-	--border2: rgba(255, 255, 255, 0.2);
-	--text: #f3f1e9;
-	--muted: #8f8b80;
-	--muted2: #5f5c53;
-	--gold: #eab627;
-	--amber: #d99a3d;
-	--green: #7fbf6a;
-	--blue: #6fb3d9;
-	--red: #e2553f;
-}
+/* Tokens and the card shell live in devCard.css (.dev-card). */
 
 /* DOCKED — in the flow, for a page that lays panels out in columns. Everything
    else (colours, type, borders) is shared; only the positioning differs. */
@@ -708,24 +695,11 @@ function fmtKb(kb: number): string {
 	left: 10px;
 	top: 10px;
 	z-index: 99999;
-	font:
-		12px/1.4 "JetBrains Mono",
-		ui-monospace,
-		SFMono-Regular,
-		Menlo,
-		monospace;
-	color: var(--text);
-	/* Matched to OfflineBlobPanel: the two cards are one instrument, so they
-	   share background, border, radius and width. */
-	background: var(--panel);
-	border: 1px solid var(--border);
-	border-radius: 14px;
-	padding: 12px 14px;
 	max-width: 420px;
 	pointer-events: auto;
-	box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
 }
 .head {
+	/* Look comes from .dev-card__title inside; this is just the button reset. */
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -733,22 +707,9 @@ function fmtKb(kb: number): string {
 	border: 0;
 	color: var(--gold);
 	font: inherit;
-	font-family: "Inter", -apple-system, sans-serif;
-	font-weight: 800;
-	font-size: 13px;
-	letter-spacing: 0.03em;
 	padding: 0;
 	cursor: pointer;
 	white-space: nowrap;
-}
-.dot {
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--muted2);
-}
-.dot.live {
-	background: var(--gold);
 }
 table {
 	border-collapse: collapse;
@@ -972,8 +933,6 @@ tr.hot .name {
 }
 /* ── header row: title + export ───────────────────────────────────────── */
 .head-row {
-	display: flex;
-	align-items: center;
 	flex-wrap: wrap;
 	gap: 8px 10px;
 }
@@ -994,9 +953,9 @@ tr.hot .name {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 34px;
 	height: 30px;
-	padding: 0;
+	gap: 6px;
+	padding: 0 10px;
 	border-radius: 9px;
 	border: 1px solid #e8b923;
 	background: transparent;
@@ -1022,6 +981,11 @@ tr.hot .name {
 .export-trigger:disabled {
 	opacity: 0.55;
 	cursor: default;
+}
+.export-trigger .et-label {
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
 }
 .export-trigger .et-ok {
 	font-weight: 800;

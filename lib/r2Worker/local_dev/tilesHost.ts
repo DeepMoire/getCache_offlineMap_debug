@@ -1,3 +1,4 @@
+import { noteProbe } from "../../shared/workMeter.svelte";
 /**
  * WHICH offline-tiles Worker the app talks to. ONE definition, both routes.
  *
@@ -290,6 +291,7 @@ export async function probeTarget(
 		// ANY answer means something is listening. A 4xx still proves reachable,
 		// and treating "wrong status" as "absent" would grey out a Worker that
 		// is up but answering differently than expected.
+		noteProbe(t, true);
 		return true;
 	} catch (err) {
 		// SAY WHY, NOT JUST THAT.
@@ -308,6 +310,7 @@ export async function probeTarget(
 		//
 		// Logged once per host, not per probe — probeAll runs on every mount.
 		const why = err instanceof Error ? err.message : String(err);
+		noteProbe(t, false);
 		if (lastProbeFailure[host] !== why) {
 			lastProbeFailure[host] = why;
 			const dns = /name not resolved|ERR_NAME|getaddrinfo|ENOTFOUND/i.test(why);

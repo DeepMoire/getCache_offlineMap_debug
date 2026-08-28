@@ -1,4 +1,5 @@
 <script lang="ts">
+import "../shared/devCard.css";
 /**
  * OfflineBlobPanel — what the device actually holds, per area.
  *
@@ -45,16 +46,83 @@ let loading = $state(true);
 let baking = $state(false);
 let pending = $state(0);
 
-/** areaKey → the place that owns it, so a row can show a name not a number. */
-const owner = $derived.by(() => {
-	const m = new Map<string, HostPlace>();
-	if (!areaKeyOf) return m;
-	for (const p of places)
-		for (const a of p.anchors) if (!m.has(areaKeyOf(a))) m.set(areaKeyOf(a), p);
-	return m;
-});
-
 const totalBytes = $derived(rows.reduce((n, r) => n + (r.bytes || 0), 0));
+
+/**
+ * THE LIST, per Chris 28 Aug 2026: "the last successful import is hoisted.
+ * the rest are descending last touched, even empty pins endure there."
+ *
+ * So the list is PINS, not blobs: every place the host has, whether or not
+ * a blob ever arrived for it. A pin with nothing on disk stays in the list
+ * with empty chips — that row IS the reading "never arrived", which a
+ * blobs-only list could not show (the pin was simply absent, and absent
+ * looks like "fine"). Coverage rows no place owns any more (the fixture
+ * home centre, an evicted pin's leftovers) are kept too, so bytes on disk
+ * are never hidden.
+ */
+interface Entry {
+	areaKey: string;
+	name: string;
+	lng: number;
+	lat: number;
+	/** Place touch, or the record's own touch when no place owns it. */
+	lastTouched: number;
+	groupName?: string;
+	cov?: CoverageRecord;
+}
+const entries = $derived.by((): Entry[] => {
+	const byKey = new Map(rows.map((r) => [r.areaKey, r]));
+	const out: Entry[] = [];
+	const seen = new Set<string>();
+	if (areaKeyOf) {
+		for (const p of places) {
+			const a = p.anchors[0];
+			if (!a) continue;
+			const key = areaKeyOf(a);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out.push({
+				areaKey: key,
+				name: p.featureName ?? key,
+				lng: a[0],
+				lat: a[1],
+				lastTouched: Date.parse(p.lastTouched) || 0,
+				groupName: p.groupName,
+				cov: byKey.get(key),
+			});
+		}
+	}
+	for (const r of rows) {
+		if (seen.has(r.areaKey)) continue;
+		out.push({
+			areaKey: r.areaKey,
+			name: r.areaKey,
+			lng: r.lng,
+			lat: r.lat,
+			lastTouched: r.lastTouched ?? 0,
+			cov: r,
+		});
+	}
+	return out;
+});
+/** Hoisted: the newest SUCCESSFUL import — bytes landed, by bakedAt. */
+const focused = $derived.by((): Entry | undefined => {
+	let best: Entry | undefined;
+	for (const e of entries) {
+		const c = e.cov;
+		if (!c || !(c.hasPhoto || c.hasLines)) continue;
+		const t = c.bakedAt ?? c.lastTouched ?? 0;
+		const bt = best?.cov ? (best.cov.bakedAt ?? best.cov.lastTouched ?? 0) : -1;
+		if (t > bt) best = e;
+	}
+	return best;
+});
+/** Everything else, newest touched first — empty pins included. */
+const rest = $derived(
+	entries
+		.filter((e) => e !== focused)
+		.sort((a, b) => b.lastTouched - a.lastTouched),
+);
 
 function kb(n: number): string {
 	if (!n) return "—";
@@ -122,8 +190,7 @@ async function refresh(): Promise<void> {
 		rows = [];
 	}
 	loading = false;
-	const top = rows[0];
-	onFocusedName?.(top ? (owner.get(top.areaKey)?.featureName ?? top.areaKey) : null);
+	onFocusedName?.(focused?.name ?? null);
 }
 
 onMount(() => {
@@ -139,9 +206,9 @@ onMount(() => {
 });
 </script>
 
-<div class="panel">
-	<div class="head">
-		<span class="title">offline blobs</span>
+<div class="panel dev-card">
+	<div class="head dev-card__head">
+		<span class="title dev-card__title">offline blobs</span>
 		<span class="sum">
 			{rows.length} area{rows.length === 1 ? "" : "s"} · {kb(totalBytes)}
 			{#if OFFLINE_BUDGET_BYTES}
@@ -173,79 +240,78 @@ onMount(() => {
 		</div>
 	{:else}
 		<div class="rows">
-			{#each rows as r, i (r.areaKey)}
-				{@const p = owner.get(r.areaKey)}
-				<!-- Row 0 is the export target — same newest-first row
-				     debugReport.ts scopes its `latest` field to. -->
-				{#if i === 1}
-					<div class="otherlabel">ALSO CACHED — NOT INCLUDED IN EXPORT</div>
-				{/if}
-				<div class="row" class:focused={i === 0} class:other={i > 0}>
-					{#if i === 0}
-						<span class="focustag">● FOCUSED — EXPORTS AS JSON</span>
+			{#snippet card(e: Entry, isFocused: boolean)}
+				{@const c = e.cov}
+				<div class="row" class:focused={isFocused} class:other={!isFocused} class:empty={!c}>
+					{#if isFocused}
+						<span class="focustag">● FOCUSED — LAST IMPORT · EXPORTS AS JSON</span>
 					{/if}
+					<!-- ONE line for the pin: coordinates once (they ARE the name),
+					     the age, and the total. Then one line per LAYER, ledger style:
+					     what · how much · size at the right edge — the same shape as the
+					     blob inspector's in/out rows. -->
 					<div class="row-top">
-						<span class="name">{p?.featureName ?? r.areaKey}</span>
-						<span class="bytes">{kb(r.bytes)}</span>
+						<span class="pin">📍</span>
+						<span class="name">{e.name}</span>
+						<span
+							class="when"
+							title={c?.bakedAt
+								? `imported ${stamp(c.bakedAt)} · touched ${stamp(e.lastTouched)}`
+								: `touched ${stamp(e.lastTouched)}`}
+						>
+							🕒 {isFocused && c?.bakedAt ? ago(c.bakedAt, now) : ago(e.lastTouched, now)}
+						</span>
+						<span class="bytes">{c ? kb(c.bytes) : "no blob"}</span>
 					</div>
-					<div class="row-bot">
-						<span class="coord">
-							{r.lat.toFixed(4)}, {r.lng.toFixed(4)}
-						</span>
-						<span class="chip" class:on={r.hasPhoto}>
-							satellite {r.hasPhoto ? kb(r.photoBytes ?? 0) : "—"}
-						</span>
-						<span class="chip" class:on={r.hasLines}>
-							roads {r.hasLines ? `${r.lineCount ?? 0} feat` : "—"}
-						</span>
-						{#if p?.groupName}<span class="dim">{p.groupName}</span>{/if}
-						<span class="when" title="last touched {stamp(r.lastTouched)}">
-							{ago(r.lastTouched, now)}
-						</span>
+					<div class="layers">
+						<div class="layer" class:on={c?.hasPhoto}>
+							<span class="dir">in</span>
+							<span class="ico">🛰️</span>
+							<span class="lname">satellite</span>
+							<span class="ldetail">{c?.hasPhoto ? "image/webp" : "—"}</span>
+							<span class="lbytes">{c?.hasPhoto ? kb(c.photoBytes ?? 0) : "—"}</span>
+						</div>
+						<!-- lineCount is dl.downloaded — TILES, not features. It read
+						     "1 feat" while the tile held 2,394 roads (28 Aug 2026). -->
+						<div class="layer" class:on={c?.hasLines}>
+							<span class="dir">out</span>
+							<span class="ico">🛣️</span>
+							<span class="lname">roads</span>
+							<span class="ldetail">{c?.hasLines ? `${c.lineCount ?? 0} tiles` : "—"}</span>
+							<span class="lbytes">{c?.hasLines ? kb(c.lineBytes ?? 0) : "—"}</span>
+						</div>
 					</div>
 				</div>
-			{/each}
+			{/snippet}
+			{#if focused}
+				{@render card(focused, true)}
+			{/if}
+			{#if rest.length > 0}
+				{#each rest as e (e.areaKey)}
+					{@render card(e, false)}
+				{/each}
+			{/if}
 		</div>
 	{/if}
 </div>
 
 <style>
+	/* Shell (bg, border, radius, padding, type) comes from devCard.css — see
+	   .dev-card. Only the rail-specific bits stay here. */
 	.panel {
-		font-family: "JetBrains Mono", ui-monospace, monospace;
-		font-size: 0.78rem;
-		background: #141414;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 14px;
-		color: #f3f1e9;
-		/* Sits directly under OfflineWorkMeter in the rail — a small gap (not a
-		   seam) keeps them read as two clearly separate cards, matching how
-		   this debugger already renders live (see .rail gap in OfflineMapPage).
-		   No max-width here: the rail itself already caps width (see .rail in
-		   OfflineMapPage.svelte) — a second, narrower cap on top of that just
-		   starves the card with dead space it can't use. */
-		width: 100%;
-		box-sizing: border-box;
-		/* Same drop shadow as OfflineWorkMeter — the two cards sit stacked in
-		   the rail and must lift off the page together. */
-		box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
 		overflow: hidden;
-	}
-	.head {
+		/* Fills its dock (the right rail runs top-to-bottom); the list below
+		   takes the slack and scrolls, so the head and the WIPE stay put. */
 		display: flex;
-		align-items: center;
+		flex-direction: column;
+		max-height: 100%;
+	}
+	/* Row layout from .dev-card__head; this card also wraps its summary. */
+	.head {
 		flex-wrap: wrap;
 		gap: 0.4rem 0.75rem;
-		padding: 0.85rem 0.9rem 0.7rem;
-		background: #1c1c1c;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 	}
-	.title {
-		font-family: "Inter", -apple-system, sans-serif;
-		font-weight: 800;
-		font-size: 0.9rem;
-		color: #eab627;
-		white-space: nowrap;
-	}
+	/* Title look from .dev-card__title. */
 	.sum {
 		margin-left: auto;
 		color: #8f8b80;
@@ -277,7 +343,8 @@ onMount(() => {
 		line-height: 1.5;
 	}
 	.rows {
-		max-height: 340px;
+		flex: 1 1 auto;
+		min-height: 0;
 		overflow-y: auto;
 	}
 	.row {
@@ -311,15 +378,12 @@ onMount(() => {
 		border-radius: 5px;
 		margin-bottom: 7px;
 	}
-	.otherlabel {
-		padding: 0.85rem 0.9rem 0.2rem;
-		font-family: "JetBrains Mono", ui-monospace, monospace;
-		font-size: 0.65rem;
-		font-weight: 800;
-		letter-spacing: 0.08em;
-		color: #5f5c53;
-	}
 	/* NOT exported — secondary at a glance, so the eye lands on FOCUSED first. */
+	/* A pin with nothing on disk. Dimmer still — the row's job is to SAY
+	   "never arrived", not to look like a blob. */
+	.row.empty {
+		opacity: 0.55;
+	}
 	.row.other {
 		opacity: 0.55;
 	}
@@ -331,46 +395,56 @@ onMount(() => {
 		display: flex;
 		align-items: baseline;
 		gap: 0.5rem;
+		padding: 0.2rem 0;
 	}
+	.pin { font-size: 0.9em; }
 	.name {
-		color: #f3f1e9;
+		color: #eab627;
 		font-weight: 700;
 		font-size: 0.95em;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	/* Age sits beside the name in the header — one line, not a fourth row. */
+	.when {
+		color: #eab627;
+		opacity: 0.85;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
 	.bytes {
 		margin-left: auto;
 		color: #eab627;
 		font-weight: 700;
-	}
-	.row-bot {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem;
-		margin-top: 0.3rem;
-		color: #8f8b80;
-	}
-	/* Pushed to the row's right edge: the age is the thing you scan DOWN the
-	   column for, so it wants its own lane rather than a position that shifts
-	   with however many chips a row happens to have. */
-	.when {
-		margin-left: auto;
-		color: #8f8b80;
 		font-variant-numeric: tabular-nums;
+	}
+	/* THE LEDGER — one line per layer, columns aligned down the card:
+	   in/out · icon · name · detail · size-at-the-right. Alternate fills so
+	   the eye can follow a line across, like the blob inspector's rows. */
+	.layers {
+		display: grid;
+		grid-template-columns: 2.2em 1.4em 5.5em 1fr auto;
+		align-items: baseline;
+		margin-top: 0.15rem;
+		border-radius: 6px;
+		overflow: hidden;
+	}
+	.layer {
+		display: contents;
+		color: #8f8b80;
+	}
+	.layer > span {
+		padding: 0.18rem 0.3rem;
+		background: rgba(255, 255, 255, 0.03);
 		white-space: nowrap;
 	}
-	.chip {
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 6px;
-		padding: 0.15rem 0.4rem;
-		font-size: 0.92em;
-		font-weight: 600;
-	}
-	.chip.on {
-		color: #7fbf6a;
-		border-color: rgba(127, 191, 106, 0.4);
-	}
+	.layer:nth-child(even) > span { background: rgba(255, 255, 255, 0.06); }
+	.dir { color: #6fb3d9; font-weight: 700; text-align: right; }
+	.ico { text-align: center; }
+	.lname { color: #f3f1e9; }
+	.ldetail { color: #8f8b80; overflow: hidden; text-overflow: ellipsis; }
+	.lbytes { color: #eab627; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+	.layer.on .lname { color: #f3f1e9; }
+	.layer:not(.on) > span { opacity: 0.5; }
 </style>

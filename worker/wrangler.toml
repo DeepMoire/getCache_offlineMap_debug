@@ -1,0 +1,128 @@
+name = "offline-tiles"
+main = "src/index.ts"
+compatibility_date = "2026-06-02"
+
+# Serve from a clean custom domain on the getcache.org zone (no account name in
+# the URL). `custom_domain = true` makes Cloudflare auto-provision the DNS record
+# AND the TLS cert for this hostname — the endpoint is https://tiles-prod.getcache.org.
+# The generated *.workers.dev URL keeps working alongside this. NOTE: top-level key,
+# MUST sit above every [table] header (incl. [vars]) or TOML nests it under the table.
+routes = [
+  { pattern = "tiles-prod.getcache.org", custom_domain = true }
+]
+
+# ⛔ NEVER CREATE tiles-prod / tiles-dev BY HAND IN THE CLOUDFLARE DASHBOARD.
+#
+# `custom_domain = true` means Cloudflare owns the DNS record AND the TLS cert
+# and creates both during `wrangler deploy`. It will NOT adopt a record you made
+# first — the deploy fails outright:
+#
+#   Hostname 'tiles-prod.getcache.org' already has externally managed DNS
+#   records (A, CNAME, etc). Either delete them, try a different hostname, or
+#   use the option 'override_existing_dns_record' to override. [code: 100117]
+#
+# That override is NOT exposed in wrangler's CLI or config (cloudflare/workers-
+# sdk#9878, open, "Requires support from the Cloudflare Platform"), so there is
+# no --force. Recovery is manual: delete the record, then deploy.
+#
+# The `100::` proxied-AAAA placeholder people reach for here is for Worker
+# ROUTES, a different mechanism. On a custom domain it is the CAUSE of 100117,
+# not a workaround — Cloudflare's own docs now steer away from it.
+#
+# ── WHY tiles-local IS DIFFERENT, AND IT LOOKS INCONSISTENT ────────────────
+# Chris, 27 Aug 2026: "Wouldn't it be easier to just do all three the same way?"
+# Yes, and it is not available. tiles-local.getcache.org points at 127.0.0.1 —
+# no Worker, no certificate, nothing for Cloudflare to attach — so nothing will
+# ever create it but a human in the dashboard. Two tiers are made by the deploy
+# and one by hand because Cloudflare draws the line there, not because we chose
+# to. Verified against docs 27 Aug 2026 after the opposite advice was given.
+
+# The R2 bucket holding the parked Protomaps planet .pmtiles archive.
+# `binding` is the name the Worker code reads (env.TILES).
+# `bucket_name` must match the bucket you create with `wrangler r2 bucket create`.
+[[r2_buckets]]
+binding = "TILES"
+bucket_name = "offline-tiles"
+
+# Object keys of the archives inside the bucket.
+#   PMTILES_KEY      — the /{z}/{x}/{y}.pbf tile route's archive. Works fine on the
+#                      127 GB whole-world planet (single-tile reads are cheap).
+#   PACK_PMTILES_KEY — the /pack downloader route's archive. The whole-world planet
+#                      (z0–15). A pack is ONE 30 km circle on the z8 grid: src/blob.ts
+#                      `BLOB_ZOOMS = [8]`, and packBuilder emits one tile per cell
+#                      `cellsFor()` returns — so a pack is 1 tile for a centred pin
+#                      and at most 4 for one near a cell corner. Well inside the
+#                      Worker's 30 s CPU limit. If a huge-area pack ever trips 1102
+#                      again, pre-warm/cache the directory traversal.
+#                      See [[offline-v4-r2-basemap-source]].
+#
+#                      ⛔ CORRECTED 27 Aug 2026. This said the three-ring model
+#                      (3 km z15 + 25 km z13) "cut /pack from ~1000 tiles to ~105".
+#                      That model was DELETED at pack format v25; the format is now
+#                      v44 and single-zoom. The stale "~105" made a correct store of
+#                      1-4 tiles per pin look like the wreckage of ~300 failed
+#                      downloads, and nearly caused a wipe of good data. Verified
+#                      against three live pins: cellsFor() predicted 4, 2 and 1, and
+#                      the store held exactly 4, 2 and 1.
+[vars]
+PMTILES_KEY = "planet.pmtiles"
+PACK_PMTILES_KEY = "planet.pmtiles"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE DEV WORKER — `r2_dev` in the CONFIG panel. Restored 27 Aug 2026.
+#
+# Same code, same R2 bucket, different hostname. A difference between r2_dev
+# and r2_prod is therefore always CODE and never data — which is the whole
+# reason to have it.
+#
+# ⛔ THIS IS WHERE A CONTRACTOR DEPLOYS. Give an outside developer a
+# Cloudflare API token and they can run `npm run deploy:dev` all day; they
+# cannot reach tiles-prod.getcache.org unless you also hand them production
+# rights. Scope the token to this Worker and the split is enforced by
+# Cloudflare, not by everyone remembering which command is which.
+#
+# It was deleted from this file on 24 Aug on the argument that local
+# `wrangler dev --remote` covered it. The Worker itself was never torn down —
+# MEASURED 27 Aug, tiles-dev.getcache.org answered 200 with the stale v29
+# build, three days after its config was "removed". The upkeep was being paid
+# without the benefit.
+[env.dev]
+name = "offline-tiles-dev"
+routes = [
+  { pattern = "tiles-dev.getcache.org", custom_domain = true }
+]
+
+[[env.dev.r2_buckets]]
+binding = "TILES"
+bucket_name = "offline-tiles"
+
+[env.dev.vars]
+PMTILES_KEY = "planet.pmtiles"
+PACK_PMTILES_KEY = "planet.pmtiles"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HISTORY — the earlier staging tier (Chris's call, 24 Aug 2026).
+#
+# There used to be an [env.staging] here (offline-tiles-staging, served from
+# tiles-dev.getcache.org) as a safety net before a bare `wrangler deploy`
+# reaches every shipped phone. It was dropped: local `wrangler dev --remote`
+# already tests against the real R2 bucket with no deploy step, so staging
+# added a second live Worker to keep alive without adding fidelity a local
+# run didn't already have. The "don't push to prod by accident" risk it
+# guarded against is now handled at the deploy step itself — see
+# deployProduction.sh, the ONLY sanctioned way to run `wrangler deploy`
+# against this file. `npm run deploy` invokes it.
+#
+# ⚠️ tiles-dev.getcache.org's DNS route + the offline-tiles-staging Worker
+# may still exist in Cloudflare until someone runs `wrangler delete --env
+# staging` by hand — deleting this config block does not tear down the live
+# Worker. Don't re-add [env.staging] to "restore" it without asking first.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# THE ALIAS, same mechanism as svelte.config.js `$parent/siblings/<child>`.
+# fires.ts moved into the getCache_OfflineMap child (28 Aug 2026) beside its
+# client-side fireFetch.ts; the Worker imports it back through the alias, never
+# a raw `../` climb. LAST in the file on purpose: it is a [table], and any
+# top-level key written below a table header gets nested under it by TOML.
+[alias]
+"$parent/siblings/getCache_OfflineMap/lib/r2Worker/firesWorker" = "../lib/r2Worker/firesWorker.ts"

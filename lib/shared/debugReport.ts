@@ -36,6 +36,10 @@ import {
 	cellOf,
 	cellKey,
 } from "../contract/grid";
+import { FIRE_REFRESH_ENABLED } from "./bakeFlags";
+import { circuitOf, type CircuitState } from "./workMeter.svelte";
+import { LAYER_TOGGLES } from "../onPhone/render/wallLegend";
+import { meterSnapshot } from "./workMeter.svelte";
 import { kmBetween } from "./kmGeo";
 import {
 	OFFLINE_BUDGET_BYTES,
@@ -255,9 +259,14 @@ export async function collectDebugReport(
 ): Promise<DebugReport> {
 	const records = await allCoverage();
 	// Newest first — "the latest blob" is the head of this list.
-	const sorted = [...records].sort(
-		(a, b) => (b.lastTouched ?? 0) - (a.lastTouched ?? 0),
-	);
+	// Same rule as OfflineBlobPanel's `focused`: bytes landed, newest bakedAt
+	// (falling back to touch for records written before bakedAt existed).
+	const sorted = records
+		.filter((r) => r.hasPhoto || r.hasLines)
+		.sort(
+			(a, b) =>
+				(b.bakedAt ?? b.lastTouched ?? 0) - (a.bakedAt ?? a.lastTouched ?? 0),
+		);
 	const version = live.currentBlobVersion ?? null;
 
 	const usedBytes = sorted.reduce((n, r) => n + (r.bytes ?? 0), 0);
@@ -329,21 +338,80 @@ export interface FocusedBlobReport {
 	route: string;
 	env: DebugReport["env"];
 	heap: DebugReport["heap"];
-	layers: DebugReport["layers"];
+	/**
+	 * PER LAYER, THE WHOLE STORY — the block you paste to an AI. Chris, 28 Aug
+	 * 2026: "arrived, rejected, and god willing some kind of reason." So each
+	 * layer says which download it rides on, what that download's circle reads
+	 * right now, whether ITS data is actually in the focused blob, and why not
+	 * in words. `arrived:false` with `status:"ok"` is the important row: the
+	 * download landed but carried nothing for this layer (roads-only pack).
+	 */
+	layers: {
+		key: string;
+		label: string;
+		on: boolean;
+		feed: "sat" | "pack" | "fires" | null;
+		status: CircuitState;
+		arrived: boolean;
+		reason: string;
+		/** What is MEANT to accompany a blob for this layer, and where it
+		 *  would live — so a reader can tell MISSING apart from NEVER-PART-
+		 *  OF-THE-DEAL. Chris: "it should at least list the types of data
+		 *  that's meant to accompany a blob… fires are false but that's
+		 *  cause it's not based on pins at the moment." */
+		expects: string;
+	}[];
 	/** The focused blob's full geometry — corners, reach, offset — same fields
 	 *  `latest` carries in the full report. Null if nothing is cached yet. */
 	blob: BlobGeometryReport | null;
+	/** The work meter — timing rows, the circuits (grey/yellow/green/red per
+	 *  download), the probes. ONE export, not two: this used to be a separate
+	 *  "copy JSON" on the meter's footer, so a report of "the blob is wrong"
+	 *  never said what the circuits read at the time. Chris, 28 Aug 2026:
+	 *  "there shouldn't be TWO kinds." */
+	meter: ReturnType<typeof meterSnapshot>;
+	/** What the device holds, in one line, and the last five arrivals — so a
+	 *  report says "396 areas, 106 MB, last five imports were…" instead of
+	 *  leaving the reader to infer the state of the disk from one blob. */
+	disk: {
+		areas: number;
+		bytes: number;
+		recentImports: {
+			areaKey: string;
+			bakedAt: string;
+			bytes: number;
+			tiles: number;
+			photo: boolean;
+		}[];
+	};
 }
 
-/** Build a report scoped to ONE blob (the newest-touched, same row the panel
- *  marks FOCUSED) instead of every area on the device. */
+/** Per layer: the data a blob is SUPPOSED to carry for it, and where. Kept
+ *  as plain sentences — this is read by a person (or an AI) in a paste. */
+const EXPECTS: Record<string, string> = {
+	sat: "one satellite photo per pin, ~2 km around it, in IndexedDB gc-offlineSatellite (photoBytes)",
+	vector:
+		"z8 blob tiles of roads (+ water when the Worker ships it) for the 30 km disc, keyed pin/<lng>,<lat>/8/x/y in gc-offlineTiles (lineBytes, lineCount = tiles)",
+	labels: "town + road labels inside the same z8 blob tiles — currently NOT shipped by the Worker (roads only)",
+	camps: "campground / place POIs inside the same z8 blob tiles — currently NOT shipped by the Worker",
+	hospitals: "hospital POIs inside the same z8 blob tiles — currently NOT shipped by the Worker",
+	fires: `hotspots within FIRE_RADIUS_KM of the pin, in the fires store — per-pin fire refresh is ${FIRE_REFRESH_ENABLED ? "ON" : "OFF (FIRE_REFRESH_ENABLED=false in bakeService): fires are not baked per pin at the moment, so this row stays grey by design"}`,
+};
+
+/** Build a report scoped to ONE blob — the LAST SUCCESSFUL IMPORT, the same
+ *  row the blob panel hoists as FOCUSED — instead of every area on the device. */
 export async function collectFocusedBlobReport(
 	live: LivePanelState = {},
 ): Promise<FocusedBlobReport> {
 	const records = await allCoverage();
-	const sorted = [...records].sort(
-		(a, b) => (b.lastTouched ?? 0) - (a.lastTouched ?? 0),
-	);
+	// Same rule as OfflineBlobPanel's `focused`: bytes landed, newest bakedAt
+	// (falling back to touch for records written before bakedAt existed).
+	const sorted = records
+		.filter((r) => r.hasPhoto || r.hasLines)
+		.sort(
+			(a, b) =>
+				(b.bakedAt ?? b.lastTouched ?? 0) - (a.bakedAt ?? a.lastTouched ?? 0),
+		);
 
 	return {
 		schema: DEBUG_REPORT_SCHEMA,
@@ -368,7 +436,52 @@ export async function collectFocusedBlobReport(
 					: null,
 			note: HEAP_NOTE,
 		},
-		layers: live.layers ?? [],
+		layers: LAYER_TOGGLES.map((t) => {
+			const on = live.layers?.find((l) => l.key === t.key)?.on ?? true;
+			const feed = t.feed ?? null;
+			const c = feed ? circuitOf(feed) : undefined;
+			const status: CircuitState = c?.state ?? "idle";
+			const top = sorted[0];
+			// WHAT THE FOCUSED BLOB ACTUALLY HOLDS FOR THIS LAYER. MEASURED 28 Aug
+			// 2026 (decodeV4TileLayerStats on a fresh pack): the z8 blob tile has
+			// ONE source layer, `roads` — the Worker's keepSetForZoom() strips
+			// labels, POIs and water at the blob level. So every pack layer but
+			// roads is "download landed, carried nothing for me" until the Worker
+			// ships them. When that changes, this is the line to change.
+			const packHoldsThisLayer = t.key === "vector";
+			const arrived =
+				feed === "sat"
+					? top?.hasPhoto === true
+					: feed === "pack"
+						? packHoldsThisLayer && top?.hasLines === true && (top.lineCount ?? 0) > 0
+						: feed === "fires"
+							? status === "ok"
+							: false;
+			let reason: string;
+			if (!feed) reason = "no download feeds this layer";
+			else if (feed === "pack" && !packHoldsThisLayer)
+				reason = `pack holds a roads layer only — the Worker ships no ${t.label} data in the z8 blob (worker/src/packBuilder.ts keepSetForZoom)`;
+			else if (status === "err") reason = `${feed} download broke: ${c?.note || "no detail"}`;
+			else if (status === "transit") reason = `${feed} request is out, nothing back yet`;
+			else if (status === "idle" && arrived) reason = "on disk from an earlier session — not requested since this page loaded";
+			else if (status === "idle") reason = `never requested — nothing has asked the ${feed} download yet`;
+			else if (!arrived) reason = `${feed} download landed (${c?.note || "ok"}) but the focused blob holds no ${t.label} data`;
+			else reason = `arrived — ${c?.note || "ok"}`;
+			const expects = EXPECTS[t.key] ?? "—";
+			return { key: t.key, label: t.label, on, feed, status, arrived, reason, expects };
+		}),
+		meter: meterSnapshot(),
+		disk: {
+			areas: records.length,
+			bytes: records.reduce((n, r) => n + (r.bytes || 0), 0),
+			recentImports: sorted.slice(0, 5).map((r) => ({
+				areaKey: r.areaKey,
+				bakedAt: new Date(r.bakedAt ?? r.lastTouched ?? 0).toISOString(),
+				bytes: r.bytes,
+				tiles: r.lineCount ?? 0,
+				photo: r.hasPhoto,
+			})),
+		},
 		blob: sorted.length > 0 ? geometryFor(sorted[0]) : null,
 	};
 }
@@ -376,4 +489,33 @@ export async function collectFocusedBlobReport(
 /** Stable filename for a saved report. */
 export function debugReportFilename(at = new Date()): string {
 	return `getcache-debug-${at.toISOString().replace(/[:.]/g, "-")}.json`;
+}
+
+
+/**
+ * COMPACT JSON — readable, not sprawling. Objects whose values are all
+ * primitives go on ONE line; everything else nests with two spaces. A 400-line
+ * pretty-print of a report was mostly newlines; this is the same report at a
+ * third the height, still diff-able, still greppable.
+ */
+export function compactJson(v: unknown, indent = ""): string {
+	const isLeaf = (x: unknown) =>
+		x === null || typeof x !== "object";
+	if (isLeaf(v)) return JSON.stringify(v);
+	const pad = indent + "  ";
+	if (Array.isArray(v)) {
+		if (v.length === 0) return "[]";
+		if (v.every(isLeaf)) return JSON.stringify(v);
+		return "[\n" + v.map((x) => pad + compactJson(x, pad)).join(",\n") + "\n" + indent + "]";
+	}
+	const entries = Object.entries(v as Record<string, unknown>);
+	if (entries.length === 0) return "{}";
+	if (entries.every(([, x]) => isLeaf(x) || (Array.isArray(x) && x.every(isLeaf)))) {
+		return "{ " + entries.map(([k, x]) => JSON.stringify(k) + ": " + JSON.stringify(x)).join(", ") + " }";
+	}
+	return (
+		"{\n" +
+		entries.map(([k, x]) => pad + JSON.stringify(k) + ": " + compactJson(x, pad)).join(",\n") +
+		"\n" + indent + "}"
+	);
 }

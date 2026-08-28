@@ -39,7 +39,7 @@ describe("worker tier fallback", () => {
 	});
 
 	it("considers every tier when the current one is dead, not just production", () => {
-		const fallback = PANEL.slice(PANEL.indexOf("if (reachable[target] === false)"));
+		const fallback = PANEL.slice(PANEL.indexOf('if (reach(target) === "err")'));
 		for (const tier of ["production", "r2Dev", "localDev"]) {
 			expect(fallback).toContain(tier);
 		}

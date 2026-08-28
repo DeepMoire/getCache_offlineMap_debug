@@ -41,7 +41,8 @@ import { BLOB_RADIUS_KM, BLOB_ZOOMS } from "../../../contract/roadBlob";
 import { pinTileKey } from "../../../contract/grid";
 import { keysForAddress } from "../../../onPhone/roads/pinTileLookup";
 import { cellTileKey, cellsFor } from "../../../contract/grid";
-import { packUrl } from "../tilesHost";
+import { getWorkerTarget, packUrl } from "../tilesHost";
+import { noteCircuit } from "../../../shared/workMeter.svelte";
 
 /** The `offline-tiles` Worker's pack endpoint — ONE request returns both rings of
  *  tiles, packed, instead of the phone range-reading each tile itself. The Worker
@@ -724,15 +725,32 @@ export async function downloadV4Area(
 			"[v4] no tiles host configured — call configureTilesHost(<origin>) at app boot before downloading a pack.",
 		);
 	}
-	const res = await fetch(
-		`${packEndpoint}?lng=${qLng}&lat=${qLat}&pv=${PACK_FORMAT_VERSION}${ringParam}`,
-		{ signal: AbortSignal.timeout(150_000) },
-	);
+	// CIRCUITS (see workMeter.svelte.ts): this one request is the Worker's
+	// circle AND the pack circle — yellow now, green when bytes land, red if
+	// anything between here and idbPutMany breaks.
+	const wk = `worker:${getWorkerTarget()}`;
+	const lit = (state: "transit" | "ok" | "err", note = "") => {
+		noteCircuit(wk, state, note);
+		noteCircuit("pack", state, note);
+	};
+	lit("transit");
+	let res: Response;
+	try {
+		res = await fetch(
+			`${packEndpoint}?lng=${qLng}&lat=${qLat}&pv=${PACK_FORMAT_VERSION}${ringParam}`,
+			{ signal: AbortSignal.timeout(150_000) },
+		);
+	} catch (err) {
+		lit("err", err instanceof Error ? err.message : String(err));
+		throw err;
+	}
 	if (!res.ok) {
+		lit("err", `${res.status} ${res.statusText}`);
 		throw new Error(
 			`[v4] pack fetch failed: ${res.status} ${res.statusText} — ${await res.text().catch(() => "")}`,
 		);
 	}
+
 	// The Worker gzips the pack at the application layer (NOT transport
 	// Content-Encoding — see its comment) so the edge can't double-compress it.
 	// Inflate that one explicit layer; the decompressed bytes are the raw pack.
@@ -766,6 +784,7 @@ export async function downloadV4Area(
 
 	onProgress?.(0, items.length);
 	await idbPutMany(items, (done) => onProgress?.(done, items.length));
+	lit("ok", `${items.length} tiles · ${(bytes / 1e6).toFixed(2)} MB · cache ${res.headers.get("x-pack-cache") ?? "?"}`);
 
 	return {
 		downloaded: items.length,

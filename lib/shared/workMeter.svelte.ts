@@ -1,3 +1,5 @@
+import { SvelteMap } from "svelte/reactivity";
+
 /**
  * workMeter — THE PANEL.
  *
@@ -88,6 +90,138 @@ export interface PayloadStat {
 
 const stats = $state(new Map<string, WorkStat>());
 const payloads = $state(new Map<string, PayloadStat>());
+
+/**
+ * CIRCUITS — one circle per thing that fetches, showing the CURRENT state of
+ * its most recent call. Grey until something is actually asked for.
+ *
+ *   idle     nothing requested yet (grey)
+ *   transit  a request is out and nothing has come back (yellow)
+ *   ok       the data ARRIVED — bytes on disk / hotspots written (green)
+ *   err      the request broke — thrown, non-2xx, timed out (red)
+ *
+ * ⛔ "THE PORT IS OPEN" IS NOT A COLOUR. Chris, 28 Aug 2026: "if it says I can
+ * see it, the port's open, it's meaningless… the real test would be can any of
+ * them work at all." So a probe answering never lights anything here; only a
+ * real data call does. The probe result lives in `probes` below and is used
+ * ONLY to grey out / offer retry on a tier — never as a green.
+ *
+ * Keys:  worker:<tier>   the tile Worker, per tier (pack requests)
+ *        sat             satellite photo bake       (bakeSatelliteImage)
+ *        pack            roads/labels/places/hosp   (downloadV4Area)
+ *        fires           hotspots                   (fires.fetchArea)
+ * Layers that draw from the same download share its circuit — see
+ * LayerToggle.feed in wallLegend.ts.
+ */
+export type CircuitState = "idle" | "transit" | "ok" | "err";
+export interface CircuitStat {
+	key: string;
+	state: CircuitState;
+	/** Epoch ms of the last change. */
+	at: number;
+	/** What arrived, or why it broke — the call's own words. */
+	note: string;
+}
+
+// SvelteMap, not $state(new Map()): Svelte 5 does not proxy Map, so a plain
+// Map's set() is invisible to the panels. SvelteMap versions each KEY, which is
+// why writes below REPLACE the entry instead of mutating it in place.
+const circuits = new SvelteMap<string, CircuitStat>();
+const probes = new SvelteMap<string, boolean>();
+
+/**
+ * YELLOW IS HELD FOR AT LEAST THIS LONG. A cached pack round-trips in ~40 ms,
+ * and the bake walks many areas back to back, so transit→ok→transit→ok read
+ * as a green/yellow strobe — "constant flashing", Chris, 28 Aug 2026. A yellow
+ * you cannot see is not a state. So a settle (ok/err) that lands inside the
+ * hold is DEFERRED until the hold is up; the latest settle wins.
+ */
+const TRANSIT_HOLD_MS = 1000;
+const transitSince = new Map<string, number>();
+const pendingSettle = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function noteCircuit(key: string, state: CircuitState, note = ""): void {
+	const write = () => circuits.set(key, { key, state, at: Date.now(), note });
+	const pend = pendingSettle.get(key);
+	if (pend) {
+		clearTimeout(pend);
+		pendingSettle.delete(key);
+	}
+	if (state === "transit") {
+		// A new ask while a settle was pending: the settle is moot, stay yellow
+		// and restart the hold only if we were not already yellow.
+		if (circuits.get(key)?.state !== "transit") {
+			transitSince.set(key, Date.now());
+			write();
+		}
+		return;
+	}
+	const since = transitSince.get(key);
+	const left = since === undefined ? 0 : TRANSIT_HOLD_MS - (Date.now() - since);
+	if (left > 0) {
+		pendingSettle.set(
+			key,
+			setTimeout(() => {
+				pendingSettle.delete(key);
+				transitSince.delete(key);
+				write();
+			}, left),
+		);
+		return;
+	}
+	transitSince.delete(key);
+	write();
+}
+/** One circuit, or undefined = never called (render grey). */
+export function circuitOf(key: string): CircuitStat | undefined {
+	return circuits.get(key);
+}
+/** Every circuit that has ever been called, insertion order. */
+export function allCircuits(): CircuitStat[] {
+	return [...circuits.values()];
+}
+
+/**
+ * BACK TO GREY — called the moment a pin is dropped, so the circles describe
+ * THIS ask and not the last one. A drop that then triggers nothing stays grey,
+ * which is the reading "it is not even asking" — the fact that took an hour
+ * to establish by hand on 28 Aug 2026.
+ */
+export function resetCircuits(): void {
+	for (const t of pendingSettle.values()) clearTimeout(t);
+	pendingSettle.clear();
+	transitSince.clear();
+	circuits.clear();
+}
+
+/** Probe result per tier — reachability for greying/retry ONLY. */
+export function noteProbe(tier: string, ok: boolean): void {
+	probes.set(tier, ok);
+}
+/** undefined = not probed yet. */
+export function probeOf(tier: string): boolean | undefined {
+	return probes.get(tier);
+}
+
+/**
+ * THE WHOLE PANEL AS ONE PLAIN OBJECT — for pasting into a chat, not for
+ * reading by eye. `window.__meter()` in the DevTools console (dev only) and
+ * the panel's "copy JSON" button both hand out exactly this, so a report is
+ * one paste instead of a screenshot and every field is named.
+ */
+export function meterSnapshot() {
+	return {
+		at: new Date().toISOString(),
+		work: workStats().map((s) => ({ ...s })),
+		payloads: payloadStats().map((p) => ({ ...p })),
+		circuits: allCircuits().map((c) => ({ ...c })),
+		probes: Object.fromEntries(probes),
+	};
+}
+
+if (import.meta.env.DEV && typeof window !== "undefined") {
+	(window as unknown as { __meter: () => unknown }).__meter = meterSnapshot;
+}
 
 /** Every tracked payload, stable order (insertion). Read in the panel. */
 export function payloadStats(): PayloadStat[] {
@@ -238,4 +372,7 @@ export function resetWorkStats(): void {
 		p.totalKb = 0;
 		p.lastFeatures = -1;
 	}
+	// Circuits go back to grey so the NEXT call is what you watch. Probes stay —
+	// they are a fact about the network, not a counter.
+	circuits.clear();
 }

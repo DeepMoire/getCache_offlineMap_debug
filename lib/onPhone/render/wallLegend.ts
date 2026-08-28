@@ -29,6 +29,10 @@ export interface LayerToggle {
 	 *  "always on" cannot be the cause of a missing feature, "cluster" and
 	 *  "pyramid" can, and they fail differently. */
 	readonly hint?: string;
+	/** WHICH DOWNLOAD this layer draws from — the circuit key in
+	 *  workMeter.svelte.ts whose circle the CONFIG row shows. Roads, labels,
+	 *  places and hospitals all ride in the one pack, so they share `pack`. */
+	readonly feed?: "sat" | "pack" | "fires";
 }
 
 /**
@@ -39,7 +43,7 @@ export interface LayerToggle {
  * reconcile, so the page sweeps every `v4-sat-*` layer when this key toggles.
  */
 export const LAYER_TOGGLES: readonly LayerToggle[] = [
-	{ key: "sat", label: "Satellite", ids: ["v4-sat"], hint: "always on" },
+	{ key: "sat", label: "Satellite", ids: ["v4-sat"], hint: "always on", feed: "sat" },
 	{
 		key: "vector",
 		label: "Roads/water",
@@ -50,6 +54,7 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 			"v4-rail-ties",
 		],
 		hint: "always on",
+		feed: "pack",
 	},
 	// LAND COVER TOGGLE REMOVED — the fills are gone (wallStyle.ts). A switch
 	// for layers that do not exist is a dead control, and offlineLaws.test.ts
@@ -59,13 +64,14 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 		label: "Labels",
 		ids: ["v4-town-label", "v4-road-label"],
 		hint: "pyramid",
+		feed: "pack",
 	},
 	// ⚠️ PLACES SITS ABOVE HOSPITALS, on Chris's instruction 28 Aug 2026 (it
 	// was below Fires until that morning). Order is by what he looks at first
 	// in the field, not by mechanism — the `hint` column still names the
 	// mechanism, so the pyramid/cluster comparison is a glance, not a position.
-	{ key: "camps", label: "Places", ids: ["v4-poi-camp"], hint: "cluster" },
-	{ key: "hospitals", label: "Hospitals", ids: ["v4-poi-hospital"], hint: "pyramid" },
+	{ key: "camps", label: "Places", ids: ["v4-poi-camp"], hint: "cluster", feed: "pack" },
+	{ key: "hospitals", label: "Hospitals", ids: ["v4-poi-hospital"], hint: "pyramid", feed: "pack" },
 	// Fires: the SWITCH exists on Chris's 24 Aug 2026 instruction, but `ids` is
 	// empty because no v4-fire* layer exists in wallStyle.ts / wallLabels.ts
 	// yet — attaching one is separate work (see attachFireLayer() in the
@@ -74,7 +80,7 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 	// real layer ids into `ids` here the day attachFireLayer() lands on this
 	// route — don't add a second fires entry. Ordinary toggle, no expiry (that
 	// rule is for the field-facing MapLegend.svelte only, not this debugger).
-	{ key: "fires", label: "Fires", ids: [], hint: "cluster" },
+	{ key: "fires", label: "Fires", ids: [], hint: "cluster", feed: "fires" },
 ] as const;
 
 /** Toggle keys `resetLayersAllOn()` must NOT force back on. Empty here —

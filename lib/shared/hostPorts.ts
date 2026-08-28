@@ -170,6 +170,23 @@ export interface HostPorts {
 	 * exactly the bug this shape prevents. ([[cross-module-state-use-applier-pattern]])
 	 */
 	onPlacesChanged(fn: () => void): () => void;
+	/**
+	 * WRITE A PLACE — the pin the user just dropped becomes a place the host
+	 * keeps, so `places()` returns it and `onPlacesChanged` fires and the bake
+	 * is ASKED for that spot.
+	 *
+	 * ⛔ THE BUG THIS CLOSES, MEASURED 28 Aug 2026: the page kept dropped pins
+	 * in a private `dropped[]` — "In-memory only — this page has no database" —
+	 * so a dropped pin was a marker, never a place. Nothing was ever requested
+	 * for it, IndexedDB had zero tiles near it, and the CONFIG circles stayed
+	 * green from the load-time home-centre bake. Chris: "I can make a pin and
+	 * NOTHING arrives." The port is the write boundary; without it the read
+	 * side (`places()`) can never see a drop.
+	 *
+	 * Optional so a read-only host still type-checks — but a host that omits it
+	 * gets a map where dropping a pin downloads nothing, and the page says so.
+	 */
+	addPlace?(lngLat: [number, number], name: string): void;
 	/** Optional fire layer. Omit → the engine bakes no fires and never calls out for them. */
 	fires?: FirePort;
 	/** Optional live position, [lng, lat]. Omit → no live anchor; features only. */

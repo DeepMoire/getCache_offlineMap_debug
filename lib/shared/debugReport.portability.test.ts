@@ -31,6 +31,9 @@ const ALLOWED = [
 	"../contract",
 	"../onPhone/store/coverageRegistry",
 	"../r2Worker/local_dev/tilesHost",
+	// A literal table of the layer switches (key/label/ids/feed) — no UI, no
+	// store, no runtime. The report names each layer's feed from it.
+	"../onPhone/render/wallLegend",
 ];
 
 /** Things whose presence means the boundary has been breached.

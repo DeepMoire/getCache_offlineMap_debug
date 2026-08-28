@@ -1,4 +1,5 @@
 <script lang="ts">
+
 /**
  * OfflineMapPage — THE offline map. One component, every tier mounts it.
  *
@@ -76,6 +77,7 @@ import { createSatelliteMount } from "./onPhone/satellite/mountSatellite";
 import { cameraFromUrl } from "./shared/cameraFromUrl";
 import { attachDoubleTapToPin } from "./shared/doubleTapToPin";
 import { startOfflineBakeService } from "./onPhone/bake/bakeService.svelte";
+import { resetCircuits } from "./shared/workMeter.svelte";
 import type { HostPorts } from "./shared/hostPorts";
 /* THE TIER PILL — ON THE PAGE, because this file IS the page.
    It lived in SharedNav.svelte, which is the NAV. Rendering it there meant it
@@ -84,11 +86,9 @@ import type { HostPorts } from "./shared/hostPorts";
    the other. Twice it was "moved off the nav" by relocating it within that
    same file, which changed nothing: the file is the nav. It is now mounted
    here, beside the stage, so every tier that serves this page gets it. */
-import ParentPill from "$parent/retreeved/sharedComponents/ParentPill/ParentPill.svelte";
-import { TIER_HOME, otherTierOrigin, otherTierPath } from "$parent/retreeved/sharedComponents/sharedNav/tierRoutes";
-import { page as sveltePage } from "$app/state";
 import OfflineWorkMeter from "./shared/OfflineWorkMeter.svelte";
 import OfflineBlobPanel from "./panels/OfflineBlobPanel.svelte";
+import "./shared/devCard.css";
 import OfflineConfigPanel from "./panels/OfflineConfigPanel.svelte";
 import PinLibrary from "./panels/PinLibrary.svelte";
 import {
@@ -101,8 +101,10 @@ import {
 	OPT_IN_LAYERS,
 } from "./onPhone/render/wallLegend";
 
-/** THE ENTIRE DATA LAYER. Add a pin here and the engine bakes it. */
-const PINS: Array<{ name: string; lngLat: [number, number] }> = [
+/** THE ENTIRE DATA LAYER. Add a pin here — or drop one on the map, which
+ *  pushes onto this same list through `fixturePorts.addPlace` — and the
+ *  engine bakes it. */
+const PINS: Array<{ name: string; lngLat: [number, number]; touched?: string }> = [
 	{ name: "Ottawa valley", lngLat: [-76.16797958683314, 45.061348227515055] },
 	{ name: "Vancouver", lngLat: [-123.1207, 49.2827] },
 	{ name: "Prince George", lngLat: [-122.7497, 53.9171] },
@@ -117,6 +119,20 @@ const PINS: Array<{ name: string; lngLat: [number, number] }> = [
 // retreeverPorts(), passed by the host page that mounts <Demo hostPorts={...}
 // />. When omitted, the literal fixture below stands: the honest answer a
 // checkout with no host gives.
+const placeListeners = new Set<() => void>();
+/**
+ * PINS ENDURE. Chris, 28 Aug 2026: "for real we need pins to endure." On
+ * ReTreever they live in TinyBase; the fixture has no database, so dropped
+ * pins go to localStorage under this key and come back on the next load.
+ * The three literals above are the floor — always present, never stored.
+ */
+const FIXTURE_PINS_KEY = "rt_fixture_pins";
+try {
+	const raw = localStorage.getItem(FIXTURE_PINS_KEY);
+	if (raw) for (const p of JSON.parse(raw) as typeof PINS) PINS.push(p);
+} catch {
+	// codestyle-allow-swallow: no storage (SSR / private mode) → literals only.
+}
 const fixturePorts: HostPorts = {
 	places: () =>
 		PINS.map((p) => ({
@@ -124,7 +140,7 @@ const fixturePorts: HostPorts = {
 			// Static demo data never changes, so one fixed timestamp is honest:
 			// every pin is equally "recent" and the conveyor has no reason to
 			// prefer one over another.
-			lastTouched: "2026-01-01T00:00:00Z",
+			lastTouched: p.touched ?? "2026-01-01T00:00:00Z",
 			corridor: false,
 			// Display-only, so the blob panel can name a row instead of printing
 			// its areaKey. The bake service ignores every field here.
@@ -134,8 +150,23 @@ const fixturePorts: HostPorts = {
 			groupKey: "demo",
 			groupName: "literal fixture",
 		})),
-	// Nothing ever changes this list, so there is nothing to notify about.
-	onPlacesChanged: () => () => {},
+	// A PUSH channel, per hostPorts.ts: fires once on register and on every
+	// addPlace. This used to be `() => () => {}` — "nothing ever changes this
+	// list" — which was true only because dropping a pin did not write to it.
+	onPlacesChanged: (fn) => {
+		placeListeners.add(fn);
+		fn();
+		return () => placeListeners.delete(fn);
+	},
+	addPlace: (lngLat, name) => {
+		PINS.push({ name, lngLat, touched: new Date().toISOString() });
+		try {
+			localStorage.setItem(FIXTURE_PINS_KEY, JSON.stringify(PINS.slice(3)));
+		} catch {
+			// codestyle-allow-swallow: storage refused → the pin still bakes this session.
+		}
+		for (const fn of placeListeners) fn();
+	},
 	// Hydrated the moment the module evaluates — the array is right there.
 	// NOT the same question as "has places"; see hostPorts.ts.
 	ready: () => true,
@@ -201,8 +232,7 @@ let {
 	 */
 	framed = true,
 	/**
-	 * WHERE THE DEV CHROME GOES. The tier pill, the `debug` toggle and the
-	 * two instrument rails are transient — they exist in `vite dev` and must
+	 * WHERE THE DEV CHROME GOES. The `debug` toggle is transient — they exist in `vite dev` and must
 	 * not ship. Their DATA is this component's (layers, blobs, dropped pins,
 	 * wall status), so they stay owned here; but their PLACE is the host's.
 	 * A page hands in an element — the content box of an EphemeralCard from
@@ -259,7 +289,32 @@ function portal(node: HTMLElement, target?: HTMLElement) {
  * `cards`/`rails` still seed it, so a host that mounts <Demo cards /> opens
  * with the panels up, exactly as before.
  */
-let showPanels = $state(cards ?? rails);
+/**
+ * STICKY, DEFAULT OPEN. Chris, 28 Aug 2026: "can it default to sticky
+ * debugger open/closed status instead of having to open it every time."
+ * The last toggle wins across reloads (localStorage); with nothing stored
+ * the panels are OPEN — this is the debugger, hiding it by default made
+ * every session start with a click. Dev-only chrome, so this never ships.
+ */
+const PANELS_KEY = "rt_offline_panels";
+function readPanels(): boolean {
+	try {
+		const v = localStorage.getItem(PANELS_KEY);
+		if (v === "0") return false;
+		if (v === "1") return true;
+	} catch {
+		// codestyle-allow-swallow: no storage (SSR / private mode) → default.
+	}
+	return cards ?? rails ?? true;
+}
+let showPanels = $state(readPanels());
+$effect(() => {
+	try {
+		localStorage.setItem(PANELS_KEY, showPanels ? "1" : "0");
+	} catch {
+		// codestyle-allow-swallow: storage refused → the toggle still works this session.
+	}
+});
 
 /**
  * THE PORTS, RESOLVED ONCE — the map is the SAME MAP on every tier.
@@ -276,37 +331,13 @@ let showPanels = $state(cards ?? rails);
  */
 const ports = $derived(hostPorts ?? fixturePorts);
 
-/* Tier facts come from the mounting parent's injected env, exactly as they did
-   when SharedNav computed them. Empty in an npm install and on a deployed
-   build, which is what keeps the pill dev-only without a `dev` check here. */
-const ENV_T = import.meta.env as Record<string, string | undefined>;
-const T_TIER = ENV_T.VITE_RAPPER_TIER ?? "";
-const T_OTHER = ENV_T.VITE_OTHER_TIER ?? "";
-const T_SLOT = (ENV_T.VITE_TIER_SLOT ?? "right") as "left" | "right";
-const T_OTHER_ORIGIN = ENV_T.VITE_OTHER_ORIGIN;
-const T_OTHER_HOME = ENV_T.VITE_OTHER_HOME;
-let T_ROUTES: any[] = [];
-try {
-	T_ROUTES = JSON.parse(ENV_T.VITE_TIER_ROUTES ?? "[]");
-} catch {
-	T_ROUTES = [];
-}
-const tLeft = $derived(T_SLOT === "left" ? T_TIER : T_OTHER);
-const tRight = $derived(T_SLOT === "left" ? T_OTHER : T_TIER);
-const tOtherPath = $derived(otherTierPath(sveltePage.url.pathname, T_ROUTES, T_OTHER_HOME));
-const tOtherOrigin = $derived(
-	otherTierOrigin(tOtherPath, T_ROUTES.map((r: any) => ({ ...r, path: r.otherPath ?? r.path }))),
-);
-const tHref = $derived(
-	T_OTHER_ORIGIN
-		? (tOtherOrigin ?? T_OTHER_ORIGIN) + (tOtherPath ?? TIER_HOME) + sveltePage.url.search
-		: undefined,
-);
-
 let activePin = $state("pin");
 
-/** Pins dropped this session. In-memory only — this page has no database, and
- *  that is the whole point of it. */
+/** Pins dropped this session — the MARKER side only (which artwork, which
+ *  one is selected). The PLACE side goes through `ports.addPlace()` at the
+ *  drop, so the host keeps it and the bake is asked for it. This list used to
+ *  be the only record of a drop ("this page has no database"), which is why a
+ *  dropped pin downloaded nothing — see HostPorts.addPlace. */
 let dropped = $state<Array<{ lng: number; lat: number; pin: string }>>([]);
 let markers: unknown[] = [];
 
@@ -346,6 +377,43 @@ function changeSelectedPin(key: string): void {
 }
 
 let mapContainer: HTMLDivElement;
+let phoneEl = $state<HTMLDivElement>();
+
+/**
+ * THE RAILS FILL EDGE-TO-PHONE. Chris, 28 Aug 2026, "for the 400th time":
+ * the docks were a fixed `min(28vw, 420px)` — a NUMBER where "the distance to
+ * the phone" belongs — so a dead strip sat between cramped panels and the
+ * phone at every window size. The phone is drawn by a transform (see .rig's
+ * --fit), so its on-screen edge cannot be written as CSS; it is MEASURED here
+ * and published on :root as --dock-width-left / --dock-width-right, which the
+ * shared dock and tray read. 12px at the viewport edge, 15px at the phone.
+ */
+/** Viewport edge → panel: the dock's own `left/right: 12px`. Panel → phone:
+ *  a touch wider, so the panel edge does not read as part of the bezel. */
+const EDGE_GUTTER = 12;
+const PHONE_GUTTER = 15;
+function publishDockWidths(el: HTMLElement) {
+	const root = document.documentElement.style;
+	const apply = () => {
+		const r = el.getBoundingClientRect();
+		const left = Math.max(0, r.left - EDGE_GUTTER - PHONE_GUTTER);
+		const right = Math.max(0, window.innerWidth - r.right - EDGE_GUTTER - PHONE_GUTTER);
+		root.setProperty("--dock-width-left", `${Math.round(left)}px`);
+		root.setProperty("--dock-width-right", `${Math.round(right)}px`);
+	};
+	apply();
+	const ro = new ResizeObserver(apply);
+	ro.observe(el);
+	ro.observe(document.documentElement);
+	window.addEventListener("resize", apply);
+	return () => {
+		ro.disconnect();
+		window.removeEventListener("resize", apply);
+		root.removeProperty("--dock-width-left");
+		root.removeProperty("--dock-width-right");
+	};
+}
+$effect(() => (phoneEl ? publishDockWidths(phoneEl) : undefined));
 let detachTap: (() => void) | undefined;
 
 /** Paint one dropped pin. A plain DOM marker — the artwork is a .webp, and the
@@ -565,6 +633,21 @@ onMount(() => {
 					onMeasureSeed: (lng: number, lat: number) => {
 						dropped = [...dropped, { lng, lat, pin: activePin }];
 						addMarker(map, lng, lat, activePin);
+						// THE ASK. Circles go grey (this pin, not the last one), then
+						// the host keeps the place → onPlacesChanged → the bake requests
+						// it → yellow → green/red. A host with no addPlace gets told,
+						// because a silent no-op here is the exact bug this replaces.
+						resetCircuits();
+						if (ports.addPlace) {
+							ports.addPlace(
+								[lng, lat],
+								`${activePin} ${lng.toFixed(4)},${lat.toFixed(4)}`,
+							);
+						} else {
+							console.warn(
+								"[offline] pin dropped but this host has no addPlace port — nothing will be downloaded for it.",
+							);
+						}
 					},
 				});
 
@@ -661,9 +744,6 @@ onMount(() => {
      the bundler rewrites `grabCursorUrl` to the built asset path, so the cursor
      resolves in every tier without any tier-specific URL in the CSS. -->
 <div class="stage" class:unframed={!framed} style="--grab-cursor: url({grabCursorUrl});">
-	{#if T_TIER}
-		<div class="tier-pill" use:portal={debugHost}><ParentPill leftLabel={tLeft} rightLabel={tRight} current={T_TIER} href={tHref} /></div>
-	{/if}
 	<!-- THE CAMERA BADGE. OUTSIDE {#if showPanels} on purpose: /offline is the route
 	     you paste a coordinate into, and it is the route with no rails to
 	     report anything. Both routes therefore answer "did my URL land?" the
@@ -676,6 +756,9 @@ onMount(() => {
 	     the margin-inline on .rig that makes that 15px real. -->
 	{#if showPanels}
 	<aside class="rail left" use:portal={railLeftHost}>
+		<!-- LEFT: what this SESSION is doing (meter) and how it is set (config).
+		     RIGHT: what is on DISK (blobs), full height — it is the long list.
+		     Swapped 28 Aug 2026: the blobs list was crammed under the meter. -->
 		<OfflineWorkMeter
 			docked
 			route="debug/map"
@@ -683,11 +766,18 @@ onMount(() => {
 			{layers}
 			{focusedBlobName}
 		/>
-		<OfflineBlobPanel
-			places={ports.places()}
-			areaKeyOf={satImageKey}
-			onFocusedName={(name) => (focusedBlobName = name)}
-		/>
+		<OfflineConfigPanel {layers} />
+
+		<!-- ONE pin library, not two. The NEXT PIN picker used to live here, but
+		     nobody thinks to arm a pin BEFORE dropping it — you drop, then you
+		     change it. The library on the map (above) does that, so this one was
+		     a second way to do the same thing, competing with it. -->
+		<div class="pin-box dev-card">
+			<div class="pin-note">
+				{dropped.length} dropped · session only, no database
+			</div>
+			<p class="wall-status">{wallStatus}</p>
+		</div>
 	</aside>
 	{/if}
 
@@ -705,7 +795,7 @@ onMount(() => {
 				draggable="false"
 			/>
 		{/if}
-		<div class="phone">
+		<div class="phone" bind:this={phoneEl}>
 		<!-- ⛔ INSIDE THE PHONE, not fixed to the viewport. Both of these were
 		     `position: fixed; top: 8px` — which is the PARENT'S HEADER. The nav
 		     bar (67px tall under rapper) painted over them, so the button was
@@ -772,18 +862,11 @@ onMount(() => {
 	<!-- RIGHT RAIL — ONE component, mirroring the left. -->
 	{#if showPanels}
 	<aside class="rail right" use:portal={railRightHost}>
-		<OfflineConfigPanel {layers} />
-
-		<!-- ONE pin library, not two. The NEXT PIN picker used to live here, but
-		     nobody thinks to arm a pin BEFORE dropping it — you drop, then you
-		     change it. The library on the map (above) does that, so this one was
-		     a second way to do the same thing, competing with it. -->
-		<div class="pin-box">
-			<div class="pin-note">
-				{dropped.length} dropped · session only, no database
-			</div>
-			<p class="wall-status">{wallStatus}</p>
-		</div>
+		<OfflineBlobPanel
+			places={ports.places()}
+			areaKeyOf={satImageKey}
+			onFocusedName={(name) => (focusedBlobName = name)}
+		/>
 	</aside>
 	{/if}
 </div>
@@ -840,14 +923,6 @@ onMount(() => {
 /* THE STAGE — fills the SLOT ITS HOST GAVE IT, not the viewport.
    `container-type: size` is what makes 100cqh below resolve against THIS box,
    which is how the phone gets fitted to the space available. */
-/* The tier pill sits over the stage, top-left; the map's own badges (camera
-   readout, debug) own the top-right. Inside .stage so it scopes with it. */
-.tier-pill {
-	position: absolute;
-	top: 0.5rem;
-	left: 0.6rem;
-	z-index: 60;
-}
 .stage {
 	/* absolute, NOT fixed. This is the whole header/footer fix.
 	   `fixed` anchors to the VIEWPORT, so the stage covered the host's top bar
@@ -901,6 +976,10 @@ onMount(() => {
 	color: #d8d4c8;
 	font-family: ui-monospace, monospace;
 }
+
+/* The rails fill edge-to-phone: the phone's on-screen edges are MEASURED
+   (see publishDockWidths in the script) and published as
+   --dock-width-left/right, which EphemeralDock and EphemeralCard read. */
 
 /* .rail / .rail.left used to lay the two rails out either side of the phone
    on the stage. Every tier now hands them to an EphemeralDock (see the
@@ -1092,11 +1171,9 @@ onMount(() => {
 	color: #8f8a76;
 	margin-top: 0.3rem;
 }
+/* Shell from devCard.css (.dev-card) — same card as the rest of the rail. */
 .pin-box {
-	background: #12100cd9;
-	border: 1px solid #3a3428;
-	border-radius: 10px;
-	padding: 0.6rem 0.7rem;
+	color: var(--muted);
 }
 
 /* ── CONFIG ──────────────────────────────────────────────────────────────── */

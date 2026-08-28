@@ -1,4 +1,5 @@
 <script lang="ts">
+import "../shared/devCard.css";
 /**
  * CONFIG — Workers and layers. The right-hand rail of the offline-map
  * debugger.
@@ -21,6 +22,13 @@ import {
 	setWorkerTarget,
 	type WorkerTarget,
 } from "../r2Worker/local_dev/tilesHost";
+import {
+	circuitOf,
+	allCircuits,
+	probeOf,
+	type CircuitState,
+} from "../shared/workMeter.svelte";
+import { LAYER_TOGGLES } from "../onPhone/render/wallLegend";
 
 let {
 	layers = [],
@@ -96,9 +104,40 @@ const TARGETS: {
 	},
 ];
 
-// undefined = not probed yet (shown neutral, still clickable — a slow probe
-// must never make a working Worker look dead).
-let reachable = $state<Partial<Record<WorkerTarget, boolean>>>({});
+// REACHABILITY LIVES IN THE WORK METER, NOT HERE. probeTarget() records its
+// result in workMeter.svelte.ts; this panel only reads it, and ONLY to grey a
+// row out and offer retry. Before the first probe a tier is undefined — shown
+// neutral, still clickable: a slow probe must never make a Worker look dead.
+function reach(t: WorkerTarget): "ok" | "err" | "wait" {
+	const p = probeOf(t);
+	return p === undefined ? "wait" : p ? "ok" : "err";
+}
+
+// THE CIRCLE — one per row, the CURRENT state of that row's last real call.
+// grey = never asked · yellow = in transit · green = arrived · red = broke.
+// A worker row shows its circle only while SELECTED (the others are blank —
+// nothing is being asked of them). A layer row shows the circle of the
+// download it draws from (LayerToggle.feed). "Port open" is never a colour —
+// see the CIRCUITS note in workMeter.svelte.ts.
+const circuits = $derived(allCircuits());
+function circ(key: string | undefined): CircuitState {
+	void circuits; // read so this re-runs when any circuit changes
+	if (!key) return "idle";
+	return circuitOf(key)?.state ?? "idle";
+}
+function circNote(key: string | undefined): string {
+	void circuits;
+	return key ? (circuitOf(key)?.note ?? "") : "";
+}
+const FEED_OF: Record<string, string | undefined> = Object.fromEntries(
+	LAYER_TOGGLES.map((t) => [t.key, t.feed]),
+);
+const CIRC_WORDS: Record<CircuitState, string> = {
+	idle: "nothing asked for yet",
+	transit: "request out, nothing back yet",
+	ok: "arrived",
+	err: "broke",
+};
 
 /** A tier currently being re-probed, so its row can say so. */
 let retrying = $state<WorkerTarget | null>(null);
@@ -108,8 +147,8 @@ async function pickTarget(t: WorkerTarget) {
 	//
 	// ⛔ THE ROW USED TO BE `disabled`, WHICH IS WHY YOU COULD LEAVE A TIER AND
 	// NOT GET BACK. MEASURED 27 Aug 2026, Chris: "I went from production to
-	// local but I couldn't get back on to production again." Every reachable[]
-	// flag is set by ONE probe at mount. The tiles-prod DNS record was minutes
+	// local but I couldn't get back on to production again." Every reachable
+	// light was set by ONE probe at mount. The tiles-prod DNS record was minutes
 	// old and its negative cache had not expired, so that single probe failed
 	// and the row was `disabled` from then on — the click that would have
 	// re-tested it could not fire, because a disabled button has no click.
@@ -120,10 +159,9 @@ async function pickTarget(t: WorkerTarget) {
 	// it answers. Refusing a dead target is still right — silently switching to
 	// a Worker that isn't there gives a map that never fills and no error
 	// [[no-silent-fallbacks]] — but refusing must not be permanent.
-	if (reachable[t] === false) {
+	if (reach(t) === "err") {
 		retrying = t;
 		const alive = await probeTarget(t);
-		reachable[t] = alive;
 		retrying = null;
 		if (!alive) {
 			console.warn(
@@ -139,7 +177,7 @@ async function pickTarget(t: WorkerTarget) {
 
 async function probeAll() {
 	for (const t of TARGETS) {
-		reachable[t.id] = await probeTarget(t.id);
+		await probeTarget(t.id);
 	}
 	// If the CURRENT target turned out to be gone, move to ANY tier that is
 	// actually answering rather than sit there pointed at nothing.
@@ -156,9 +194,9 @@ async function probeAll() {
 	// Try the others in preference order instead. If NOTHING answers we stay
 	// put and say so — the greying is then honest, and the log names the
 	// hostname so "no blobs" is one glance from being explained.
-	if (reachable[target] === false) {
+	if (reach(target) === "err") {
 		const alive = (["production", "r2Dev", "localDev"] as WorkerTarget[]).find(
-			(t) => reachable[t] === true,
+			(t) => reach(t) === "ok",
 		);
 		if (alive) {
 			console.info(
@@ -183,26 +221,35 @@ onMount(() => {
 });
 </script>
 
-<div class="config">
-	<div class="config-title">CONFIG</div>
+<div class="config dev-card">
+	<div class="dev-card__head"><span class="dev-card__title">CONFIG</span></div>
 
 	<div class="cfg-title">Workers</div>
 	{#each TARGETS as t (t.id)}
 		<button
 			class="cfg-row"
 			class:sel={target === t.id}
-			class:dead={reachable[t.id] === false}
+			class:dead={reach(t.id) === "err"}
 			class:retrying={retrying === t.id}
 			onclick={() => pickTarget(t.id)}
-			title={reachable[t.id] === false
+			title={reach(t.id) === "err"
 				? `${t.label} is not answering — CLICK TO RETRY. ${t.id === "localDev" ? "Start it with `npm run dev:local` in workers/offline-tiles — no account needed." : "The Worker was unreachable when last checked."}`
 				: t.hint}
 		>
 			<span class="cfg-label">{t.label}</span>
 			{#if retrying === t.id}
 				<span class="dead-tag">checking…</span>
-			{:else if reachable[t.id] === false}
+			{:else if reach(t.id) === "err"}
 				<span class="dead-tag">retry</span>
+			{/if}
+			{#if target === t.id}
+				{@const k = `worker:${t.id}`}
+				<span
+					class="circ {circ(k)}"
+					title={`last pack request: ${CIRC_WORDS[circ(k)]}${circNote(k) ? " — " + circNote(k) : ""}`}
+				></span>
+			{:else}
+				<span class="circ blank"></span>
 			{/if}
 			<span class="sw" class:sw-on={target === t.id}></span>
 		</button>
@@ -233,6 +280,15 @@ onMount(() => {
 				{#if l.disabled}
 					<span class="dead-tag">not yet</span>
 				{/if}
+				{#if FEED_OF[l.key]}
+					{@const k = FEED_OF[l.key]}
+					<span
+						class="circ {circ(k)}"
+						title={`${k} download: ${CIRC_WORDS[circ(k)]}${circNote(k) ? " — " + circNote(k) : ""}`}
+					></span>
+				{:else}
+					<span class="circ blank"></span>
+				{/if}
 				<span class="sw" class:sw-on={l.on}></span>
 			</button>
 		{/each}
@@ -241,30 +297,20 @@ onMount(() => {
 </div>
 
 <style>
-.config {
-	font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-	background: #12100cd9;
-	border: 1px solid #3a3428;
-	border-radius: 10px;
-	padding: 0.6rem 0.7rem;
-}
-.config-title {
-	color: #e8b84b;
-	font-size: 1.6rem;
-	letter-spacing: 0.04em;
-	text-align: center;
-	margin-bottom: 0.8rem;
-}
+/* Shell + title come from devCard.css (.dev-card) — the same look as MAP
+   DEBUGGER and OFFLINE BLOBS. This card used to carry its own translucent
+   brown body, 10px radius and a centred 1.6rem title; all deleted 28 Aug 2026
+   so the three cards read as one instrument. */
 .cfg-title {
-	/* BIGGER THAN THE ROWS IT HEADS. It used to inherit the panel's 12px, so
-	   "layers" and "Workers" were the same size as the switches under them and
-	   read as another row rather than as a heading — the group had no visible
-	   top edge. Still well under .config-title's 1.6rem: this is a section
-	   head, not the panel's name. */
-	color: #ffd24a;
-	font-size: 1.05rem;
-	letter-spacing: 0.08em;
-	margin-bottom: 6px;
+	/* A section head under the card title: same family as the title, one
+	   step smaller and dimmer, caps so it reads as a label not a row. */
+	font-family: "Inter", -apple-system, sans-serif;
+	font-weight: 800;
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--muted);
+	margin: 10px 0 6px;
 }
 .cfg-row {
 	display: flex;
@@ -336,6 +382,35 @@ onMount(() => {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+/* THE CIRCLE — sits just left of the switch. Grey until asked, then the
+   current state of the last real call. Muted grey, not black, so "never
+   asked" reads as blank-ish rather than as a failure. */
+.circ {
+	flex: 0 0 auto;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	/* Right-aligned beside the switch on EVERY row. Layer rows already push
+	   it there with their hint; worker rows have no hint, so the circle
+	   takes the slack itself. */
+	margin-left: auto;
+	margin-right: 8px;
+	background: #4a4a4a;
+	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.circ.blank {
+	background: transparent;
+	box-shadow: none;
+}
+.circ.transit {
+	background: #e0b428;
+}
+.circ.ok {
+	background: #35c759;
+}
+.circ.err {
+	background: #e0483e;
 }
 .cfg-sep {
 	border-top: 1px solid #3a3a3a;

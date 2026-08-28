@@ -29,6 +29,8 @@
  */
 
 import { isDownloadGuardTripped } from "../store/downloadGuard";
+
+import { FIRE_REFRESH_ENABLED } from "../../shared/bakeFlags";
 import { registerWipeStopper } from "../store/wipe";
 import {
 	allCoverage,
@@ -72,7 +74,7 @@ import { GRID_RADIUS_KM } from "../../contract/blob";
 import { BLOB_TILE_Z } from "../../contract/grid";
 import { FIRE_RADIUS_KM } from "../../shared/fireContract";
 import { purgeDeadRoadRasters } from "../store/tombstones/purgeRoadRasters";
-import { beginWork, noteQueued, noteSkip } from "../../shared/workMeter.svelte";
+import { beginWork, noteQueued, noteSkip , noteCircuit } from "../../shared/workMeter.svelte";
 
 /**
  * BLOB_VERSION — the signature of "what a complete offline blob looks like right
@@ -411,8 +413,16 @@ async function ensureAreaData(
 		const cd = satCooldown.get(key);
 		if (cd && cd.until > Date.now()) return;
 		const hadPhoto = prevCov?.hasPhoto === true;
-		const sat = await bakeSatelliteImage(center);
+		noteCircuit("sat", "transit");
+		let sat: Awaited<ReturnType<typeof bakeSatelliteImage>>;
+		try {
+			sat = await bakeSatelliteImage(center);
+		} catch (err) {
+			noteCircuit("sat", "err", err instanceof Error ? err.message : String(err));
+			throw err;
+		}
 		if (sat) {
+			noteCircuit("sat", "ok", `${(sat.blob.size / 1024).toFixed(0)} KB`);
 			hasPhoto = true;
 			photoBytes = sat.blob.size;
 			satCooldown.delete(key); // success → clear any backoff
@@ -420,6 +430,7 @@ async function ensureAreaData(
 		} else {
 			// Bake FAILED (source throttled / came back mostly empty). Exponential
 			// backoff: 30 s, 1 m, 2 m, … capped at 15 m, so the source can recover.
+			noteCircuit("sat", "err", "photo bake returned nothing (throttled / empty)");
 			const fails = (cd?.fails ?? 0) + 1;
 			satCooldown.set(key, {
 				fails,
@@ -545,6 +556,8 @@ async function ensureAreaData(
 			lineBytes,
 			lineCount,
 			blobVersion: BLOB_VERSION,
+			// "Last import" for the blob panel — only when bytes actually landed.
+			...(hasPhoto || hasLines ? { bakedAt: Date.now() } : {}),
 		},
 		false,
 		touchByKey.get(key), // prefer the area's real feature touch time for eviction order
@@ -637,6 +650,7 @@ async function refreshFires(
 				.filter((c) => fires.isCoverageFresh(c))
 				.map((e) => e.center);
 			if (!onDemand && !needsFireDisc([lng, lat], coveringCentres)) continue;
+			noteCircuit("fires", "transit");
 			const r = await fires.fetchArea(lng, lat);
 			await fires.write(key, {
 				fetchedAt: r.fetchedAt,
@@ -650,6 +664,7 @@ async function refreshFires(
 				hotspots: [...r.hotspots],
 			});
 			fireCooldown.delete(key);
+			noteCircuit("fires", "ok", `${r.hotspots.length} hotspots · ${r.sourcesOk}/3 sats`);
 			noteDownloadedBytes(r.bytes); // tally toward the cellular gate
 			passChanged = true; // new dots → tell the viewer to repaint
 			vlog(
@@ -657,6 +672,7 @@ async function refreshFires(
 				`[v4 fire] downloaded ${r.hotspots.length} hotspots for ${key} (${(r.bytes / 1024).toFixed(1)} KB, ${r.sourcesOk}/3 satellites)`,
 			);
 		} catch (err) {
+			noteCircuit("fires", "err", err instanceof Error ? err.message : String(err));
 			// Same exponential backoff as the satellite bake: 30 s → 15 m. The
 			// PREVIOUS record is deliberately left in place (see above).
 			const fails = (cd?.fails ?? 0) + 1;
@@ -1154,7 +1170,6 @@ async function bakeAll(): Promise<void> {
 			// half running and the bisect would prove nothing.
 			// TO RESTORE: set FIRE_REFRESH_ENABLED back to true.
 			// ═══════════════════════════════════════════════════════════════
-			const FIRE_REFRESH_ENABLED = false; // 🔬 bisect — true restores fires
 			if (FIRE_REFRESH_ENABLED) await refreshFires(fireCentres);
 		} catch (err) {
 			// The overlay must fail alone — never let it mark the whole pass failed.

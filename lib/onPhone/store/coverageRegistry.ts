@@ -64,6 +64,11 @@ export interface CoverageRecord {
 	 *  the new shape. Without it, `hasLines:true` looked "done" forever and old
 	 *  pins never got the memo when the geometry changed. */
 	blobVersion?: string;
+	/** Epoch ms of the last SUCCESSFUL download for this area — when bytes
+	 *  actually landed. Distinct from `lastTouched` (the place's own touch):
+	 *  the blob panel hoists the newest of THESE as "last import", and sorts
+	 *  the rest by touch. Absent on records written before 28 Aug 2026. */
+	bakedAt?: number;
 	lastTouched: number;
 }
 
@@ -164,6 +169,7 @@ export async function noteCoverage(
 	lng: number,
 	lat: number,
 	patch: {
+		bakedAt?: number;
 		hasPhoto?: boolean;
 		hasLines?: boolean;
 		bytes?: number;
