@@ -23,6 +23,12 @@ export interface LayerToggle {
 	readonly key: string;
 	readonly label: string;
 	readonly ids: readonly string[];
+	/** HOW this layer is drawn, in one or two words, shown greyed beside the
+	 *  label. Not a description of what the layer IS — the label says that —
+	 *  but of the mechanism, because the mechanism is what you are debugging:
+	 *  "always on" cannot be the cause of a missing feature, "cluster" and
+	 *  "pyramid" can, and they fail differently. */
+	readonly hint?: string;
 }
 
 /**
@@ -33,7 +39,7 @@ export interface LayerToggle {
  * reconcile, so the page sweeps every `v4-sat-*` layer when this key toggles.
  */
 export const LAYER_TOGGLES: readonly LayerToggle[] = [
-	{ key: "sat", label: "Satellite", ids: ["v4-sat"] },
+	{ key: "sat", label: "Satellite", ids: ["v4-sat"], hint: "always on" },
 	{
 		key: "vector",
 		label: "Roads/water",
@@ -43,11 +49,22 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 			"v4-rail",
 			"v4-rail-ties",
 		],
+		hint: "always on",
 	},
 	// LAND COVER TOGGLE REMOVED — the fills are gone (wallStyle.ts). A switch
 	// for layers that do not exist is a dead control, and offlineLaws.test.ts
 	// fails on ids that are not in the stack.
-	{ key: "labels", label: "Labels", ids: ["v4-town-label", "v4-road-label"] },
+	{
+		key: "labels",
+		label: "Labels",
+		ids: ["v4-town-label", "v4-road-label"],
+		hint: "pyramid",
+	},
+	// ⚠️ PLACES SITS ABOVE FIRES, on Chris's instruction 28 Aug 2026. The two
+	// pyramid rows (Labels, Places) now read together, and the two cluster rows
+	// (Fires, Hospitals) below them — the list groups by MECHANISM, which is
+	// what the hints name and what you are comparing when something is missing.
+	{ key: "hospitals", label: "Places", ids: ["v4-poi-hospital"], hint: "pyramid" },
 	// Fires: the SWITCH exists on Chris's 24 Aug 2026 instruction, but `ids` is
 	// empty because no v4-fire* layer exists in wallStyle.ts / wallLabels.ts
 	// yet — attaching one is separate work (see attachFireLayer() in the
@@ -56,9 +73,8 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 	// real layer ids into `ids` here the day attachFireLayer() lands on this
 	// route — don't add a second fires entry. Ordinary toggle, no expiry (that
 	// rule is for the field-facing MapLegend.svelte only, not this debugger).
-	{ key: "fires", label: "Fires", ids: [] },
-	{ key: "hospitals", label: "Places", ids: ["v4-poi-hospital"] },
-	{ key: "camps", label: "Hospitals", ids: ["v4-poi-camp"] },
+	{ key: "fires", label: "Fires", ids: [], hint: "cluster" },
+	{ key: "camps", label: "Hospitals", ids: ["v4-poi-camp"], hint: "cluster" },
 ] as const;
 
 /** Toggle keys `resetLayersAllOn()` must NOT force back on. Empty here —

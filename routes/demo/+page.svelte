@@ -335,6 +335,10 @@ const layers = $derived(
 	LAYER_TOGGLES.map((t) => ({
 		key: t.key,
 		label: t.label,
+		// The mechanism hint travels WITH the row. Declared once in
+		// wallLegend.ts beside the ids it describes, so a layer that changes
+		// how it draws changes its hint in the same edit.
+		hint: t.hint,
 		on: layerOn[t.key],
 		toggle: () => toggleLayer(t.key, t.ids),
 	})),

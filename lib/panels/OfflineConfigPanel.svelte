@@ -35,6 +35,12 @@ let {
 		label: string;
 		on: boolean;
 		toggle: () => void;
+		/** HOW the layer draws — "always on" / "pyramid" / "cluster" — shown
+		 *  greyed beside the label. Not what the layer IS (the label says
+		 *  that) but the MECHANISM, because that is what you compare when a
+		 *  feature is missing: "always on" cannot be the cause, "cluster" and
+		 *  "pyramid" can, and they fail differently. See LayerToggle.hint. */
+		hint?: string;
 		disabled?: boolean;
 		disabledHint?: string;
 	}[];
@@ -221,6 +227,9 @@ onMount(() => {
 					: `Toggle ${l.label} — watch the heap reading in MAP DEBUGGER`}
 			>
 				<span class="cfg-label">{l.label}</span>
+				{#if l.hint}
+					<span class="cfg-hint">{l.hint}</span>
+				{/if}
 				{#if l.disabled}
 					<span class="dead-tag">not yet</span>
 				{/if}
@@ -247,9 +256,15 @@ onMount(() => {
 	margin-bottom: 0.8rem;
 }
 .cfg-title {
+	/* BIGGER THAN THE ROWS IT HEADS. It used to inherit the panel's 12px, so
+	   "layers" and "Workers" were the same size as the switches under them and
+	   read as another row rather than as a heading — the group had no visible
+	   top edge. Still well under .config-title's 1.6rem: this is a section
+	   head, not the panel's name. */
 	color: #ffd24a;
+	font-size: 1.05rem;
 	letter-spacing: 0.08em;
-	margin-bottom: 4px;
+	margin-bottom: 6px;
 }
 .cfg-row {
 	display: flex;
@@ -266,10 +281,11 @@ onMount(() => {
 	text-align: left;
 }
 .cfg-label {
-	/* Grows to fill the row so every .sw switch lands on the SAME right edge
-	   regardless of label length ("Fires" vs "Roads/water") — that drift is
-	   what reads as "toggles not lined up". */
-	flex: 1 1 auto;
+	/* Does NOT grow: the hint sits immediately after it, and a growing label
+	   would push the hint to the far right where it reads as a second column
+	   instead of an annotation. `.cfg-hint` and `.dead-tag` take the slack so
+	   every .sw switch still lands on the same right edge. */
+	flex: 0 0 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -292,6 +308,24 @@ onMount(() => {
 .cfg-row.retrying {
 	opacity: 0.8;
 }
+/* THE MECHANISM HINT — grey, beside the label, never competing with it.
+   Reads as an annotation on the row rather than a second label: same size
+   family, no weight, and it inherits the row's dimming when a row is dead. */
+.cfg-hint {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin-left: 6px;
+	color: #7d7a6e;
+	font-size: 0.85em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.cfg-row.sel .cfg-hint {
+	/* Selected rows go gold; the hint must NOT follow — it is not state. */
+	color: #7d7a6e;
+}
+
 .dead-tag {
 	flex: 1 1 auto;
 	min-width: 0;
