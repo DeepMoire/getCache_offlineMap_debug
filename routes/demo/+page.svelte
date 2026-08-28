@@ -60,6 +60,8 @@ import {
 	setRawWallBlindHandler,
 } from "../../lib/onPhone/roads/rawWallProtocol";
 import { wallLayers } from "../../lib/onPhone/render/wallStyle";
+import { createSatelliteMount } from "../../lib/onPhone/satellite/mountSatellite";
+import { cameraFromUrl } from "../../lib/shared/cameraFromUrl";
 import { attachDoubleTapToPin } from "../../lib/shared/doubleTapToPin";
 import { startOfflineBakeService } from "../../lib/onPhone/bake/bakeService.svelte";
 import type { HostPorts } from "../../lib/shared/hostPorts";
@@ -281,11 +283,22 @@ const layers = $derived(
 onMount(() => {
 	const stopBake = startOfflineBakeService(hostPorts ?? fixturePorts);
 	let cleanup: (() => void) | undefined;
+	let satMount: ReturnType<typeof createSatelliteMount> | undefined;
+	let satPoll: ReturnType<typeof setInterval> | undefined;
 	try {
+		// WHERE THE MAP OPENS. A coordinate in the query string wins over the
+		// fixture, so `?=58.7986,-122.6761` points BOTH routes at the same
+		// spot — see cameraFromUrl.ts. Absent, the first fixture pin stands.
+		const urlCam = cameraFromUrl(location.search);
+		if (urlCam)
+			console.info(
+				`[map] opening at ${urlCam.center[1]},${urlCam.center[0]}` +
+					`${urlCam.zoom !== undefined ? ` z${urlCam.zoom}` : ""} (from the URL)`,
+			);
 		cleanup = initializeOfflineMap(mapContainer, {
 			style: buildOfflineBaseStyle() as maplibreType.StyleSpecification,
-			initialCenter: PINS[0].lngLat,
-			initialZoom: 9,
+			initialCenter: urlCam?.center ?? PINS[0].lngLat,
+			initialZoom: urlCam?.zoom ?? 9,
 			// LAW 0, at the renderer's own door: every non-local URL is rejected,
 			// so the map CANNOT stream even if a style entry tried to.
 			transformRequest:
@@ -384,6 +397,35 @@ onMount(() => {
 						map.addSource(RAW_SOURCE, rawSourceSpec());
 						for (const layer of wallLayers()) map.addLayer(layer);
 					}
+
+					// ── THE SATELLITE PHOTOS ─────────────────────────────
+					// ⛔ THIS PAGE RENDERED NO SATELLITE FOR DAYS while
+					// ReTreever's /offline rendered it fine, because the
+					// mount lived inline in THAT page and nowhere else. The
+					// debugger showed different pixels than the map it
+					// debugs. See mountSatellite.ts. One copy, both pages.
+					satMount = createSatelliteMount(map);
+					const showPhotos = async (): Promise<void> => {
+						let shown = 0;
+						for (const p of (hostPorts ?? fixturePorts).places())
+							for (const c of p.anchors) {
+								await satMount?.display(c);
+								if (satMount?.mounted().has(satImageKey(c))) shown++;
+							}
+						// LOUD either way — "no photo on disk yet" and "the
+						// mount is missing" look identical on a black map,
+						// and only one of them is a bug.
+						console.info(
+							`[sat] ${shown} photo(s) on the map` +
+								(shown === 0 ? " — nothing baked here yet" : ""),
+						);
+					};
+					void showPhotos();
+					// Re-check after the bake conveyor has had a pass: a
+					// photo that lands 30 s in must still appear without a
+					// reload.
+					satPoll = setInterval(() => void showPhotos(), 20000);
+
 					wallStatus = `wall ok · ${map.getStyle().layers.length} layers`;
 				} catch (err) {
 					// LOUD, not swallowed: a wall map that fails to mount is the
@@ -399,6 +441,10 @@ onMount(() => {
 	}
 	return () => {
 		detachTap?.();
+		clearInterval(satPoll);
+		// Revoke every photo object-URL. Without this each unmount strands
+		// the blob in memory — the steady RAM climb.
+		satMount?.dispose();
 		cleanup?.();
 		stopBake();
 	};

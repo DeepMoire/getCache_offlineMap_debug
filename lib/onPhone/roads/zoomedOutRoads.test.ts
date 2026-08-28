@@ -46,10 +46,24 @@ describe("a zoomed-out camera still finds the stored roads", () => {
 		expect(keysForAddress(stored, Z5.z, Z5.x, Z5.y + 1)).toEqual([]);
 	});
 
-	it("leaves DEEPER addresses to MapLibre's own overzoom", () => {
-		// z12 is below the stored z8 tile; the renderer scales the z8 tile up
-		// itself, so the lookup deliberately answers nothing here.
-		expect(keysForAddress(stored, 12, Z8.x * 16, Z8.y * 16)).toEqual([]);
+	it("ANSWERS a deeper address with the tile that contains it", () => {
+		// ⛔ THIS TEST USED TO ASSERT THE OPPOSITE, AND THE OPPOSITE WAS THE BUG.
+		// It read "leaves DEEPER addresses to MapLibre's own overzoom" and
+		// expected []. MapLibre overzooms a tile it ALREADY HAS; the protocol is
+		// asked per address and answered "no tile", so there was nothing to
+		// overzoom from and every request below z8 drew nothing.
+		//
+		// MEASURED 27 Aug 2026 on the live page, one load, same 4 tiles:
+		//     pass done — 1 area(s), 4 tiles, 0.5 MB in 6.9s
+		//     map is reading NOTHING from disk (4 tiles asked, 0 found)
+		// The camera sits at z13-z14. Downloaded, stored, and unreachable.
+		expect(keysForAddress(stored, 12, Z8.x * 16, Z8.y * 16)).toEqual(stored);
+	});
+
+	it("still refuses a deeper address OUTSIDE the stored tile", () => {
+		// Descending the request must be real geometry too — a neighbour's
+		// z12 address must not resolve to this pin's z8 tile.
+		expect(keysForAddress(stored, 12, (Z8.x + 1) * 16, Z8.y * 16)).toEqual([]);
 	});
 
 	it("declares a render floor SHALLOWER than the stored level", () => {

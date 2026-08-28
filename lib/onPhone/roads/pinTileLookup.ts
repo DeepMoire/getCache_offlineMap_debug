@@ -131,8 +131,34 @@ function containsAddress(
 	if (!Number.isFinite(sz) || !Number.isFinite(sx) || !Number.isFinite(sy)) {
 		return false;
 	}
-	// Stored is shallower than asked — the renderer's own overzoom covers that.
-	if (sz < z) return false;
+	// ⛔ A DEEPER REQUEST MUST BE ANSWERED WITH THE TILE THAT CONTAINS IT.
+	//
+	// This was `if (sz < z) return false;` — "stored is shallower than asked,
+	// the renderer's own overzoom covers that." It does not. MapLibre overzooms
+	// a tile it ALREADY HAS; this protocol is asked per address and answered
+	// "no tile", so there is nothing to overzoom from. Every request deeper
+	// than the stored level (8) got nothing.
+	//
+	// MEASURED 27 Aug 2026, one page load, both lines from the same 4 tiles:
+	//     pass done — 1 area(s), 4 tiles, 0.5 MB in 6.9s
+	//     map is reading NOTHING from disk (4 tiles asked, 0 found)
+	// and against real prod keys in a test: found at z8..z12, MISSING at
+	// z13, z14 — the zooms the camera actually sits at. Downloaded, stored,
+	// unreachable.
+	//
+	// A z13 tile is geometrically INSIDE the z8 tile that holds it, so the
+	// honest answer to "what roads are at this z13 address?" is that z8 tile.
+	// Descend the REQUEST to the stored level and compare there — the mirror
+	// of the climb below, which already handles the shallower direction.
+	if (sz < z) {
+		let ax = x;
+		let ay = y;
+		for (let level = z; level > sz; level--) {
+			ax = Math.floor(ax / 2);
+			ay = Math.floor(ay / 2);
+		}
+		return sx === ax && sy === ay;
+	}
 	// Climb the stored tile up to the requested zoom; each level halves.
 	for (let level = sz; level > z; level--) {
 		sx = Math.floor(sx / 2);
