@@ -1,53 +1,14 @@
-/**
- * MOVED HERE 28 Aug 2026, from src/routes/(getcache)/map/.
- *
- * This is a LIBRARY MODULE — app-wide GPS/location state — and it was living
- * inside a route folder. When /map's 32-file second online map was deleted
- * (the copy of getCache_OnlineMap's component), this went with it and took
- * (getcache)/+layout@.svelte down: the GROUP layout imported `./map/tracking.svelte`,
- * so every Get Cache page, /offline included, 404'd on a missing module and
- * reload-looped.
- *
- * That is the whole lesson of the map move in one file. A route folder is an
- * ADDRESS — an import and a tag. Anything the rest of the app imports is a
- * library and belongs in the host lib, where deleting a route cannot reach it.
- *
- * It stays in ReTreever and NOT in a child on purpose: background geolocation,
- * Capacitor plugins and notification permissions are tier-1 proprietary code a
- * published child must never carry.
- */
-// User-location ("blue dot") controller. Extracted from MapDrawControls.svelte
-// to keep the geolocation concern self-contained.
-//
-// Two implementations branched on runtime:
-//   • desktop web → Mapbox GeolocateControl (works in Chrome/Safari on a
-//     laptop, gives the standard blue dot + accuracy ring for free).
-//   • iOS-ish (native Capacitor *and* mob-web Safari/Chrome on iPhone) →
-//     @capacitor/geolocation plugin + a manual mapboxgl.Marker.
-//
-// Why the split: GeolocateControl crashes on iOS in both contexts. In
-// WKWebView the coords deserialize as undefined; even mob-web Safari has
-// hit a `_updateCamera → fitBounds → LngLatLike` throw — the control's
-// "expected coords" assumptions don't hold there.
+// ⚠️ Mapbox GeolocateControl crashes on iOS (WKWebView + mob-web Safari) — coords deserialize undefined / fitBounds throws; use the Capacitor geolocation plugin + a manual Marker there instead.
 import mapboxgl from "mapbox-gl";
 import { toast } from "svelte-sonner";
 import { Capacitor } from "@capacitor/core";
 import { Geolocation } from "@capacitor/geolocation";
 import { safeFlyTo } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
-// 28 Aug 2026: reportSwallowed / reportGeoError / gpsIsGranted now come from
-// the host through ../shared/mapHostPorts (ports.ui + ports.gps), handed to
-// createUserLocator — a child may not import the host lib.
 import type { MapHostPorts } from "../shared/mapHostPorts";
 
 const isNative = Capacitor.isNativePlatform();
 
-// ── Last-known fix (the "instant dot") ──────────────────────────────────
-// The most recent GPS fix is persisted (lightweight, throttled) so on a map
-// re-entry / app relaunch the blue dot appears IMMEDIATELY at the last-known
-// position while the fresh fix is still being acquired. Same dot, same style
-// — no "stale" visual treatment (colours are user-owned). Coords are
-// validated on both write and read: a NaN marker/camera crashes Mapbox
-// (same defence family as safeMap).
+// ⚠️ NaN marker/camera coords crash Mapbox — validate on both write and read. Last-known fix is persisted so the blue dot appears instantly on re-entry, before a fresh fix arrives.
 const LAST_FIX_KEY = "rt-last-fix";
 const PERSIST_THROTTLE_MS = 10_000;
 let lastPersistTs = 0;
@@ -71,8 +32,6 @@ function persistFix(lng: number, lat: number): void {
             JSON.stringify({ lng, lat, ts: now }),
         );
     } catch {
-        // codestyle-allow-swallow: storage full/blocked — the dot just won't
-        // be instant on the next visit; the live watch still drives it.
     }
 }
 
@@ -94,15 +53,7 @@ const isIOSWeb =
     !isNative;
 const usePluginGeo = isNative || isIOSWeb;
 
-/**
- * Get a single GPS fix using whichever API is appropriate for the
- * current runtime (Capacitor plugin on native + iOS-web; standard
- * navigator.geolocation everywhere else).
- *
- * Throws with a friendly message on permission denial or timeout
- * so callers can surface it directly. Will trigger the native
- * permission prompt on first call if the user hasn't granted it.
- */
+/** Get a single GPS fix (Capacitor plugin on native/iOS-web, navigator.geolocation elsewhere). Throws a friendly message on denial/timeout; may trigger the native permission prompt on first call. */
 export async function getCurrentPositionOnce(): Promise<{
     lng: number;
     lat: number;
@@ -144,56 +95,23 @@ export async function getCurrentPositionOnce(): Promise<{
 export interface UserLocator {
     /** Mapbox GeolocateControl for desktop-web; null elsewhere. */
     readonly geolocateControl: unknown;
-    /** Wire the GeolocateControl to the map (no-op on iOS). Returns
-     *  cleanup. Run inside an `$effect`. */
+    /** Wire the GeolocateControl to the map (no-op on iOS); returns cleanup — run inside an `$effect`. */
     attachGeolocateControl(): () => void;
     /** Pan to current location and start a watch. iOS path. */
     locate(): Promise<boolean>;
-    /** Start the position watch + blue dot WITHOUT flying the camera. Used
-     *  while a tracking session runs, so the dot visibly rides the head of
-     *  the growing track — the live "it's working" signal. Idempotent. */
+    /** Start the position watch + blue dot without flying the camera — used while a tracking session runs so the dot rides the head of the track. Idempotent. */
     watch(): void;
-    /** THE ALWAYS-ON DOT. Checks location permission ONCE; if (and only if)
-     *  it is ALREADY granted, shows the dot immediately at the last-known
-     *  fix and (re)starts the position watch. NEVER prompts — an ungranted
-     *  state is a silent no-op (prompting belongs exclusively to the
-     *  location gate, on a location-needing tap). NEVER moves the camera.
-     *  Safe to call on every mount/resume: it restarts the single watch
-     *  (healing one that died in the background) rather than stacking a
-     *  second one. */
+    /** ⚠️ The always-on dot: only shows/restarts the watch if permission is already granted — NEVER prompts, NEVER moves the camera. Safe on every mount/resume; heals a dead watch rather than stacking a second one. */
     autoStart(): Promise<void>;
-    /** The live blue-dot coordinate `[lng, lat]`, or null if we don't have a
-     *  fix yet. Used by snap-to-self: a double-tap within ~44px of this snaps
-     *  the dropped plot onto the user's real position (proof-of-presence). */
+    /** The live blue-dot coordinate `[lng, lat]`, or null if no fix yet. Used by snap-to-self: a double-tap within ~44px snaps the dropped plot onto the user's position. */
     getUserCoord(): [number, number] | null;
-    /** Flash a one-shot pulse ring on the blue dot — the visual "got you, we're
-     *  placing exactly where you are" confirmation when a snap-to-self engages.
-     *  No-op until the dot exists (desktop GeolocateControl path has no element
-     *  we own, so the pulse is the native-dot path only). */
+    /** Flash a one-shot pulse ring on the blue dot for a snap-to-self confirmation. No-op until the dot exists (native-dot path only). */
     pulseSelf(): void;
-    /** Tear down the watch + remove the marker. Run inside an `$effect`
-     *  cleanup so HMR / route changes don't leak. */
+    /** Tear down the watch + remove the marker. Run inside an `$effect` cleanup so HMR / route changes don't leak. */
     cleanup(): void;
 }
 
-/**
- * The `Marker` class belonging to whichever library built this map.
- *
- * ⚠️ THIS IS NOT DEFENSIVE PLUMBING — it fixes a crash. The online map
- * (/mobile/map) is Mapbox; the offline map (/mobile/offlinev4) is MapLibre.
- * Building a `mapboxgl.Marker` and calling `.addTo(maplibreMap)` throws
- *
- *     TypeError: e2._addMarker is not a function
- *
- * from inside Mapbox's own `Marker.addTo`, because `_addMarker` is a private
- * method that only Mapbox's Map has. The map renders BLACK and the blue dot
- * never appears. Observed on the offline route before this existed.
- *
- * Every live map carries its renderer's namespaced class on the canvas
- * container (`mapboxgl-canvas-container` / `maplibregl-canvas-container`),
- * which is the cheapest honest way to ask an instance who owns it. Defaults to
- * Mapbox, so anything unrecognised behaves exactly as before.
- */
+/** ⚠️ NOT defensive plumbing — building a mapboxgl.Marker and calling `.addTo()` on a MapLibre map throws `TypeError: e2._addMarker is not a function` and renders the map black. Detect the renderer via the canvas container's class name and pick the matching Marker; defaults to Mapbox. */
 function markerCtorFor(map: unknown): Promise<typeof mapboxgl.Marker> {
 	const el = (
 		map as { getCanvasContainer?: () => HTMLElement | undefined }
@@ -207,13 +125,9 @@ function markerCtorFor(map: unknown): Promise<typeof mapboxgl.Marker> {
 
 export function createUserLocator(
     getMap: () => mapboxgl.Map | null,
-    /** Tap the blue dot → the host shows the coordinate pill. Optional so every
-     *  other caller (tests, demo scheduler) keeps the old one-arg shape. */
+    /** Tap the blue dot → the host shows the coordinate pill. Optional — other callers (tests, demo scheduler) keep the old one-arg shape. */
     onDotTap?: () => void,
-    /** The host's door (28 Aug 2026): `ui.reportSwallowed`, `gps.reportError`,
-     *  `gps.isGranted`. Optional to keep the old one/two-arg callers (tests,
-     *  demo scheduler) compiling; without it errors go to console.warn and
-     *  the permission check answers true (the platform prompt still applies). */
+    /** The host's ports: `ui.reportSwallowed`, `gps.reportError`, `gps.isGranted`. Optional — without it errors go to console.warn and the permission check answers true. */
     ports?: Pick<MapHostPorts, "ui" | "gps">,
 ): UserLocator {
     const reportSwallowed = (scope: string, err: unknown, extra?: Record<string, unknown>) =>
@@ -226,30 +140,15 @@ export function createUserLocator(
     /** True while the Marker class is being imported — see setOrUpdateUserMarker. */
     let markerPending = false;
     let nativeWatchId: string | null = null;
-    // Last known fix, kept current on BOTH paths: the native marker (iOS/native +
-    // mob-web) writes it in setOrUpdateUserMarker; the desktop GeolocateControl
-    // writes it from its `geolocate` event. getUserCoord reads it so snap-to-self
-    // works in every runtime (the desktop control owns no marker element of ours).
+    // Last known fix, kept current by both paths (native marker via setOrUpdateUserMarker; desktop GeolocateControl via its `geolocate` event) — getUserCoord reads it for snap-to-self in every runtime.
     let lastFix: [number, number] | null = null;
-    // True only once a LIVE fix has arrived this session. The persisted
-    // instant-dot seed (autoStart) is visual-only: getUserCoord must return
-    // null until a real fix lands, or snap-to-self could stamp
-    // proof-of-presence at yesterday's position.
+    // ⚠️ True only once a live fix has arrived this session. The persisted instant-dot seed is visual-only — getUserCoord must return null until a real fix lands, or snap-to-self could stamp proof-of-presence at a stale position.
     let hasLiveFix = false;
 
     function makeUserDotEl(): HTMLDivElement {
         const el = document.createElement("div");
         el.className = "user-location-dot";
-        // TAP THE DOT → the coordinate pill. The dot is the most obvious thing
-        // on the map to poke when you want to know where you are, so poking it
-        // does what LOCATE does (minus the camera move — you're already looking
-        // at yourself).
-        //
-        // stopPropagation is LOAD-BEARING, not defensive: SelfCoordPill
-        // dismisses itself on the map's `click` (the map is its close surface).
-        // Marker elements live in the map's DOM, so without this the same tap
-        // would open the pill and immediately close it again — a dot that
-        // visibly does nothing.
+        // ⚠️ stopPropagation is load-bearing, not defensive — without it, tapping the dot opens SelfCoordPill and the same map click immediately closes it again.
         el.addEventListener("click", (ev) => {
             ev.stopPropagation();
             onDotTap?.();
@@ -262,11 +161,9 @@ export function createUserLocator(
         lat: number,
         opts?: { staleSeed?: boolean },
     ) {
-        // NaN defence at the Mapbox boundary — a non-finite marker coord
-        // corrupts the GL transform (the red-screen family of crashes).
+        // ⚠️ NaN defence at the Mapbox boundary — a non-finite marker coord corrupts the GL transform (red-screen crash family).
         if (!coordsValid(lng, lat)) return;
-        // Record the fix even when the map handle isn't here yet, so
-        // getUserCoord + the persisted instant-dot stay current regardless.
+        // Record the fix even when the map handle isn't here yet, so getUserCoord + the persisted instant-dot stay current regardless.
         lastFix = [lng, lat];
         if (!opts?.staleSeed) {
             hasLiveFix = true;
@@ -278,16 +175,12 @@ export function createUserLocator(
             userLocationMarker.setLngLat([lng, lat]);
             return;
         }
-        // Creating the marker is ASYNC now: the Marker class comes from whichever
-        // library owns this map (see markerCtorFor). Fixes arrive on a watch, so a
-        // second one can land while the first import is still in flight —
-        // `markerPending` is what stops that becoming TWO blue dots.
+        // Marker creation is async (see markerCtorFor); markerPending stops a second in-flight fix from creating a duplicate blue dot.
         if (markerPending) return;
         markerPending = true;
         void markerCtorFor(map)
             .then((Marker) => {
-                // The map may be gone by now (route change), and a newer fix may
-                // have landed — plant at `lastFix`, not the captured lng/lat.
+                // The map may be gone by now (route change) and a newer fix may have landed — plant at `lastFix`, not the captured lng/lat.
                 const live = getMap();
                 if (!live || !lastFix || userLocationMarker) return;
                 userLocationMarker = new Marker({ element: makeUserDotEl() })
@@ -302,13 +195,8 @@ export function createUserLocator(
             });
     }
 
-    // Get a single fix. Native uses the Capacitor plugin (real iOS/Android
-    // impl). Web (mob-web + dt-web) uses navigator.geolocation directly. The
-    // Capacitor plugin's web shim calls navigator.permissions.query in
-    // checkPermissions(), which throws in iOS Safari — that's what made the
-    // previous version fail with "Couldn't get your location."
-    /** Map the standard PositionError codes to friendly text.
-     *  1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT. */
+    // ⚠️ The Capacitor plugin's web shim calls navigator.permissions.query in checkPermissions(), which throws in iOS Safari.
+    /** Map the standard PositionError codes to friendly text (1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT). */
     function geoErrMessage(err: GeolocationPositionError): string {
         return err.code === 1
             ? "Location permission denied — enable it in your browser settings"
@@ -335,25 +223,7 @@ export function createUserLocator(
         });
     }
 
-    /**
-     * Get a single fix. Native uses the Capacitor plugin (real iOS/Android
-     * impl). Web (mob-web + dt-web) uses navigator.geolocation directly. The
-     * Capacitor plugin's web shim calls navigator.permissions.query in
-     * checkPermissions(), which throws in iOS Safari — that's what made an
-     * earlier version fail with "Couldn't get your location."
-     *
-     * ⚠️ HIGH ACCURACY MUST NEVER BE THE ONLY ATTEMPT. A laptop has no GPS
-     * radio, so `enableHighAccuracy: true` waits the full timeout and then
-     * throws TIMEOUT — while a COARSE Wi-Fi/IP fix was available the whole
-     * time. That killed the blue dot AND the offline blob on desktop: the user
-     * granted permission, saw the fires (which use a different path) draw a
-     * ring around them, and still got "Location request timed out".
-     *
-     * So: try precise, and on ANYTHING but a denial, fall back to coarse. A
-     * city-block-accurate fix is overwhelmingly good enough — the dot is a dot,
-     * and the offline blob it seeds is a 2 km disc. Precision we can't get is
-     * worth far less than a position we can.
-     */
+    /** ⚠️ High accuracy must never be the only attempt — a laptop has no GPS radio, so `enableHighAccuracy: true` can time out while a coarse Wi-Fi/IP fix was available; always fall back to coarse unless the failure is a denial. */
     function getPositionOnce(): Promise<{ lng: number; lat: number }> {
         if (isNative) {
             return Geolocation.getCurrentPosition({
@@ -369,8 +239,7 @@ export function createUserLocator(
                 new Error("Geolocation isn't available in this browser"),
             );
         }
-        // Shorter first leg: we now have somewhere to go when it fails, so
-        // there's no reason to make the user wait the full 15 s for the radio.
+        // Shorter first leg (8s) — there's somewhere to fall back to, so no need to wait the full 15s for the radio.
         return webPositionAttempt(true, 8_000).catch((err: Error & { code?: number }) => {
             // A denial is final — retrying coarse just prompts the same wall.
             if (err.code === 1) throw err;
@@ -384,10 +253,7 @@ export function createUserLocator(
             Geolocation.watchPosition(
                 { enableHighAccuracy: true },
                 (p, err) => {
-                    // A mid-session error (signal loss, canyon, tunnel) must
-                    // never freeze the location layer: keep the marker at its
-                    // last-known position, keep the watch registered, and let
-                    // the next good fix / next app-resume restart carry on.
+                    // ⚠️ A mid-session error (signal loss, tunnel) must never freeze the location layer — keep the marker at last-known, keep the watch registered, let the next fix carry on.
                     if (err) {
                         console.warn("[locate] watch error", err);
                         reportGeoError("userLocation:watch", err);
@@ -414,32 +280,23 @@ export function createUserLocator(
                     setOrUpdateUserMarker(lng, lat);
                 }
             },
-            // Errors leave the marker at last-known; the browser keeps the
-            // watch alive and delivers again when a fix returns.
+            // Errors leave the marker at last-known; the browser keeps the watch alive and delivers again when a fix returns.
             (e) => {
                 console.warn("[locate] watch error", e);
                 reportGeoError("userLocation:watch", e);
             },
-            // NOT high-accuracy on the web. Same reasoning as getPositionOnce:
-            // a laptop has no GPS radio, so demanding precision can mean the
-            // watch never delivers a single fix and the dot never appears.
-            // Coarse updates keep the dot live everywhere; native (above) still
-            // asks for full precision because there the radio exists.
+            // Not high-accuracy on web — a laptop has no GPS radio, so demanding precision can mean the watch never delivers a fix; native above still asks for full precision.
             { enableHighAccuracy: false, maximumAge: 5_000 },
         );
         nativeWatchId = String(id);
     }
 
-    /** Tear down the position watch (marker untouched). THE single-owner
-     *  guarantee lives here + in startWatch's `nativeWatchId` latch: there is
-     *  exactly one watch, whoever asked for it (LOCATE tap, tracking session,
-     *  or the always-on auto-start). */
+    /** Tear down the position watch (marker untouched). The single-owner guarantee lives here + startWatch's `nativeWatchId` latch: exactly one watch, whoever asked for it. */
     function stopWatch() {
         if (nativeWatchId === null) return;
         if (isNative) {
             Geolocation.clearWatch({ id: nativeWatchId }).catch((e) =>
-                // A failed teardown can leave the GPS watch running
-                // (battery drain) — don't swallow it silently.
+                // ⚠️ A failed teardown can leave the GPS watch running (battery drain) — don't swallow it silently.
                 reportSwallowed("userLocation:clearWatch", e),
             );
         } else if (typeof navigator !== "undefined" && navigator.geolocation) {
@@ -464,10 +321,7 @@ export function createUserLocator(
             let cancelled = false;
             let addedCtrl: mapboxgl.IControl | null = null;
             (async () => {
-                // Same library-ownership rule as the marker above: a Mapbox
-                // control added to a MapLibre map reaches for internals that are
-                // not there. GeolocateControl exists in both with these exact
-                // options, so only the class source differs.
+                // Same library-ownership rule as the marker — a Mapbox control added to a MapLibre map reaches for internals that aren't there; GeolocateControl exists in both, only the class source differs.
                 const el = (
                     map as { getCanvasContainer?: () => HTMLElement | undefined }
                 ).getCanvasContainer?.();
@@ -487,8 +341,7 @@ export function createUserLocator(
                 m.addControl(
                     ctrl as unknown as Parameters<typeof m.addControl>[0],
                 );
-                // Mirror the control's fixes into lastFix so getUserCoord (and
-                // thus snap-to-self) works on desktop, where there's no marker.
+                // Mirror the control's fixes into lastFix so getUserCoord (snap-to-self) works on desktop, where there's no marker.
                 ctrl.on("geolocate", (pos: GeolocationPosition) => {
                     const { longitude: lng, latitude: lat } = pos.coords;
                     if (Number.isFinite(lng) && Number.isFinite(lat)) {
@@ -499,8 +352,7 @@ export function createUserLocator(
                 geolocateControl = ctrl;
                 addedCtrl = ctrl;
             })();
-            // Remove the control on cleanup — otherwise HMR / remounts stack
-            // up a tower of GeolocateControl tiles on the right side.
+            // Remove the control on cleanup, or HMR / remounts stack up a tower of GeolocateControl tiles.
             return () => {
                 cancelled = true;
                 const m = getMap();
@@ -518,25 +370,19 @@ export function createUserLocator(
             startWatch();
         },
         async autoStart(): Promise<void> {
-            // ONE permission check — no listener waiting for a grant, no
-            // prompt, no self-heal loop (THE LOCATION GATE stays dead simple;
-            // after a gated tap grants, locate() starts the watch itself).
+            // One permission check — no listener waiting for a grant, no prompt, no self-heal loop; after a gated tap grants, locate() starts the watch itself.
             if (!(await gpsIsGranted())) return;
-            // Instant dot: last-known position (this session's fix, else the
-            // persisted one) shows immediately while the fresh fix arrives.
+            // Instant dot: last-known position (this session's fix, else the persisted one) shows immediately while the fresh fix arrives.
             const known = lastFix ?? loadPersistedFix();
-            // staleSeed: visual-only — must not count as presence for
-            // snap-to-self until a live fix lands (see hasLiveFix).
+            // ⚠️ staleSeed is visual-only — must not count as presence for snap-to-self until a live fix lands (see hasLiveFix).
             if (known)
                 setOrUpdateUserMarker(known[0], known[1], { staleSeed: true });
-            // Restart rather than stack — heals a watch that silently died
-            // while the app was backgrounded; still exactly one watch.
+            // Restart rather than stack — heals a watch that silently died while the app was backgrounded; still exactly one watch.
             stopWatch();
             startWatch();
         },
         getUserCoord(): [number, number] | null {
-            // Proof-of-presence gate: the persisted instant-dot seed is not
-            // a fix — only a live fix this session counts.
+            // Proof-of-presence gate — the persisted instant-dot seed is not a fix; only a live fix this session counts.
             if (!hasLiveFix) return null;
             const ll = userLocationMarker?.getLngLat();
             if (ll && Number.isFinite(ll.lng) && Number.isFinite(ll.lat)) {
@@ -548,19 +394,14 @@ export function createUserLocator(
         pulseSelf() {
             const el = userLocationMarker?.getElement();
             if (!el) return;
-            // Restart the animation even on a rapid second snap: drop the class,
-            // force a reflow, re-add it so the keyframes replay from 0.
+            // Restart the animation even on a rapid second snap: drop the class, force a reflow, re-add it so the keyframes replay from 0.
             el.classList.remove("snapping");
             void el.offsetWidth; // reflow — without this the class re-add is a no-op
             el.classList.add("snapping");
             window.setTimeout(() => el.classList.remove("snapping"), 900);
         },
         async locate(): Promise<boolean> {
-            // Note: Permissions API is unreliable as a gate. Brave's privacy
-            // shield reports "denied" by default even when the user hasn't
-            // denied anything, and iOS Safari doesn't implement it. Always
-            // call getCurrentPosition — it's the source of truth for whether
-            // the browser will actually surface a prompt or hand us coords.
+            // Permissions API is unreliable as a gate (Brave reports denied by default; iOS Safari lacks it) — always call getCurrentPosition instead, it's the real source of truth.
             const map = getMap();
             try {
                 const { lng, lat } = await getPositionOnce();
@@ -569,8 +410,6 @@ export function createUserLocator(
                     return false;
                 }
                 setOrUpdateUserMarker(lng, lat);
-                // Gentle ease-in: longer duration + softer curve so the drawer
-                // close and the camera glide feel like one motion.
                 safeFlyTo(map, {
                     center: [lng, lat],
                     zoom: 15,

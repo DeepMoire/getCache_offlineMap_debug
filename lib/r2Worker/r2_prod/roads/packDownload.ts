@@ -1,32 +1,5 @@
 /**
- * v4 offline base map — download Protomaps tiles to on-device storage and serve
- * them to the renderer UNCHANGED. Obeys LAW 0 (map never streams) AND the
- * constant-presence law (nothing pops in/out as you zoom).
- *
- *   1. DOWNLOAD (on user volition) — ONE request to the `offline-tiles` Cloudflare
- *      Worker's `/pack?lng=&lat=` endpoint. The Worker computes the SAME jagged disc
- *      this file does, reads every tile from the R2 archive edge-side, and returns
- *      them packed into a single binary blob. The phone unpacks it into IndexedDB.
- *      (Was: the `pmtiles` reader range-reading each tile straight from R2 — ~1000
- *      separate phone↔R2 round-trips, minutes. Now: one request, seconds. The Worker
- *      lives in `workers/offline-tiles/`; the disc math here and there MUST match.)
- *   2. RENDER — there is NO decode step. MapLibre reads the stored tiles as they
- *      are, over the `rtraw://` protocol, with ONE SOURCE PER RING so each
- *      overzooms independently off the zoom it was downloaded at (see
- *      rawWallProtocol.ts). Constant presence comes from that free overzoom: a
- *      downloaded area is drawn at every zoom above its own, never popping in or
- *      out at a threshold, and an address that was never downloaded 404s — which
- *      is what draws the jagged frontier, at no cost.
- *
- *      This file used to own step 2 as a DECODE: every stored tile parsed into
- *      one flat roads+water FeatureCollection, handed to `geojson` sources. That
- *      is what spiked the route to 800-1200 MB. The whole apparatus (worker, job
- *      table, fallback, teardown timers) is gone — and as of 2026-08-17 so is
- *      the LAST decoder, `buildV4Bands`, which existed only to feed the road
- *      raster. NOTHING in this file turns a tile into GeoJSON any more.
- *
- * The only network is the DOWNLOADER's one-time fetch; the map is fully
- * air-gapped by `v4TransformRequest`.
+ * ⚠️ v4 offline base map — obeys LAW 0 (map never streams) and the constant-presence law. One request downloads a packed blob (workers/offline-tiles/); MapLibre reads stored tiles UNCHANGED over rtraw:// with ONE SOURCE PER RING (rawWallProtocol.ts) — NOTHING in this file decodes a tile into GeoJSON any more.
  */
 import { VectorTile } from "@mapbox/vector-tile";
 import Pbf from "pbf";
@@ -51,81 +24,7 @@ import { packUrl } from "../tilesHost";
  *  regional-edge holes that broke per-area shapes. Source + deploy:
  *  /Users/chrisharris/DEV/fetch/ReTreever/workers/offline-tiles/. The ring geometry
  *  below (RINGS / DETAIL_INNER_Z) must stay in lockstep with the Worker. */
-// packUrl() (and which Worker it points at) lives in r2Worker/local_dev/tilesHost.
-// Imported at the top of this file.
-// Wire-format version, appended to every pack request. The Worker edge-caches each
-// disc keyed by the FULL URL and that cache survives Worker redeploys — so whenever
-// the pack wire format changes (e.g. gzip added), BUMP this to bypass stale cached
-// entries in the old format. 2 = gzipped pack · 3/4 = ring slots polluted pre-deploy
-// with old packs · 5 = rings, but z13 stored WHOLE (base+landcover dead weight) · 6 = z13
-// outer ring STRIPPED to roads-only at the Worker (~6× smaller pack) · 7 = z13 outer ring
-// keeps roads + WATER (coastline, so roads don't float over the ocean); landcover/landuse
-// still stripped · 8 = same as 7, but 7 got edge-cached as roads-only packs (fetched from
-// the old Worker BEFORE the water deploy landed) · 9 = outer ring ALSO keeps `earth` (the
-// precise landmass polygon — the ground map — so land-vs-sea figure-ground is exact)
-// · 12 = INNER ring brings WATER back (small detailed lakes, ~13–300 KB), OUTER ring
-// stays roads+earth so water never reaches the 25 km edge · 13 = `earth` DROPPED from
-// both rings (its z12 fill rendered as ugly tile-square blocks; not shipped, not drawn) —
-// outer = roads+places, inner = roads+water+pois. Smaller packs.
-// · 14 = Worker kind-strips pois→hospital/camp_site + places→town-kinds (drops ~86k
-// never-rendered city features), AND applies the ROADS BUDGET.
-// · 15 = ROADS BUDGET simplified to ONE rule: default 40 km with paths; if 40 km
-// roads > 2 MB → drop ALL paths AND shrink to 25 km (one move). Only roads count.
-// Bump on wire change OR when a content change could collide with pre-deploy cached packs.
-// · 16 = ZERO-BYTE TILES EXCLUDED. Every pv≤15 pack cached at the edge can still
-// contain tiles that filtered down to nothing (`n:0`) — the phone stored those as
-// real tiles and Mapbox threw "Unimplemented type: 4" parsing each one on every
-// render pass (7,213 of 37,503 tiles on the dev device). The Worker now drops them
-// at the source; this bump is what stops the edge serving the poisoned packs.
-// · 17 = THE z13 MID RING. Packs now carry THREE levels (z15 core, z13 @ 25 km,
-// z12 outer) instead of two. Every pv≤16 pack cached at the edge is missing z13
-// entirely, so without this bump the phone would keep receiving two-level packs and
-// keep manufacturing the middle itself — the whole point of the change. See
-// workers/offline-tiles/src/packBuilder.ts (MID_RING_Z) for the why.
-// · 18 = the z13 ring TRIMMED to the major network. 17 shipped z13 with full road
-// detail + water and measured +152%…+399% pack (the mid ring alone was 55-77% of
-// every pack). Dropping water and keeping only major_road/highway/rail/ferry at
-// this level brought it to +15%…+28% — see MID_ROAD_KINDS in the Worker.
-//
-// NB when measuring a Worker change: probe on a throwaway `&cb=` key, and bump this
-// only AFTER the deploy is live. Packs are cached `immutable` with no purge, so a
-// version requested against the OLD build is poisoned at the edge permanently.
-// · 19 = mid ring settled: 10 km reach, `minor_road` KEPT, `path` dropped, no water.
-// (18 was warmed at the edge mid-iteration and permanently holds a 25 km trimmed-kind
-// build.) Final measured pack: 131→155 kB sparse, 276→358 kB, 685→1004 kB dense.
-// · 20 = `landuse` shipped on the z15 inner ring (the forest/wetland/field fills).
-// The six v4-land-* style layers now read source-layer `landuse` DIRECTLY instead of
-// the `land` layer the on-device decoder used to synthesise — which is what lets the
-// decoder go. Measured 131→200 kB sparse, 276→472 kB, 685→1255 kB dense (vs the
-// pre-z13 baseline). `landcover` deliberately NOT shipped: empty in this archive.
-// · 21 = THE z10 REGIONAL RING. Packs carry FOUR levels (z15, z13, z12, z10).
-// Every pv<=20 pack stops at z12, so z8-z12 fell back to the blurry raster.
-// 16-25 tiles per area vs 196-225 for the z12 ring.
-// · 22 = THE REGIONAL RING DROPS z10 -> z9, AND THE ROAD RASTER IS DELETED.
-// z9 is the SHALLOWEST ring the geometry allows: a z9 tile is 55 km, inside the
-// 80 km area; z8 is 110 km and would paint undownloaded ground (the rejected
-// build). With z9 shipping real vectors there is nothing left for a picture of
-// the roads to do, so ~70 MB of PNGs per device and 562 lines of raster code
-// are gone — see purgeRoadRasters.ts. Roads are vectors at EVERY zoom now.
-// · 24 = THE DISC IS SAVED AT EVERY ZOOM (z1-z11 plus z12/z13/z15). ONE circle,
-// one radius, written once per level, so there is no zoom where the blob has no
-// tile to draw. Versions 21-23 each added ONE shallow level and only MOVED the
-// cliff (z12 -> z10 -> z9); this removes it. ~20-25 extra tiles, the cheapest in
-// the archive — by z6 the whole disc fits in a single tile.
-// · 25 = THE REWRITE. ONE 30 km circle, saved at EVERY zoom (roadBlob.ts).
-// Replaces 11 constants across 3 files that had drifted out of sync (the client
-// declared 40 km while the Worker shipped 25). The over-budget path no longer
-// SHRINKS the radius — it only drops paths, so the blob is the same size in the
-// city as in the bush.
-// · 33 = THE SQUARE GRID. The unit of storage is no longer a 30 km DISC centred
-// on the pin — it is a 40 km SQUARE CELL snapped to a world grid (grid.ts), with
-// a 20 km radius guaranteed in every direction. Three things went with the disc:
-// the per-tile clip, the per-level downsampler, and the seam (two pins produced
-// two differently-centred circles, so a road crossing both was cut at two arcs
-// that did not meet — photographed on screen). Neighbouring cells now share
-// EXACT edges, and two pins in one cell request the SAME URL, so the second is
-// an edge-cache hit. Every pv<=32 pack at the edge is a disc; this bump is what
-// stops them being served.
+// ⚠️ Wire-format version, appended to every pack request. Bump on wire change OR when a content change could collide with pre-deploy cached packs. Packs are cached `immutable` with no purge — probe on a throwaway `&cb=` key and bump only AFTER the deploy is live, or a version requested against the OLD build is poisoned at the edge permanently.
 export const PACK_FORMAT_VERSION = 44;
 
 // The tile pile is keyed by DB name. `areaTilesPresent` asks "did this area's
@@ -197,39 +96,7 @@ if (typeof indexedDB !== "undefined") {
 	});
 }
 
-// CONCENTRIC RINGS — each anchor downloads two jagged discs at two zooms, not one
-// monolithic disc. Far less data (~105 tiles vs ~1000), and the shape is governed
-// by small clean radii. The rings are SPATIAL regions rendered at EVERY zoom (never
-// swapped as you pinch), so Law 1 (constant presence) holds:
-//   • inner 5 km @ z15 → FULL detail (roads + water + landcover/landuse fills)
-//   • outer 25 km @ z13 → ROADS + WATER (decode drops landcover/landuse/pois below
-//     DETAIL_INNER_Z, but keeps water so the regional reach reads land-vs-coastline)
-// The satellite photo (separate, EOX bake) is the 3 km core, so the full-detail
-// vector ring (5 km) extends a clear band BEYOND the photo — that's where wetland/
-// forest/field/water read. radius = a true RADIUS from the pin, NOT a diameter. RAM
-// stays in check by decoding only the ACTIVE map's tiles (buildV4GeoJSON(onlyKeys)),
-// never the whole on-disk pile. MUST stay in lockstep with the Worker's RINGS
-// (workers/offline-tiles/src/index.ts) — change both together + redeploy the Worker.
-// Two concentric jagged discs per anchor:
-//   • inner 5 km @ z15 → FULL detail (all road kinds + paths, water fills, landcover)
-//   • outer 40 km @ z12 → the MAX reach the roads budget may grow to. The Worker
-//     decides 25 OR 40 km per area (roads ≤2 MB → 40, else 25) and ships only that
-//     subset; this 40 km is the SUPERSET so `areaTileKeys` covers whatever lands.
-//     `areaTilesPresent` is any-hit, so a 25 km pack still reads as present. DO NOT
-//     shrink the reach — sparse areas need the 40 km; the budget keeps it cheap.
-// The satellite photo is the 2 km core; the detail ring extends a band beyond it.
-// · MID RING (z13 @ 25 km) — the level the DEFAULT CAMERA sits at. Without it the
-//   pack jumped z12 → z15 with nothing between, and since MapLibre only overzooms
-//   UP from the deepest tile it holds, z13-z14 had nothing to stretch. The phone
-//   manufactured those levels itself (decode → glue → re-cut → re-encode), which is
-//   the 453 MB @ 113 MB/s decode worker. Shipping z13 lets z14 overzoom off it for
-//   free and removes the reason that machinery exists. Fixed 25 km: the roads budget
-//   governs the z12 outer reach only, and this band is only looked at near the pin.
-// · REGIONAL RING (z10 @ 40 km) — real vector roads for z10-z12, replacing the
-//   pre-drawn raster that could only manage ~78 m per pixel (roads measured 445 m
-//   wide on screen). A z10 tile is ~25 km — SMALLER than the 80 km area — so it
-//   stays inside the downloaded footprint. The reverted z8 attempt failed exactly
-//   here: a z8 tile is ~195 km, so it painted roads the user never downloaded.
+// ⚠️ MUST stay in lockstep with the Worker's RINGS (workers/offline-tiles/src/index.ts) — change both together + redeploy the Worker. DO NOT shrink the outer reach — sparse areas need it, the budget keeps it cheap. RAM stays in check by decoding only the ACTIVE map's tiles, never the whole on-disk pile.
 /**
  * The blob, as a (km, zoom) table — DERIVED from the spec, never hand-written.
  *

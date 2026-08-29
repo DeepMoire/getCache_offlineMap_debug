@@ -1,12 +1,4 @@
-/**
- * ⛔ THE 50 km BUG — PINNED WITH THE USER'S OWN TWO PINS.
- *
- * From his blob inspector, two pins minutes apart:
- *     Moran WY        -110.7261,44.0618   roads box north edge 44.3334
- *     Yellowstone WY  -110.7470,44.6629   roads box north edge 44.3334  ← SAME
- * The second pin sat 36.6 km north of its own roads' top edge. Its tiles had
- * been served from the first pin's blob, because both shared a grid address.
- */
+// ⛔ Two pins sharing one grid address were served each other's roads tiles — measured a 36.6 km offset.
 import { describe, expect, it } from "vitest";
 import { pinTileKey } from "../../contract/grid";
 import {
@@ -34,18 +26,13 @@ describe("pinTileLookup — one address, the RIGHT pin", () => {
 		expect(parsePinTileKey("8/49/93")).toBeNull();
 	});
 
-	/**
-	 * THE REGRESSION. Both pins own the SAME address. The tile must resolve to
-	 * whichever pin it actually sits nearest — never "whatever was stored first",
-	 * which is what produced the 50.4 km reading.
-	 */
+	// The tile must resolve to whichever pin it actually sits nearest — never "whatever was stored first" (that produced the 50.4 km reading).
 	it("⛔ two pins sharing one address each get their OWN roads", () => {
 		const c = { ix: 49, iy: 92, z: 8 };
 		const moranKey = pinTileKey(MORAN.lng, MORAN.lat, c);
 		const yellKey = pinTileKey(YELLOWSTONE.lng, YELLOWSTONE.lat, c);
 		const disk = [moranKey, yellKey];
 
-		// A tile up north belongs to Yellowstone...
 		const north = tileCentre(8, 49, 92);
 		const nearYell = keyForAddress(
 			disk,
@@ -55,7 +42,6 @@ describe("pinTileLookup — one address, the RIGHT pin", () => {
 		);
 		expect(nearYell).not.toBeNull();
 
-		// ...and the winner must be the pin closer to that tile's centre.
 		const dY = Math.hypot(north.lng - YELLOWSTONE.lng, north.lat - YELLOWSTONE.lat);
 		const dM = Math.hypot(north.lng - MORAN.lng, north.lat - MORAN.lat);
 		expect(nearYell).toBe(dY < dM ? yellKey : moranKey);
@@ -63,7 +49,6 @@ describe("pinTileLookup — one address, the RIGHT pin", () => {
 
 	it("returns null on a miss — NEVER another pin's bytes", () => {
 		const disk = [pinTileKey(MORAN.lng, MORAN.lat, { ix: 49, iy: 93, z: 8 })];
-		// A totally different address must not resolve to Moran's tile.
 		expect(keyForAddress(disk, 8, 10, 10)).toBeNull();
 	});
 
@@ -71,15 +56,7 @@ describe("pinTileLookup — one address, the RIGHT pin", () => {
 		expect(keyForAddress([], 8, 49, 93)).toBeNull();
 	});
 
-	/**
-	 * ⛔ THE HALF-A-MAP BUG. Returning only the NEAREST owner fixed the
-	 * collision by picking a winner — and every other pin's copy of that shared
-	 * tile then drew nothing. MEASURED: the Greybull pin's own box was correct
-	 * to 123 m and half its roads were still missing.
-	 *
-	 * The user, before I found it: "half of it's missing because it doesn't want
-	 * to overlap the other one... they don't butt up against each other."
-	 */
+	// ⛔ THE HALF-A-MAP BUG — returning only the nearest owner drew nothing for every other pin sharing that tile; must return ALL owners.
 	it("⛔ returns EVERY pin that owns an address, not just the nearest", () => {
 		const c = { ix: 49, iy: 92, z: 8 };
 		const moranKey = pinTileKey(MORAN.lng, MORAN.lat, c);

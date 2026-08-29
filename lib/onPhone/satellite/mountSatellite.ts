@@ -1,24 +1,4 @@
-/**
- * MOUNTING THE PHOTOS — the code that puts a baked satellite image ON the map.
- *
- * ⛔ THIS EXISTS BECAUSE IT WAS WRITTEN TWICE-MINUS-ONCE. ReTreever's
- * `/offline` page carried ~90 lines of image-source mounting inline, and the
- * SAME view under `/offline/debug` — which renders the child's Demo component —
- * carried none. So the debugger showed no satellite while the real page showed
- * it fine, and every hour spent asking "why doesn't satellite render?" was
- * spent looking at the page that never had the code. MEASURED 27 Aug 2026:
- * /offline 1603 lines, /offline/debug 34.
- *
- * A debugger that renders different pixels than the thing it debugs is worse
- * than no debugger: it produces confident wrong answers. So the mount lives
- * HERE, in the child, and both pages call it.
- *
- * WHY IT COULD MOVE AT ALL: the mount is pure. It touches the MapLibre map,
- * the photo blob, and its own two registries. No mapStore, no hitchState, no
- * feature geometry — none of the proprietary surface the open-core rule keeps
- * in ReTreever/src. Area SELECTION is where that boundary really sits, and it
- * stays with the caller.
- */
+// ⛔ Both /offline and /offline/debug must call this shared mount — it stays pure (map, blob, its own registries only); area SELECTION stays with the caller.
 import type * as mapboxgl from "maplibre-gl";
 import type maplibregl from "maplibre-gl";
 import { getSatImageByKey, satImageKey, type Bounds } from "./satelliteImage";
@@ -41,28 +21,19 @@ export function satLayerId(key: string): string {
 	return `v4-sat-${key.replace(/[^a-z0-9]/gi, "_")}`;
 }
 
-/**
- * @param map        the live MapLibre map
- * @param onMounted  called after a photo lands, so the caller can re-raise
- *                   anything that must stay above it (labels, draw tools).
- */
 export function createSatelliteMount(
 	map: maplibregl.Map,
 	onMounted?: () => void,
 ): SatelliteMount {
 	const mountedSat = new Set<string>();
-	// Per-key object-URL registry. createObjectURL PINS the photo blob in
-	// memory until revoked; without this every unmount stranded the blob —
-	// the steady RAM climb.
+	// Per-key object-URL registry — createObjectURL pins the blob in memory until revoked; without this, unmount strands it (steady RAM climb).
 	const satUrls = new Map<string, string>();
 
 	const mountSat = (key: string, blob: Blob, bounds: Bounds): void => {
 		const id = satLayerId(key);
 		const existing = map.getSource(id) as maplibregl.ImageSource | undefined;
 		if (existing) {
-			// AN ALREADY-MOUNTED PHOTO MUST STILL FOLLOW ITS NEW BOUNDS — a
-			// re-bake can move them, and a stale mount pins the photo to the
-			// old footprint.
+			// An already-mounted photo must still follow its new bounds — a re-bake can move them, and a stale mount pins the old footprint.
 			const [uw, us, ue, un] = bounds;
 			const url = URL.createObjectURL(blob);
 			const prev = satUrls.get(key);
@@ -77,12 +48,10 @@ export function createSatelliteMount(
 						[uw, us],
 					] as never,
 				});
-				// Only revoke AFTER the swap succeeded — revoking a URL the
-				// source is still reading blanks the photo.
+				// Only revoke after the swap succeeded — revoking a URL the source is still reading blanks the photo.
 				if (prev) URL.revokeObjectURL(prev);
 			} catch {
-				// codestyle-allow-swallow: a failed in-place update leaves the
-				// previous (valid) image mounted. The next pass retries.
+				// codestyle-allow-swallow: a failed in-place update leaves the previous (valid) image mounted. The next pass retries.
 				satUrls.set(key, prev ?? url);
 			}
 			mountedSat.add(key);
@@ -106,12 +75,10 @@ export function createSatelliteMount(
 				id: `${id}-l`,
 				type: "raster",
 				source: id,
-				// NO fade — Law 3 (no blink). A cross-fade on mount is a
-				// visible gap in presence.
+				// No fade — Law 3 (no blink): a cross-fade on mount is a visible gap in presence.
 				paint: { "raster-fade-duration": 0 },
 			} as mapboxgl.LayerSpecification,
-			// UNDER the wall-map roads, so streets draw on top of the photo.
-			// wallStyle owns that ordering rule.
+			// Under the wall-map roads, so streets draw on top of the photo — wallStyle owns that ordering rule.
 			map.getLayer(SAT_INSERT_BEFORE) ? SAT_INSERT_BEFORE : undefined,
 		);
 		mountedSat.add(key);
@@ -123,7 +90,6 @@ export function createSatelliteMount(
 		if (map.getLayer(`${id}-l`)) map.removeLayer(`${id}-l`);
 		if (map.getSource(id)) map.removeSource(id);
 		mountedSat.delete(key);
-		// Release the blob the object-URL was pinning (the leak fix).
 		const u = satUrls.get(key);
 		if (u) {
 			URL.revokeObjectURL(u);
@@ -132,9 +98,7 @@ export function createSatelliteMount(
 	};
 
 	return {
-		// READ-ONLY. getSatImageByKey is a pure IndexedDB read — this never
-		// bakes and never downloads. The app-wide bake service is the only
-		// thing that fetches.
+		// Read-only — getSatImageByKey is a pure IndexedDB read; the app-wide bake service is the only thing that fetches.
 		async display(center: [number, number]): Promise<void> {
 			const key = satImageKey(center);
 			if (mountedSat.has(key)) return;

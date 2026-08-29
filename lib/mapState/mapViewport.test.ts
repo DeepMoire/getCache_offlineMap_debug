@@ -1,13 +1,4 @@
-/**
- * Regression: the offline map jumped to "null island" (0,0 — the Gulf of Guinea,
- * off West Africa) instead of resuming the viewport on the online↔offline crow
- * toggle. Two causes are guarded here:
- *   • a saved camera at (0,0) must NOT be resumed (loadCamera) or persisted (saveCamera);
- *   • isNullIsland is the shared sentinel test used by the camera + the auto-frame
- *     bounds + the offline flyToUrlTarget guard.
- * (The third cause — Number(null) === 0 making a param-less /offlinev4 open "fly to"
- * (0,0) — lives in the route component and is covered by isNullIsland + that guard.)
- */
+// regression guard: a saved camera at null island (0,0) must never be resumed or persisted — isNullIsland is the shared sentinel used by the camera, auto-frame bounds, and the offline flyToUrlTarget guard.
 import { describe, expect, it, vi } from "vitest";
 
 const store = new Map<string, string>();
@@ -49,18 +40,7 @@ describe("loadCamera rejects null island", () => {
 	});
 });
 
-/**
- * NORTH IS UP.
- *
- * THE BUG: a saved camera carried a `bearing`, and it was restored on every
- * mount. One accidental two-finger twist therefore rotated the map PERMANENTLY
- * — reported in the field as "north is facing west". It was invisible to every
- * camera probe, because `offlineMapInit` really did construct with `bearing: 0`
- * and `applyCameraOrientation` overwrote it a moment later from localStorage.
- *
- * Reinstalling did not clear it (localStorage survives), so the heal has to
- * happen on READ as well as on write.
- */
+// regression: a persisted bearing rotated the map permanently (“north facing west”) — heal must happen on READ as well as write, since reinstalling doesn’t clear localStorage.
 describe("north is up — bearing is never persisted or restored", () => {
 	it("reads back a stored rotation as 0 — heals devices already rotated", () => {
 		store.clear();

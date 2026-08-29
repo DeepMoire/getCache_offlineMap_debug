@@ -1,13 +1,5 @@
 /**
  * fireClassifyCache.test.ts — fires must never cost the map a frame.
- *
- * The measured problem: `isUrban` scans 11,878 polygons per hotspot, at
- * **17.8 ms per 1,000**. A normal paint (~11,400 hotspots past the 500 km wall)
- * blocked the main thread for **~200 ms**, on every pan — 10–50× every other
- * step combined (IndexedDB 14 ms, union 12, wall 4, GeoJSON 2, clone 7).
- *
- * Fires are an afterthought: 95%+ of the time a planter is looking for something
- * else entirely. These tests pin the properties that keep the overlay free.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -38,11 +30,8 @@ describe("a verdict is remembered, not recomputed", () => {
 	});
 
 	it("shares one verdict across a ~375 m CELL, not per coordinate", () => {
-		// This is what collapses tens of thousands of detections into a few
-		// hundred real questions — neighbouring hits are the same ground.
-		//
-		// Anchored at a cell CENTRE (an exact multiple of CELL_DEG) so the test
-		// exercises sharing rather than the rounding boundary.
+		// Anchored at a cell CENTRE (exact multiple of CELL_DEG) so the test
+		// exercises sharing, not the rounding boundary.
 		const centre = Math.round(-121 / CELL_DEG) * CELL_DEG;
 		setUrbanVerdict(centre, 50, true);
 		expect(peekUrbanVerdict(centre + CELL_DEG * 0.4, 50)).toBe(true);
@@ -94,8 +83,7 @@ describe("classifyPending — the expensive call happens ONCE per cell", () => {
 	});
 
 	it("YIELDS between slices so the map keeps painting", async () => {
-		// The property that stops a big classify run freezing a pan. Without the
-		// await, 5,000 cells would run as one blocking task.
+		// Without the yield, 5,000 cells would run as one blocking task.
 		const coords = Array.from({ length: 1000 }, (_, i) => at(i));
 		let resolved = false;
 		const p = classifyPending(coords, () => false, 100).then(() => {
@@ -112,10 +100,9 @@ describe("classifyPending — the expensive call happens ONCE per cell", () => {
 
 describe("the paint path never blocks on classification", () => {
 	it("an unknown cell reads as NOT urban, so the fire renders", () => {
-		// Failing toward SHOWING is the right direction for a hazard layer: an
-		// unclassified city dot that vanishes a moment later is a blink; a real
-		// fire suppressed because classification hadn't finished is the failure
-		// this whole layer exists to prevent.
+		// Fail toward SHOWING — an unclassified dot that vanishes a moment
+		// later is a blink; a suppressed real fire is the failure this layer
+		// exists to prevent.
 		expect(peekUrbanVerdict(-121, 50)).toBeNull();
 		// The paint predicate is `=== true`, so null renders the hotspot.
 		expect(peekUrbanVerdict(-121, 50) === true).toBe(false);

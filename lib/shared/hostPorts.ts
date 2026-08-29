@@ -1,28 +1,4 @@
-/**
- * HOST PORTS — the one narrow door between the offline map engine and whatever
- * app is hosting it.
- *
- * WHY THIS EXISTS. The engine (bake, store, render, roads, satellite) is meant
- * to be liftable into rapper and run on a page that has no database, no auth and
- * no TinyBase — a contractor opens it, breaks something, and exports a report.
- * Everything it needs from the host is exactly this: a list of places, a nudge
- * when that list changes, and two optional extras. It does NOT need to know what
- * a map, a plot, a user or a session is.
- *
- * This is OFFLINE_MAP_SPEC.md rule 5 made literal — "a narrow, explicit
- * interface; it needs a list of {lng, lat} and nothing else".
- *
- * WHY FEATURES AND NOT PRE-FLATTENED PINS. The bake service does not want a bag
- * of coordinates — it wants to know, per place, WHEN it was last touched (newest
- * bakes first, oldest evicts first) and whether it is a CORRIDOR (a line gets
- * baked along its length, a point gets a disc). Flattening to {lng,lat} in the
- * host would throw both away and every host would have to re-invent the same
- * two rules. So the port hands over anchored places, and `anchorsOf` /
- * `isBlobAnchor` — which travel WITH the engine — do the flattening.
- *
- * ReTreever passes its real mapStore through `mapStorePorts()`. The rapper demo
- * passes a literal array. Neither knows about the other.
- */
+/** HOST PORTS — the narrow interface between the offline map engine and whatever app hosts it. */
 
 /** A place the map should keep offline: its anchor points plus the two facts the bake order depends on. */
 export interface HostPlace {
@@ -33,11 +9,7 @@ export interface HostPlace {
 	/** True for lines/corridors — baked along their length rather than as a single disc. */
 	corridor: boolean;
 
-	// ── OPTIONAL DISPLAY METADATA ───────────────────────────────────────────
-	// The bake service ignores every field below; they exist for the INSPECTOR,
-	// which shows a human which pin an area belongs to. A host that only wants
-	// baking can omit them all and nothing changes — a blob is still identified
-	// by its areaKey, never by a name.
+	// Display metadata only — the bake service ignores these; a blob is identified by areaKey, never by name.
 
 	/** Stable id of the feature this place came from. */
 	featureKey?: string;
@@ -51,14 +23,7 @@ export interface HostPlace {
 	groupName?: string;
 }
 
-/**
- * One hotspot, trimmed to what the map renders.
- *
- * STRUCTURAL ON PURPOSE — declared here rather than imported from the host, so
- * neither side depends on the other's module. It must stay assignable to the
- * host's own hotspot type in BOTH directions, which is why every field the host
- * requires appears here too; a field the host makes optional stays optional.
- */
+/** One hotspot, trimmed to what the map renders. ⚠️ Must stay structurally assignable to the host's hotspot type both ways — keep required fields required, optional optional. */
 export interface PortHotspot {
 	/** [lng, lat] — GeoJSON order. */
 	readonly coordinates: [number, number];
@@ -77,8 +42,7 @@ export interface PortHotspot {
 /** What one area's fire fetch returns. */
 export interface PortFireResult {
 	hotspots: readonly PortHotspot[];
-	/** The SERVER's fetch time — the edge may serve a cached slice, so our own
-	 *  clock would overstate freshness by up to the cache TTL. */
+	/** The SERVER's fetch time — using our own clock would overstate freshness by the cache TTL, since the edge may serve a cached slice. */
 	fetchedAt: number;
 	/** How many upstream satellites reported. */
 	sourcesOk: number;
@@ -86,15 +50,7 @@ export interface PortFireResult {
 	bytes: number;
 }
 
-/**
- * The fire layer, as the bake service consumes it.
- *
- * The arrival pair is a CONSUME-ONCE DEBT, not a boolean: "a person just turned
- * up" arms every reader, and each reader clears only its own debt. The bake
- * service is one reader; the map layer is the other. Keep them separate — when
- * this was a single shared flag the bake tick reliably won the race and ate it
- * before the map ever ran, so the disc under the user's eyes never refreshed.
- */
+/** Fire layer, as the bake service consumes it. ⚠️ arrival is a consume-once debt per reader (not a shared boolean) — merging readers let the bake tick race-eat the flag before the map ran. */
 export interface FirePort {
 	/** Fetch hotspots for one area. Omit the whole `fires` port to disable fire baking. */
 	fetchArea(lng: number, lat: number): Promise<PortFireResult>;
@@ -102,11 +58,6 @@ export interface FirePort {
 	arrival(): void;
 	/** Clear THIS reader's debt and report whether it was owed. */
 	takeArrival(): boolean;
-
-	// ── the fire STORE ──────────────────────────────────────────────────────
-	// Reading and writing hotspot records is IndexedDB work, and where a host
-	// keeps its data is the host's business. The engine only ever asks "what do
-	// we have for this area, is it still good, and here is a newer one".
 
 	/** This area's cached record, or null if absent / written by an older format. */
 	read(areaKey: string): Promise<FireRecord | null>;
@@ -116,13 +67,7 @@ export interface FirePort {
 	delete(areaKey: string): Promise<void>;
 	/** Is this record still within its freshness TTL? */
 	isFresh(rec: FireRecord): boolean;
-	/**
-	 * Centres + times of every cached disc — NO hotspots.
-	 *
-	 * Deliberately coverage-only: the containment gate compares circle CENTRES,
-	 * and pulling full records here held tens of thousands of detections live in
-	 * the bake service's heap just to do that. ([[offlinev4-mount-memory-measured]])
-	 */
+	/** Centres + times of every cached disc — NO hotspots. ⚠️ Deliberately coverage-only: pulling full records here held tens of thousands of detections live in the bake service's heap. */
 	coverage(): Promise<FireCoverage[]>;
 	/** Is this coverage entry fresh enough to count as covering an area? */
 	isCoverageFresh(c: FireCoverage): boolean;
@@ -147,45 +92,11 @@ export interface FireCoverage {
 export interface HostPorts {
 	/** Every place to keep offline, right now. Called on each reconcile pass. */
 	places(): HostPlace[];
-	/**
-	 * Has the host finished loading? EVICTION DEPENDS ON THIS, and it is NOT the
-	 * same question as "are there any places".
-	 *
-	 * On a cold reload the host is briefly empty because it is still hydrating.
-	 * Evicting then would see every stored blob as unreferenced and the conveyor
-	 * would nuke nearly everything — the "1 GB → 70 MB" collapse. But a host that
-	 * has finished loading and legitimately has NO places (every pin deleted) is a
-	 * different state, and eviction must still run there.
-	 *
-	 * A host with nothing to hydrate should return true.
-	 */
+	/** Has the host finished loading? ⚠️ Eviction depends on this — a cold-reload host that's still hydrating looks "empty" but is NOT "no places"; treating those the same nuked stored blobs (the "1 GB → 70 MB" collapse). A host with nothing to hydrate should return true. */
 	ready(): boolean;
-	/**
-	 * Register for "the list changed" — a PUSH, not a reactive read. Must fire on
-	 * every add/move/delete/import/restore, and once on register. Returns an
-	 * unsubscribe fn.
-	 *
-	 * A push is required, not a preference: an $effect reading the host's state
-	 * across a module boundary silently failed to fire on a fresh pin drop —
-	 * exactly the bug this shape prevents. ([[cross-module-state-use-applier-pattern]])
-	 */
+	/** Register for "the list changed" — a PUSH, not a reactive read; must fire on every add/move/delete/import/restore, and once on register. ⚠️ Required, not a preference — an $effect reading host state across a module boundary silently failed to fire on a fresh pin drop. */
 	onPlacesChanged(fn: () => void): () => void;
-	/**
-	 * WRITE A PLACE — the pin the user just dropped becomes a place the host
-	 * keeps, so `places()` returns it and `onPlacesChanged` fires and the bake
-	 * is ASKED for that spot.
-	 *
-	 * ⛔ THE BUG THIS CLOSES, MEASURED 28 Aug 2026: the page kept dropped pins
-	 * in a private `dropped[]` — "In-memory only — this page has no database" —
-	 * so a dropped pin was a marker, never a place. Nothing was ever requested
-	 * for it, IndexedDB had zero tiles near it, and the CONFIG circles stayed
-	 * green from the load-time home-centre bake. Chris: "I can make a pin and
-	 * NOTHING arrives." The port is the write boundary; without it the read
-	 * side (`places()`) can never see a drop.
-	 *
-	 * Optional so a read-only host still type-checks — but a host that omits it
-	 * gets a map where dropping a pin downloads nothing, and the page says so.
-	 */
+	/** WRITE A PLACE — the dropped pin becomes a place so places()/onPlacesChanged/bake all see it. ⛔ Without this port, dropped pins lived only in memory and nothing was ever requested for them (measured bug, 28 Aug 2026). Optional so a read-only host still type-checks — but omitting it means dropping a pin downloads nothing. */
 	addPlace?(lngLat: [number, number], name: string): void;
 	/** Optional fire layer. Omit → the engine bakes no fires and never calls out for them. */
 	fires?: FirePort;

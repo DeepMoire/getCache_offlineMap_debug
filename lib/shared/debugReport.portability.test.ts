@@ -1,21 +1,4 @@
-/**
- * THE GUARD THAT KEEPS THE MAP LIFTABLE.
- *
- * OFFLINE_MAP_SPEC.md §9 rule 5: "The offline map must not import app UI
- * components, stores, or utilities. Give it a narrow, explicit interface — it
- * needs a list of {lng, lat} and nothing else. Enforce it with a test that
- * fails if the module graph exceeds a file budget."
- *
- * The previous /offline route pulled in 175 files / 53,675 lines, of which only
- * ~8,600 were the offline map. The rest arrived because the route imported one
- * popover, which imported a store, which imported the inbox. Nobody chose that;
- * it accumulated one convenient import at a time.
- *
- * So this test reads debugReport.ts's own import list and fails on anything
- * outside the allow-list. It is what makes moving the map into rapper a
- * mechanical lift instead of archaeology — and it fails the moment someone
- * reaches for mapStore because it was handy.
- */
+/** ⚠️ Import boundary test — OFFLINE_MAP_SPEC.md §9 rule 5. Don't import outside the allow-list below or this fails. */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -31,22 +14,15 @@ const ALLOWED = [
 	"../contract",
 	"../onPhone/store/coverageRegistry",
 	"../r2Worker/local_dev/tilesHost",
-	// A literal table of the layer switches (key/label/ids/feed) — no UI, no
-	// store, no runtime. The report names each layer's feed from it.
+	// wallLegend: a literal switches table (key/label/ids/feed) — no UI/store/runtime, safe to allow.
 	"../onPhone/render/wallLegend",
 ];
 
-/** Things whose presence means the boundary has been breached.
- *  NOTE these are matched against the WHOLE specifier, so a bare "svelte"
- *  entry would also hit the legitimate `mapShared/workMeter.svelte` — the
- *  framework ban is expressed as exact-match below instead. */
+/** Boundary breach markers, matched against the WHOLE specifier — a bare "svelte" would also hit `workMeter.svelte`, so the framework ban is exact-match below instead. */
 const BANNED = [
 	"$tinyStore",
 	"mapStore",
-	// "$parent/siblings" was banned here when this file lived in ReTreever, where $parent/siblings
-	// meant "reaching into the other repo". The engine now LIVES in the harness, so
-	// $parent/siblings is its own home and the ban is inverted — see the $lib/mobile entry
-	// below, which is the direction that would now breach the boundary.
+	// Breach direction is now $lib/mobile/ (below), not $parent/siblings — this file's own home after the move.
 	"$lib/mobile/",
 	"$mobRoutes",
 	"$app/",
@@ -55,9 +31,7 @@ const BANNED = [
 	"$lib/mobile/stores/",
 ];
 
-/** Framework/runtime specifiers, banned by EXACT match. This module is plain
- *  TypeScript: it must run in a test, a Worker or a plain page with no Svelte
- *  runtime present. */
+/** Framework/runtime specifiers, banned by EXACT match — this module must run without any Svelte runtime present (test, Worker, or plain page). */
 const BANNED_EXACT = ["svelte", "svelte/store", "mapbox-gl", "maplibre-gl"];
 
 function imports(src: string): string[] {
@@ -93,8 +67,7 @@ describe("debugReport stays portable", () => {
 	});
 
 	it("takes pins as a parameter rather than reading them", () => {
-		// Rule 5's "a list of {lng,lat} and nothing else". If pins ever get read
-		// from a store inside this module, the interface has collapsed.
+		// Rule 5: pins must stay a parameter, never read from a store — that would collapse the interface.
 		expect(SRC).toMatch(/pins\?:\s*LngLatPin\[\]/);
 	});
 });

@@ -1,25 +1,9 @@
-/**
- * ROADS MUST DRAW WHEN THE CAMERA IS ABOVE THE STORED ZOOM.
- *
- * THE FIELD REPORT (27 Aug 2026): 961 road blobs on disk, nothing on screen.
- * The app's own diagnostic printed both halves seconds apart:
- *     ✅ 2 road layer(s) drawing from 961 blob(s)
- *     961 blob(s) on disk but NO ROADS DRAWING — check the zoom span
- *
- * Blobs are stored at BLOB_TILE_Z (8). Two things conspired:
- *   1. the source declared `minzoom: 8`, and MapLibre only overzooms UP, so
- *      above z8 it asked for nothing at all;
- *   2. `keysForAddress` compared `z/x/y` as an exact STRING, so even when a
- *      shallower address was requested it matched no stored tile.
- *
- * A z5 tile geometrically CONTAINS the z8 tiles under it, so the honest answer
- * is every stored tile whose footprint falls inside the requested one.
- */
+// ⚠️ Roads must draw when the camera is above the stored zoom — keysForAddress must match by real geometric containment, not exact z/x/y string equality, or a zoomed-out camera reads zero roads.
 import { describe, expect, it } from "vitest";
 import { keysForAddress } from "./pinTileLookup";
 import { RAW_MAX_Z, RAW_MIN_Z } from "./rawWallProtocol";
 
-/** A pin near Spokane — the coordinates from the field report's focused blob. */
+/** A pin near Spokane. */
 const PIN = "pin/-117.10620,47.34330";
 
 /** z8 tile containing that pin. */
@@ -36,38 +20,24 @@ describe("a zoomed-out camera still finds the stored roads", () => {
 	});
 
 	it("resolves an ANCESTOR address — the z5 tile that contains it", () => {
-		// THE ASSERTION THE FIELD BUG NEEDED. Exact string matching returns [].
 		expect(keysForAddress(stored, Z5.z, Z5.x, Z5.y)).toEqual(stored);
 	});
 
 	it("does NOT match a different tile at the same shallow zoom", () => {
-		// Containment must be real geometry, not "anything shallower wins".
 		expect(keysForAddress(stored, Z5.z, Z5.x + 1, Z5.y)).toEqual([]);
 		expect(keysForAddress(stored, Z5.z, Z5.x, Z5.y + 1)).toEqual([]);
 	});
 
 	it("ANSWERS a deeper address with the tile that contains it", () => {
-		// ⛔ THIS TEST USED TO ASSERT THE OPPOSITE, AND THE OPPOSITE WAS THE BUG.
-		// It read "leaves DEEPER addresses to MapLibre's own overzoom" and
-		// expected []. MapLibre overzooms a tile it ALREADY HAS; the protocol is
-		// asked per address and answered "no tile", so there was nothing to
-		// overzoom from and every request below z8 drew nothing.
-		//
-		// MEASURED 27 Aug 2026 on the live page, one load, same 4 tiles:
-		//     pass done — 1 area(s), 4 tiles, 0.5 MB in 6.9s
-		//     map is reading NOTHING from disk (4 tiles asked, 0 found)
-		// The camera sits at z13-z14. Downloaded, stored, and unreachable.
+		// ⛔ this used to assert the OPPOSITE (expected [] on deeper addresses) — that was the bug that left z13-z14 cameras reading nothing from disk.
 		expect(keysForAddress(stored, 12, Z8.x * 16, Z8.y * 16)).toEqual(stored);
 	});
 
 	it("still refuses a deeper address OUTSIDE the stored tile", () => {
-		// Descending the request must be real geometry too — a neighbour's
-		// z12 address must not resolve to this pin's z8 tile.
 		expect(keysForAddress(stored, 12, (Z8.x + 1) * 16, Z8.y * 16)).toEqual([]);
 	});
 
 	it("declares a render floor SHALLOWER than the stored level", () => {
-		// The floor and the storage level being one number is the root cause.
 		expect(RAW_MIN_Z).toBeLessThan(RAW_MAX_Z);
 		expect(RAW_MIN_Z).toBe(5);
 	});

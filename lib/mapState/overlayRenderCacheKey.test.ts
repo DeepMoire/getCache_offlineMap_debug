@@ -1,14 +1,4 @@
-// Regression guard for the "second PDF never renders" bug.
-//
-// A map may hold ANY NUMBER of PDF overlays — an import is a feature of the
-// map you're on. Three separate layers each independently prevented the second
-// sheet from drawing; this file pins the last of them, the redraw dedup gate.
-//
-// The gate short-circuits an active-map dispatch when nothing overlay-relevant
-// changed. Built from the FIRST overlay only, importing a second PDF into a
-// map that already had one produced a byte-identical key, so the dispatcher
-// returned early — the renderer was never called and the sheet silently never
-// appeared, even though the import had succeeded and the inbox row existed.
+// Regression guard: the dedup key must cover EVERY overlay — keyed on the first only, a second imported PDF collided key-wise and silently never rendered.
 
 import { describe, expect, it } from "vitest";
 import { overlayRenderCacheKey } from "./overlayManager.svelte";
@@ -23,8 +13,6 @@ describe("overlayRenderCacheKey", () => {
 		const mapKey = "map-1";
 		const one = [overlay("feat-a", "sheet-a.webp")];
 		const two = [...one, overlay("feat-b", "sheet-b.webp")];
-		// Before the fix both sides collapsed to the first overlay and compared
-		// equal, so the dispatcher skipped the redraw.
 		expect(overlayRenderCacheKey(mapKey, two)).not.toBe(
 			overlayRenderCacheKey(mapKey, one),
 		);

@@ -1,16 +1,5 @@
 /**
- * assetRegion — THE WORLD ASSETS MUST NOT BE HELD WHOLE.
- *
- * places-world.json (6.2 MB, ~100k rows) and urban.json (4.4 MB, 11,878
- * polygons) were parsed whole and retained for the session. JSON.parse boxes
- * every [lng,lat] pair into a V8 array object (~80-100 bytes to carry 16 bytes
- * of numbers), so the two together sat around ~100 MB resident — to answer
- * questions about hotspots that are, by the fire layer's own 500 km relevance
- * wall, near the user.
- *
- * These tests pin the WINDOW: out-of-region data is dropped at parse time, and
- * — the part that actually frees memory — the expensive ring is never retained
- * for a polygon outside it.
+ * ⚠️ THE WORLD ASSETS MUST NOT BE HELD WHOLE — out-of-region data is dropped at parse time; the expensive ring is never retained for a polygon outside it.
  */
 
 import { describe, expect, it } from "vitest";
@@ -54,16 +43,13 @@ describe("assetRegion — the window", () => {
 	});
 
 	it("keeps a window wide enough that distant fires still get place names", () => {
-		// The whole point of a 1,500 km window rather than a 500 km one: a place
-		// name matters MOST for the fire you cannot see out the window.
 		const box = regionAround(PASAYTEN);
 		expect(inRegion(box, -114.07, 51.05)).toBe(true); // Calgary, ~700 km
 		expect(inRegion(box, -122.7, 45.5)).toBe(true); // Portland, ~380 km
 	});
 
 	it("widens the longitude span at high latitude to stay a constant km", () => {
-		// Degrees of longitude shrink toward the poles; a fixed degree box would
-		// silently narrow to a sliver in the north, where planting happens.
+		// Degrees of longitude shrink toward the poles — without widening, a fixed degree box would silently narrow to a sliver up north.
 		const south = regionAround([-120, 20]);
 		const north = regionAround([-120, 65]);
 		expect(north.e - north.w).toBeGreaterThan(south.e - south.w);
@@ -76,15 +62,13 @@ describe("regionChanged — hysteresis, not jitter", () => {
 	});
 
 	it("does NOT reload for movement inside the region", () => {
-		// A reload re-parses ~6 MB. Driving across the block, or GPS jitter, must
-		// never trigger it — that would be worse than not windowing at all.
+		// A reload re-parses ~6 MB — GPS jitter or driving across the block must never trigger it; that would be worse than not windowing at all.
 		expect(regionChanged(PASAYTEN, [-120.61, 48.91])).toBe(false);
 		expect(regionChanged(PASAYTEN, [-122.0, 49.5])).toBe(false);
 	});
 
 	it("DOES reload once the user has genuinely left the region", () => {
-		// Washington → Ontario. Different continent-half; the retained gazetteer
-		// no longer covers where they are.
+		// Washington → Ontario — different continent-half; the retained gazetteer no longer covers where they are.
 		expect(regionChanged(PASAYTEN, [-76.3, 45.25])).toBe(true);
 	});
 
@@ -103,22 +87,19 @@ describe("prepareUrban — the ring is never retained out of region", () => {
 		];
 		const kept = prepareUrban(feats, regionAround(PASAYTEN));
 		expect(kept).toHaveLength(1);
-		// THE MEMORY ASSERTION: the survivor is the local one, and the two dropped
-		// polygons left no ring behind. Retaining a ring is the entire cost.
+		// THE MEMORY ASSERTION: the survivor is local, and the two dropped polygons left no ring behind — retaining a ring is the entire cost.
 		expect(kept[0].minX).toBeLessThan(-119);
 	});
 
 	it("keeps the whole world when no region is given (the safe fallback)", () => {
-		// A wrongly-windowed asset silently stops excluding city hotspots, so the
-		// no-region path must stay lossless.
+		// A wrongly-windowed asset silently stops excluding city hotspots — the no-region path must stay lossless.
 		const feats = [urbanFeatureAt(-120.5, 48.8), urbanFeatureAt(72.9, 19.1)];
 		expect(prepareUrban(feats)).toHaveLength(2);
 		expect(prepareUrban(feats, null)).toHaveLength(2);
 	});
 
 	it("still excludes a city hotspot after windowing — same verdict, less memory", () => {
-		// The whole justification for the window is that it changes NOTHING about
-		// the answers in region. A dot in the local city is still urban.
+		// The window must change NOTHING about answers in region — a dot in the local city is still urban.
 		const feats = [urbanFeatureAt(-120.5, 48.8), urbanFeatureAt(72.9, 19.1)];
 		const windowed = prepareUrban(feats, regionAround(PASAYTEN));
 		const whole = prepareUrban(feats);
@@ -129,8 +110,7 @@ describe("prepareUrban — the ring is never retained out of region", () => {
 	});
 
 	it("keeps a polygon straddling the window edge", () => {
-		// bbox OVERLAP, not centre-containment: a city on the boundary must not be
-		// half-dropped, or hotspots on its far side stop being excluded.
+		// bbox OVERLAP, not centre-containment — a boundary city must not be half-dropped, or hotspots on its far side stop being excluded.
 		const box = regionAround(PASAYTEN);
 		expect(bboxInRegion(box, box.e - 0.1, PASAYTEN[1], box.e + 5, PASAYTEN[1]))
 			.toBe(true);

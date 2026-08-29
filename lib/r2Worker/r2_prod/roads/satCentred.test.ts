@@ -1,22 +1,6 @@
 /**
- * THE SATELLITE PHOTO IS CENTRED ON THE PIN.
- *
- * ── THE BUG THIS PINS ─────────────────────────────────────────────────────
- *
- * Imagery is addressed by TILE, so the composed canvas was bounded by the union
- * of whole z14 tile rectangles — a box snapped to the tile grid. The pin then
- * sat wherever it happened to fall inside that grid.
- *
- * MEASURED at the user's own anchor (lat 44.47): 166 m off, and up to 873 m in
- * the worst case — 44% of the 2 km radius. The user: "the satellite blob needs
- * to be in the center. It's that simple. It's very easy, right?"
- *
- * ⛔ THE FIX IS A CROP, NOT A BOUNDS EDIT. Shrinking only the stored `bounds`
- * squashes the image (same pixels, smaller box). The canvas extent and the
- * stored bounds are both derived from the pin's box so they shrink together.
- *
- * ⚠️ SAME ROOT CAUSE as the roads blob drawing off-centre: an extent snapped to
- * a tile grid instead of to the pin. Two subsystems, one mistake.
+ * ⛔ THE FIX IS A CROP, NOT A BOUNDS EDIT — shrinking only `bounds` squashes the image; canvas extent and stored bounds must both derive from the pin's box.
+ * ⚠️ SAME ROOT CAUSE as the roads blob drawing off-centre: an extent snapped to a tile grid instead of to the pin.
  */
 import { describe, expect, it } from "vitest";
 import { kmToDegSpan } from "../../../shared/kmGeo";
@@ -84,8 +68,6 @@ describe("the satellite photo is centred", () => {
 	});
 
 	it("the TILE-GRID box it replaces really was off-centre", () => {
-		// Proves the fix is doing something, rather than asserting a tautology.
-		// If this ever reads ~0, the tile grid changed and the crop may be moot.
 		const worst = Math.max(
 			...ANCHORS.map(([lng, lat]) => offsetM(tileGridBox(lng, lat, 2, 14), lng, lat)),
 		);
@@ -93,7 +75,7 @@ describe("the satellite photo is centred", () => {
 	});
 
 	it("the crop never expands past the fetched tiles", () => {
-		// Cropping outward would show blank canvas where no imagery was fetched.
+		// cropping outward would show blank canvas — no imagery fetched there
 		for (const [lng, lat] of ANCHORS) {
 			const b = tileGridBox(lng, lat, 2, 14);
 			const c = cropBox(lng, lat, 2, 14);
@@ -105,8 +87,7 @@ describe("the satellite photo is centred", () => {
 	});
 
 	it("⛔ the bake crops the CANVAS, not just the stored bounds", async () => {
-		// Shrinking `bounds` alone squashes the image. Both must derive from the
-		// same crop box — asserted against the source so the two cannot drift.
+		// shrinking bounds alone squashes the image — both must derive from the same crop box
 		const { readFileSync } = await import("node:fs");
 		const { fileURLToPath } = await import("node:url");
 		const src = readFileSync(

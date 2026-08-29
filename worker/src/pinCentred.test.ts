@@ -1,27 +1,3 @@
-/**
- * THE ROADS ARE AN IMAGE, CENTRED ON THE PIN — like the satellite photo.
- *
- * ── THE DAY THIS ENDS ─────────────────────────────────────────────────────
- *
- * The roads were a VECTOR TILE. MapLibre draws a vector tile's contents across
- * the box it REQUESTED — a slippy tile on a world grid — and there is no
- * override (a source's `bounds` only filters which tiles are fetched). So a
- * vector blob CANNOT be centred on a GPS point: it is centred on its tile.
- *
- * MEASURED with two of the user's own pins, both landing in tile 8/41/88:
- *     -121.5722, 48.2164  →  tile centre 27 km from the pin
- *     -121.5246, 48.4817  →  tile centre  9 km from the pin
- * and the second overwrote the first, because they shared one address.
- *
- * Every attempt to fix it was an attempt to make a tile-shaped thing behave
- * like a point-shaped thing — cells, promotion to shallower tiles, per-cell
- * frames, neighbour sets. Each failed differently. The user: "GPS is
- * meaningless to you... it has to be wrong."
- *
- * ⛔ THE COUNTER-EXAMPLE WAS ALREADY ON SCREEN: the satellite photo is centred
- * on the pin every time, because it is an IMAGE placed by explicit GPS bounds.
- * The roads now use that identical mechanism.
- */
 import { describe, expect, it } from "vitest";
 import { GRID_RADIUS_KM, radiusBox } from "./grid";
 
@@ -54,8 +30,7 @@ describe("the roads picture is pin-centred", () => {
 	});
 
 	it("⛔ TWO NEARBY PINS GET DIFFERENT BOXES — no shared address", () => {
-		// These two shared tile 8/41/88 and overwrote each other. As images with
-		// their own GPS bounds they cannot collide: each is placed where it is.
+		// These two pins shared tile 8/41/88 and overwrote each other; each now gets its own GPS-bounded box, so they can't collide.
 		const a = radiusBox(-121.5722, 48.2164);
 		const b = radiusBox(-121.5246, 48.4817);
 		expect(a.w).not.toBe(b.w);
@@ -79,20 +54,15 @@ describe("the roads picture is pin-centred", () => {
 			fileURLToPath(new URL("./packBuilder.ts", import.meta.url)),
 			"utf8",
 		);
-		// VECTORS, not a raster. The PNG transport was reverted 2026-08-20 — it
-		// centred correctly and was still unusable (no restyling, blurs on zoom).
+		// Vectors, not a raster — the PNG transport was reverted (centred correctly but couldn't restyle or scale).
 		expect(src).toContain("buildBlobTile(");
 		expect(src).not.toContain("renderRoadPng(");
 
-		// THE PIN'S REAL GPS POINT drives BOTH what is read and which cells are
-		// built. If either reverts to a snapped/derived point, roads land far
-		// from the pin — that is the 45 km bug, and it is what this pins down.
+		// The pin's real GPS point must drive both what is read and which cells are built — reverting to a snapped point is the 45 km bug.
 		expect(src).toContain("radiusBox(lng, lat)");
 		expect(src).toContain("cellsFor(lng, lat)");
 
-		// ⚠️ EACH CELL FRAMED TO ITS OWN BOX. A vector tile's geometry spans the
-		// box it was requested at, so framing a cell to the PIN's box re-anchors
-		// it and draws it in the wrong place. That shipped twice.
+		// ⚠️ Each cell must be framed to its OWN box — framing to the pin's box re-anchors the geometry and draws it wrong; that shipped twice.
 		expect(src).toContain("boxFrame(cellBox(c))");
 	});
 });

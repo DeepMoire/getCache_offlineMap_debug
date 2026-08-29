@@ -1,32 +1,5 @@
 import { SvelteMap } from "svelte/reactivity";
 
-/**
- * workMeter — THE PANEL.
- *
- * A building has a breaker panel: one place where you see which circuit is
- * live and how hard it is pulling. This app had no such thing, so every
- * "why is it slow?" turned into a DevTools archaeology session that measured
- * the water on the floor (heap size) instead of the running tap (which
- * function, how often, how long).
- *
- * This is the panel. Wrap any repeating or expensive operation in `track()`
- * and the meter answers, at a glance:
- *   • how many times it has run
- *   • how long the last one took, and the worst one
- *   • whether one is running RIGHT NOW, and for how long
- *   • whether another is already queued behind it   ← the runaway tell
- *
- * THE READING THAT MATTERS: sit still, touch nothing. If `runs` keeps
- * climbing, something is working while the app is idle. If `running` is
- * ~always true and `queued` is set, passes are chaining back-to-back and
- * never getting a breath — that is a runaway, and it will eat memory for as
- * long as the tab is open.
- *
- * DEV-ONLY by construction: `<OfflineWorkMeter>` renders nothing outside dev,
- * and tracking is a couple of Date.now() calls, so leaving `track()` wrappers
- * in shipped code costs nothing measurable.
- */
-
 export interface WorkStat {
 	/** Label shown in the panel. */
 	name: string;
@@ -44,35 +17,13 @@ export interface WorkStat {
 	queued: boolean;
 	/** Runs that ended by throwing. */
 	errors: number;
-	/**
-	 * Times the operation was TRIGGERED but returned at the door without
-	 * doing anything — breaker latched, already running, nothing to do.
-	 *
-	 * This is the counter whose absence made the panel unreadable: a pass
-	 * that bails leaves no trace in `runs`, so "nothing tracked yet" meant
-	 * BOTH "hasn't started" and "woke up 15 times and refused every time",
-	 * with no way to tell them apart. A skip is not nothing — it is the
-	 * timer firing, which is the thing we are trying to observe.
-	 */
+	/** Times the operation was TRIGGERED but returned at the door without doing anything (breaker latched, already running, nothing to do). */
 	skips: number;
 	/** Why the last skip happened, for the panel to show verbatim. */
 	lastSkip: string;
 }
 
-/**
- * A PAYLOAD handed across a boundary — `setData` into the Mapbox worker, a
- * postMessage, a cache write.
- *
- * Separate from WorkStat because the question is different. WorkStat asks "is
- * this operation keeping up?" (time). This asks "how much data are we making
- * something else re-parse, and how often?" (bytes × frequency).
- *
- * That product is the one number that matters for the memory work: a Mapbox
- * `geojson` source re-parses and re-indexes the WHOLE payload on every
- * `setData`, inside its own worker, where `performance.memory` cannot see it.
- * A small payload sent constantly and a huge payload sent once look identical
- * in a heap snapshot and need opposite fixes.
- */
+/** A payload handed across a boundary (setData to Mapbox worker, postMessage, cache write) — separate from WorkStat: this tracks bytes×frequency, not time. */
 export interface PayloadStat {
 	/** Label shown in the panel — the source id. */
 	name: string;
@@ -91,28 +42,9 @@ export interface PayloadStat {
 const stats = $state(new Map<string, WorkStat>());
 const payloads = $state(new Map<string, PayloadStat>());
 
-/**
- * CIRCUITS — one circle per thing that fetches, showing the CURRENT state of
- * its most recent call. Grey until something is actually asked for.
- *
- *   idle     nothing requested yet (grey)
- *   transit  a request is out and nothing has come back (yellow)
- *   ok       the data ARRIVED — bytes on disk / hotspots written (green)
- *   err      the request broke — thrown, non-2xx, timed out (red)
- *
- * ⛔ "THE PORT IS OPEN" IS NOT A COLOUR. Chris, 28 Aug 2026: "if it says I can
- * see it, the port's open, it's meaningless… the real test would be can any of
- * them work at all." So a probe answering never lights anything here; only a
- * real data call does. The probe result lives in `probes` below and is used
- * ONLY to grey out / offer retry on a tier — never as a green.
- *
- * Keys:  worker:<tier>   the tile Worker, per tier (pack requests)
- *        sat             satellite photo bake       (bakeSatelliteImage)
- *        pack            roads/labels/places/hosp   (downloadV4Area)
- *        fires           hotspots                   (fires.fetchArea)
- * Layers that draw from the same download share its circuit — see
- * LayerToggle.feed in wallLegend.ts.
- */
+/** CIRCUITS: idle=nothing asked (grey), transit=request out (yellow), ok=data arrived (green), err=request broke (red). */
+/** ⛔ Probe reachability alone must never light green — only a real data call does; probes are used only to grey out / offer retry. */
+/** Keys: worker:<tier> tile Worker per tier, sat satellite bake, pack roads/labels/places/hosp, fires hotspots — layers sharing a download share its circuit (see LayerToggle.feed in wallLegend.ts). */
 export type CircuitState = "idle" | "transit" | "ok" | "err";
 export interface CircuitStat {
 	key: string;
@@ -123,31 +55,16 @@ export interface CircuitStat {
 	note: string;
 }
 
-// SvelteMap, not $state(new Map()): Svelte 5 does not proxy Map, so a plain
-// Map's set() is invisible to the panels. SvelteMap versions each KEY, which is
-// why writes below REPLACE the entry instead of mutating it in place.
+// SvelteMap, not $state(new Map()) — Svelte 5 doesn't proxy Map, so writes below REPLACE the entry rather than mutate in place.
 const circuits = new SvelteMap<string, CircuitStat>();
 const probes = new SvelteMap<string, boolean>();
 
-/**
- * YELLOW IS HELD FOR AT LEAST THIS LONG. A cached pack round-trips in ~40 ms,
- * and the bake walks many areas back to back, so transit→ok→transit→ok read
- * as a green/yellow strobe — "constant flashing", Chris, 28 Aug 2026. A yellow
- * you cannot see is not a state. So a settle (ok/err) that lands inside the
- * hold is DEFERRED until the hold is up; the latest settle wins.
- */
+/** Yellow (transit) is held at least TRANSIT_HOLD_MS — a settle landing inside the hold is DEFERRED until it's up; the latest settle wins. */
 const TRANSIT_HOLD_MS = 1000;
 const transitSince = new Map<string, number>();
 const pendingSettle = new Map<string, ReturnType<typeof setTimeout>>();
 
-/**
- * THE FOCUS. Set by the tap that drops a pin (its area key), cleared by
- * resetCircuits(). While set, a note tagged with a DIFFERENT area is ignored:
- * the reconcile bakes every pin on every map in the background (400 of them on
- * 28 Aug 2026), and without this the green of some three-week-old BC pin
- * overwrote the yellow of the pin you had just dropped — the lights answered
- * a question nobody asked. Untagged notes (fires, probes) always land.
- */
+/** focusArea: set on pin-drop tap, cleared by resetCircuits() — while set, notes tagged with a different area are ignored (prevents a background reconcile pin overwriting the one just dropped); untagged notes (fires, probes) always land. */
 let focusArea: string | null = null;
 export function focusCircuits(areaKey: string | null): void {
 	focusArea = areaKey;
@@ -169,8 +86,7 @@ export function noteCircuit(
 		pendingSettle.delete(key);
 	}
 	if (state === "transit") {
-		// A new ask while a settle was pending: the settle is moot, stay yellow
-		// and restart the hold only if we were not already yellow.
+		// A new ask while a settle was pending: the settle is moot; restart the hold only if we weren't already yellow.
 		if (circuits.get(key)?.state !== "transit") {
 			transitSince.set(key, Date.now());
 			write();
@@ -202,12 +118,7 @@ export function allCircuits(): CircuitStat[] {
 	return [...circuits.values()];
 }
 
-/**
- * BACK TO GREY — called the moment a pin is dropped, so the circles describe
- * THIS ask and not the last one. A drop that then triggers nothing stays grey,
- * which is the reading "it is not even asking" — the fact that took an hour
- * to establish by hand on 28 Aug 2026.
- */
+/** Back to grey — called the moment a pin is dropped, so circles describe THIS ask, not the last one; a drop that triggers nothing stays grey ("not even asking"). */
 export function resetCircuits(areaKey: string | null = null): void {
 	focusArea = areaKey;
 	for (const t of pendingSettle.values()) clearTimeout(t);
@@ -225,12 +136,7 @@ export function probeOf(tier: string): boolean | undefined {
 	return probes.get(tier);
 }
 
-/**
- * THE WHOLE PANEL AS ONE PLAIN OBJECT — for pasting into a chat, not for
- * reading by eye. `window.__meter()` in the DevTools console (dev only) and
- * the panel's "copy JSON" button both hand out exactly this, so a report is
- * one paste instead of a screenshot and every field is named.
- */
+/** The whole panel as one plain object, for pasting into a chat — window.__meter() (dev console) and the panel's "copy JSON" button both hand out exactly this. */
 export function meterSnapshot() {
 	return {
 		at: new Date().toISOString(),
@@ -251,15 +157,7 @@ export function payloadStats(): PayloadStat[] {
 	return [...payloads.values()];
 }
 
-/**
- * Record a payload handed across a boundary.
- *
- * Takes the ALREADY-SERIALISED string when there is one — that is the whole
- * point of the strings-not-object-graphs rewrite, and re-stringifying an
- * object here purely to measure it would reintroduce the exact allocation the
- * rewrite deleted. When handed an object we measure features only and report
- * 0 KB rather than paying for a JSON.stringify to satisfy the panel.
- */
+/** Record a payload handed across a boundary — takes an already-serialised string when available; do NOT re-stringify an object just to measure it, that reintroduces the allocation the strings-not-object-graphs rewrite deleted. Objects report 0 KB (features only). */
 export function notePayload(name: string, data: unknown): void {
 	let s = payloads.get(name);
 	if (!s) {
@@ -304,34 +202,22 @@ export function workStats(): WorkStat[] {
 	return [...stats.values()];
 }
 
-/**
- * Mark that a run was ASKED FOR while one was already in flight. This is the
- * single most diagnostic bit in the panel: a `queued` that is permanently
- * true means the operation can never keep up with the rate it is triggered.
- */
+/** Mark that a run was ASKED FOR while one was already in flight — a queued that stays permanently true means the op can't keep up with its trigger rate. */
 export function noteQueued(name: string, queued = true): void {
 	slot(name).queued = queued;
 }
 
-/**
- * Record that a trigger fired but the operation declined to run, and why.
- * Call this at EVERY early return, otherwise the panel cannot distinguish
- * "idle" from "refusing".
- */
+/** Record that a trigger fired but declined to run, and why — call at EVERY early return or the panel can't tell "idle" from "refusing". */
 export function noteSkip(name: string, why: string): void {
 	const s = slot(name);
 	s.skips++;
 	s.lastSkip = why;
 }
 
-/**
- * Time one run of `fn`. Returns whatever `fn` returns; a throw is recorded
- * and re-thrown, so wrapping NEVER changes behaviour.
- */
+/** Time one run of fn — returns whatever fn returns; a throw is recorded and re-thrown, so wrapping never changes behaviour. */
 export async function track<T>(name: string, fn: () => Promise<T>): Promise<T> {
 	const s = slot(name);
-	// Nested/overlapping runs share the slot; the LAST start wins for the
-	// "running for Ns" read-out, which is the one the user is watching.
+	// Nested/overlapping runs share the slot; the LAST start wins for the "running for Ns" read-out.
 	s.startedAt = Date.now();
 	const t0 = performance.now();
 	try {
@@ -349,14 +235,7 @@ export async function track<T>(name: string, fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-/**
- * Manual bracket for code whose control flow can't be wrapped in a callback
- * (a long function with its own try/finally). Call at the start, call the
- * returned function in the `finally`. Same accounting as `track`.
- *
- *   const done = beginWork("reconcile");
- *   try { ... } finally { done(); }
- */
+/** Manual bracket for code that can't wrap in a callback (own try/finally) — call at the start, call the returned fn in finally; same accounting as track(). */
 export function beginWork(name: string): (failed?: boolean) => void {
 	const s = slot(name);
 	s.startedAt = Date.now();
@@ -386,8 +265,7 @@ export function resetWorkStats(): void {
 		s.skips = 0;
 		s.lastSkip = "";
 	}
-	// Payloads reset too: a Reset that zeroed only half the panel would make
-	// the two halves describe different time windows.
+	// Payloads reset too — a Reset that zeroed only half the panel would describe two different time windows.
 	for (const p of payloads.values()) {
 		p.sends = 0;
 		p.lastKb = 0;
@@ -395,7 +273,6 @@ export function resetWorkStats(): void {
 		p.totalKb = 0;
 		p.lastFeatures = -1;
 	}
-	// Circuits go back to grey so the NEXT call is what you watch. Probes stay —
-	// they are a fact about the network, not a counter.
+	// Circuits go back to grey so the NEXT call is what you watch; probes stay — they're a fact about the network, not a counter.
 	circuits.clear();
 }

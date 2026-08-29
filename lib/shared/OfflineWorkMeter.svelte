@@ -1,32 +1,9 @@
 <!--
-  MAP DEBUGGER — the visible breaker panel for BOTH maps.
-
-  Renders NOTHING outside dev. Sits top-left over the map, small enough to
-  ignore and specific enough to settle an argument.
-
-  DEBUG ROUTES ONLY — /offline/debug and /map/debug. Never on the plain
-  /offline or /map a user opens.
-
-  It used to mount on both product routes too, arguing that the offline-cost
-  question is a COMPARISON and you cannot compare an instrumented route against
-  a blind one. That is still true, and still satisfied: both debug routes mount
-  this same component, so the comparison is debug-vs-debug. What was wrong was
-  putting the instrument on the product — a panel of run counts and heap bars
-  covering the map on the route that IS the thing being measured.
-
-  "dev only" was never a narrow enough gate, because the whole app is dev while
-  it is being built. The gate is the ROUTE.
-
-  HOW TO READ IT, sitting still and touching nothing:
-    • ⚠ N INSTANCES        → STOP. Another tab of this app is live; every
-                             memory number you read is the sum of both.
-    • runs climbing        → something works while the app is idle
-    • RUNNING 40s          → one pass is taking far longer than its trigger interval
-    • QUEUED (amber)       → a pass was asked for while one was in flight
-    • RUNNING + QUEUED, permanently → RUNAWAY. Passes chain forever; memory climbs.
-
-  It is deliberately dumb: it polls its own display clock so the "running for
-  Ns" number ticks up, and reads $state straight from workMeter.
+  MAP DEBUGGER — the visible breaker panel for BOTH maps. Renders NOTHING outside dev.
+  ⚠️ DEBUG ROUTES ONLY — /offline/debug and /map/debug. Never on the plain /offline or /map a user opens.
+  ⚠️ Gate is the ROUTE, not "dev only" — the whole app is dev while it's being built.
+  ⚠️ N INSTANCES → STOP: another tab of this app is live, every memory number is the sum of both.
+  ⚠️ RUNNING + QUEUED permanently → RUNAWAY: passes chain forever, memory climbs.
 -->
 <script lang="ts">
 import "./devCard.css";
@@ -45,67 +22,23 @@ import {
 	debugReportFilename,
 	type LngLatPin,
 } from "./debugReport";
-// ── LIVE BAKE STATE ─────────────────────────────────────────────────────
-// The panel used to say "nothing tracked yet / no runs" WHILE a blob was
-// downloading, because `rows` only fills once a pass COMPLETES. So the one
-// moment you most want information — the 20-60 s wait — showed none, and
-// "still working" was indistinguishable from "wedged". These four lines are
-// the live truth, ticking every second.
 let bakeOn = $state(false);
 let bakePend = $state(0);
 let bakeFail = $state(0);
 let bakeNote = $state("");
 let bakeSecs = $state(0);
 let bakeT0 = 0;
-/**
- * How long one continuous download stretch may run before the panel calls it
- * STALLED rather than "downloading".
- *
- * A cold pack build is MEASURED at ~56-66 s on the Worker and the client's own
- * fetch deadline is 150 s, so anything past that is not slow — it is stuck, and
- * the panel must stop implying otherwise.
- */
+// stall threshold: past the client's 150s fetch deadline, it's not slow, it's stuck.
 const STALL_AFTER_S = 150;
 
-/**
- * ⛔ THE PANEL GOES QUIET AFTER THIS, NO MATTER WHAT THE BAKE SAYS.
- *
- * The bake service flips `downloading:true` once PER AREA, and only back to
- * false when the WHOLE pass ends. Re-baking a large library means that flag is
- * true for many minutes without interruption, so the panel sat there announcing
- * work forever. The user, twice:
- *
- *   "there's got to be a limit on this thing... it keeps resetting to zero but
- *    it doesn't stop. It just goes and goes and goes endlessly... it doesn't
- *    need to be telling the user that. It just screams that the thing is
- *    broken."
- *
- * And he was right on the substance too: the download that provoked it ARRIVED,
- * correctly. A progress indicator that outlives the thing it describes is worse
- * than none — it reports a failure that did not happen.
- *
- * So the live line is a SHORT-LIVED reassurance, not a running commentary. Past
- * this it hides itself; the work continues silently and the completed-pass rows
- * below are where the real history lives.
- */
+// ⛔ panel goes quiet after this no matter what the bake says — reassurance is short-lived, not running commentary; work continues silently past this point.
 const HIDE_AFTER_S = 20;
 let bakeTick: ReturnType<typeof setInterval> | undefined;
 
 $effect(() => {
 	const off = subscribeOfflineBake((st) => {
 		if (st.downloading && !bakeOn) {
-			// ⛔ ONLY START THE CLOCK IF IT IS NOT ALREADY RUNNING.
-			//
-			// This used to reset `bakeT0` on EVERY downloading:true edge, and the
-			// bake service emits one per AREA. With a queue of areas the clock was
-			// re-zeroed every few hundred ms, so the panel read "downloading 0s"
-			// forever — MEASURED on screen at "downloading 0s · 106 queued".
-			//
-			// That is the worst possible reading: it says work is happening AND
-			// that no time has passed, so "still going" and "wedged" look
-			// identical — the exact confusion this panel exists to remove.
-			// The user: "there needs to be a limit on this timer thing... it gets
-			// just frozen and that's so stupid. Obviously the thing's not coming."
+			// ⛔ only (re)start the clock if not already running — resetting bakeT0 on every downloading:true edge (one per area) froze the elapsed time at 0 during a busy queue.
 			if (!bakeTick) {
 				bakeT0 = Date.now();
 				bakeSecs = 0;
@@ -132,35 +65,15 @@ $effect(() => {
 interface Props {
 	/** Which map this is, used to label the report. */
 	route?: string;
-	/**
-	 * Every pin the host page knows about. Passed IN on purpose — this is
-	 * OFFLINE_MAP_SPEC.md rule 5's "a list of {lng, lat} and nothing else".
-	 * Reading mapStore from in here would couple the debugger to TinyBase and
-	 * cost it the portability that lets it move into rapper.
-	 */
+	/** Every pin the host page knows about — passed IN on purpose; reading mapStore here would couple the debugger to TinyBase and cost the portability to move into rapper. */
 	pins?: LngLatPin[];
 	/** The blob signature areas SHOULD hold, so the export can flag stale ones. */
 	blobVersion?: string | null;
-	/**
-	 * Which layers are on, so the export report can record the map's state at
-	 * export time. The toggle UI itself lives in OfflineConfigPanel — this
-	 * component only reads `on` for the report, it does not render switches.
-	 */
+	/** Which layers are on, for the export report's snapshot — toggle UI lives in OfflineConfigPanel; this only reads `on`, it doesn't render switches. */
 	layers?: { key: string; on: boolean }[];
-	/**
-	 * DOCKED — render in the normal flow instead of fixed to the viewport.
-	 *
-	 * The default (false) is right for the app: the meter floats over a
-	 * full-screen map, where being in the flow would mean sitting under the
-	 * shovel and the tab bar. A debug PAGE lays panels out in columns, and a
-	 * fixed panel cannot be in a column — it drifts out of its rail and can
-	 * never line up with its neighbour. That page passes `docked`.
-	 */
+	/** DOCKED — render in-flow instead of fixed-to-viewport; default false suits the floating meter over a full-screen map, but a columned debug page needs docked since a fixed panel can't sit in a column. */
 	docked?: boolean;
-	/** Name of the area export json actually exports — debugReport.ts scopes
-	 *  its `latest` field to the newest-touched blob, and OfflineBlobPanel
-	 *  marks that same row FOCUSED. Shown on the button so scope is
-	 *  unambiguous before the tap, per the design handoff. */
+	/** Name of the area export json exports — debugReport.ts scopes `latest` to the newest-touched blob (OfflineBlobPanel marks that row FOCUSED); shown on the button so scope is clear before the tap. */
 	focusedBlobName?: string | null;
 }
 let {
@@ -172,16 +85,10 @@ let {
 	focusedBlobName = null,
 }: Props = $props();
 
-// ── EXPORT ──────────────────────────────────────────────────────────────
-// Scoped to ONE blob — the focused row — not a device inventory. The old
-// collectDebugReport()'s `areas` array is every cached area (measured: 391
-// rows → a ~5,000-line file from one tap); export json is "everything about
-// the top blob and the memory it's taking", not a dump of the other 390.
+// export json is scoped to ONE blob (the focused row), not a full device inventory — measured 391 areas would make a ~5,000-line file.
 let exporting = $state(false);
 let exportMsg = $state("");
-/** Which action just completed, for the confirmation flash — separate from
- *  exportMsg's error text so a successful copy/save reads as a state change
- *  on the button, not a line of text. */
+/** Which action just completed, for the confirmation flash — separate from exportMsg's error text so a successful copy/save reads as a state change on the button. */
 let justDid = $state<"copied" | "saved" | null>(null);
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -204,8 +111,7 @@ async function buildReport() {
 
 let exportOpen = $state(false);
 
-// Tap-outside closes the export popup. Bound only while open, matching
-// SharePicker's behaviour on the Get Cache side.
+// tap-outside closes the export popup — bound only while open, matching SharePicker's behaviour on Get Cache.
 $effect(() => {
 	if (!exportOpen) return;
 	function offClick(e: MouseEvent) {
@@ -225,8 +131,7 @@ async function copyJson() {
 		await navigator.clipboard.writeText(json);
 		flash("copied");
 	} catch (err) {
-		// Fail LOUD (spec rule 3): a silent no-op here reads as "nothing to
-		// export", which is a different and much more alarming finding.
+		// fail LOUD (spec rule 3) — a silent no-op here reads as "nothing to export", a different and more alarming finding.
 		exportMsg = err instanceof Error ? err.message : "copy failed";
 	} finally {
 		exporting = false;
@@ -246,8 +151,7 @@ async function downloadJson() {
 		a.href = url;
 		a.download = debugReportFilename();
 		a.click();
-		// Revoke on the next task — revoking synchronously can cancel the
-		// download in some browsers before it has read the blob.
+		// revoke on next task, not synchronously — revoking immediately can cancel the download in some browsers before it reads the blob.
 		setTimeout(() => URL.revokeObjectURL(url), 0);
 		flash("saved");
 	} catch (err) {
@@ -262,13 +166,7 @@ let now = $state(Date.now());
 let open = $state(true);
 let host: HTMLElement | undefined = $state();
 
-/**
- * Live JS heap, if the browser exposes it (Chromium does). This is the
- * GARBAGE-INCLUSIVE number — it is NOT how much RAM the app costs, and a
- * WebGL map churning per frame can read high and mean nothing. It is here
- * for its TREND: watch whether it climbs while you sit still. The browser
- * Task Manager's Memory Footprint remains the authoritative residency number.
- */
+/** Live JS heap (Chromium only) — GARBAGE-INCLUSIVE, NOT actual RAM cost; useful only for its TREND. Browser Task Manager's Memory Footprint is the authoritative number. */
 interface MemoryInfo {
 	usedJSHeapSize: number;
 	totalJSHeapSize: number;
@@ -278,32 +176,17 @@ function heapMb(): number | null {
 	return m ? Math.round(m.usedJSHeapSize / 1048576) : null;
 }
 let heap = $state<number | null>(null);
-// Heap at first paint, so the panel can show DRIFT rather than a bare number
-// you have to remember the start of.
+// heap at first paint — lets the panel show DRIFT instead of a bare number you'd have to remember the start of.
 let heap0 = $state<number | null>(null);
 
-/**
- * PEAK + FLOOR tracking — the numbers that actually characterise this route.
- *
- * The offline map's problem is NOT its resting cost (idle is close to the
- * online map's) — it is the SPIKE on interaction: measured ~475 MB on zoom
- * versus ~150-200 MB online. A live instantaneous number cannot show that,
- * because by the time you look, the peak has passed and been collected.
- *
- * So the panel remembers the highest and lowest it has seen. Zoom around,
- * then read the spread off the screen — no DevTools, no screenshot of a
- * whole window to recover one number.
- */
+/** PEAK + FLOOR — the numbers that actually characterise this route: offline map's problem isn't resting cost, it's the interaction SPIKE (measured ~475MB on zoom vs ~150-200MB online), which a live instantaneous read can't catch. */
 let peak = $state<number | null>(null);
 let floor = $state<number | null>(null);
-/** Running mean of every sample this session — the design handoff's "avg"
- *  bar. Kept as sum/count rather than storing every sample twice. */
+/** Running mean of every sample this session (design handoff's "avg" bar) — kept as sum/count rather than storing every sample twice. */
 let heapSum = 0;
 let heapCount = 0;
 let heapAvg = $state<number | null>(null);
-/** Session heap trace for the sparkline — {t, mb} at 1 Hz (finer is wasted on
- *  a ~300px-wide line). Capped so an all-day tab doesn't grow this forever;
- *  the design only needs the SHAPE of the session, not an infinite ledger. */
+/** Session heap trace for the sparkline — {t, mb} at 1Hz (finer is wasted on a ~300px line), capped so an all-day tab doesn't grow this forever. */
 const TRACE_MAX = 300;
 let heapTrace = $state<{ t: number; mb: number }[]>([]);
 let peakAt = $state<number | null>(null);
@@ -319,12 +202,10 @@ function resetPeaks(): void {
 	peakAt = heap === null ? null : Date.now();
 }
 
-// One cheap tick a second so in-flight durations count up. Nothing else in
-// here schedules work — the panel must never be part of what it measures.
+// one cheap tick a second so in-flight durations count up — nothing else here schedules work; the panel must never be part of what it measures.
 onMount(() => {
 	if (!dev) return;
-	// 4 Hz, not 1 Hz: a zoom spike lasts a couple of seconds, and a 1 s
-	// sampler walks straight past the peak it exists to catch.
+	// sampling at 4Hz not 1Hz — a zoom spike lasts a couple seconds and a 1s sampler would walk past the peak it exists to catch.
 	const id = setInterval(() => {
 		now = Date.now();
 		const h = heapMb();
@@ -340,8 +221,7 @@ onMount(() => {
 		heapCount += 1;
 		heapAvg = Math.round(heapSum / heapCount);
 	}, 250);
-	// 1 Hz trace sampler — separate from the 4 Hz peak-catcher above, since the
-	// sparkline draws the session's SHAPE, not every 250ms wobble.
+	// 1Hz trace sampler, separate from the 4Hz peak-catcher above — sparkline draws the session's SHAPE, not every 250ms wobble.
 	const traceId = setInterval(() => {
 		const h = heapMb();
 		if (h === null) return;
@@ -369,9 +249,7 @@ const sparkPoints = $derived.by(() => {
 		.join(" ");
 });
 
-/** Where the peak sample sits along the sparkline, in viewBox x — drives the
- *  red dot + dashed guide. null when the peak isn't in the visible trace
- *  (trimmed off by TRACE_MAX on a long session). */
+/** Where the peak sample sits along the sparkline (viewBox x) — drives the red dot + dashed guide; null when the peak has scrolled off (TRACE_MAX). */
 const peakSparkX = $derived.by(() => {
 	if (peakAt === null || heapTrace.length < 2) return null;
 	const idx = heapTrace.findIndex((s) => s.t === peakAt);
@@ -379,15 +257,8 @@ const peakSparkX = $derived.by(() => {
 	return (idx / (heapTrace.length - 1)) * 300;
 });
 
-// PORTAL TO <body>. `.mobile-preview-frame` sets `contain: layout`, which makes
-// it the containing block for position:fixed descendants — so a "fixed" panel
-// stays trapped inside the phone, under the shovel and the tab bar. CSS alone
-// cannot escape it ([[fixed-position-hands-are-frame-local-contain-layout]]).
-// Moving the node itself out to <body> is the only way to sit beside the phone.
-// ⚠️ NOT WHEN DOCKED. The portal exists to ESCAPE the phone frame; a docked
-// meter is deliberately laid out inside a rail, and yanking the node to <body>
-// takes it out of that column — it lands at the page's top-left corner behind
-// whatever is there, which looks exactly like the panel disappearing.
+// portal to <body> — `.mobile-preview-frame`'s `contain: layout` makes it the containing block for position:fixed, trapping a "fixed" panel inside the phone frame; CSS alone can't escape it.
+// ⚠️ not when docked — the portal exists to escape the phone frame; yanking a docked meter's node to <body> takes it out of its rail and looks like the panel disappearing.
 $effect(() => {
 	if (docked || !dev || !host || typeof document === "undefined") return;
 	document.body.appendChild(host);
@@ -420,12 +291,7 @@ function fmtKb(kb: number): string {
 			>
 				<span class="dev-card__title">CURRENT SESSION</span> {open ? "▾" : "▸"}
 			</button>
-			<!-- ONE trigger, not two slabs. Two full-width gold buttons that
-			     differed only in verb ate the whole header and stamped the blob
-			     name twice. This is Get Cache's SharePicker shape — a small
-			     outlined icon button that opens a popup of choices — hand-built
-			     because the open-core boundary bans importing $lib/mobile
-			     components into this child. -->
+			<!-- ONE trigger (Get Cache's SharePicker shape), hand-built because the open-core boundary bans importing $lib/mobile components into this child. -->
 			<div class="export-wrap">
 				<button
 					class="export-trigger"
@@ -442,8 +308,7 @@ function fmtKb(kb: number): string {
 					{:else if exporting}
 						<span class="et-ok">…</span>
 					{:else}
-						<!-- Share/upload glyph, same silhouette as the Get Cache
-						     export icon on /inbox. -->
+						<!-- share/upload glyph, same silhouette as the Get Cache export icon on /inbox. -->
 						<svg viewBox="0 0 24 24" aria-hidden="true">
 							<path
 								d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4.5 14v4.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V14"
@@ -459,8 +324,7 @@ function fmtKb(kb: number): string {
 				</button>
 
 				{#if exportOpen}
-					<!-- The blob name lives HERE, once, as the popup's heading —
-					     not stamped on every button face. -->
+					<!-- blob name lives HERE, once, as the popup's heading — not stamped on every button face. -->
 					<div class="export-menu" role="menu">
 						{#if focusedBlobName}
 							<div class="em-head">{focusedBlobName}</div>
@@ -492,12 +356,7 @@ function fmtKb(kb: number): string {
 		</div>
 
 		{#if heap !== null}
-			<!-- WHY "main thread only" is spelled out: performance.memory reports
-			     THIS realm's heap and nothing else. On this route the Workers
-			     hold MORE than the page does (measured: page 321 MB vs workers
-			     164 MB idle, and workers grew +258 MB on a single zoom while the
-			     page grew +86). DevTools → Memory → "Total JS heap size" is the
-			     number that includes workers. -->
+			<!-- "main thread only" — performance.memory excludes Workers, which hold MORE on this route (measured: page 321MB vs workers 164MB idle, workers +258MB on a zoom vs page +86); DevTools → Memory → Total JS heap size includes workers. -->
 			<div class="heap" title={HEAP_NOTE}>
 				<div class="heap-head">
 					<span class="heap-title">MEMORY</span>
@@ -554,17 +413,13 @@ function fmtKb(kb: number): string {
 		{/if}
 
 		{#if open}
-			<!-- LIVE — shown whether or not any pass has completed. This is the
-			     answer to "is it still going, and for how long?" -->
+			<!-- LIVE — shown whether or not any pass has completed; answers "is it still going, and for how long?" -->
 			<div class="bake-live" class:on={bakeOn && bakeSecs < HIDE_AFTER_S}>
 				{#if bakeOn && bakeSecs >= HIDE_AFTER_S && bakeSecs < STALL_AFTER_S}
-					<!-- ⛔ QUIET. Work is still happening; saying so on a loop reads
-					     as "broken" (it is not) and cannot be acted on. -->
+					<!-- ⛔ quiet — work is still happening; saying so on a loop reads as "broken" (it isn't) and can't be acted on. -->
 					<strong class="dim">working…</strong>
 				{:else if bakeOn && bakeSecs >= STALL_AFTER_S}
-					<!-- ⛔ SAY IT IS STUCK. A spinner that never stops is a lie: the
-					     download either arrives or it does not, and after this long
-					     it is not coming. Naming it is the whole point. -->
+					<!-- ⛔ say it's stuck — a spinner that never stops is a lie; after this long it isn't coming, naming it is the point. -->
 					<strong class="fail">⚠️ stalled</strong>
 					<span class="secs">{bakeSecs}s</span>
 					{#if bakePend > 0}<span class="dim">· {bakePend} queued</span>{/if}
@@ -585,9 +440,7 @@ function fmtKb(kb: number): string {
 			{/if}
 
 			{#if rows.length === 0}
-				<!-- The "bake boots ~20s after load" explainer is a TOOLTIP now:
-				     it was true on every render forever, so as standing text it
-				     only ever cost height. -->
+				<!-- "bake boots ~20s" explainer is a TOOLTIP not standing text — it's true on every render, so as standing text it only cost height. -->
 				<div
 					class="empty"
 					title="waiting for first pass — bake boots ~20s after load"
@@ -636,9 +489,7 @@ function fmtKb(kb: number): string {
 				</div>
 			{/if}
 
-			<!-- PAYLOADS — bytes handed to Mapbox's worker to re-parse. Rendered
-			     outside the rows/empty branch because a wall rebuild pushes data
-			     whether or not any tracked operation ran. -->
+			<!-- PAYLOADS — bytes handed to Mapbox's worker to re-parse; rendered outside the rows/empty branch since a wall rebuild pushes data regardless of tracked ops. -->
 			{#if pays.length > 0}
 				<div class="paysec">
 					<div class="payhead">
@@ -672,25 +523,19 @@ function fmtKb(kb: number): string {
 <style>
 /* Tokens and the card shell live in devCard.css (.dev-card). */
 
-/* DOCKED — in the flow, for a page that lays panels out in columns. Everything
-   else (colours, type, borders) is shared; only the positioning differs. */
+/* DOCKED — in the flow, for a page that lays panels out in columns; everything else (colours, type, borders) is shared, only positioning differs. */
 .meter.docked {
 	position: static;
 	left: auto;
 	top: auto;
 	width: 100%;
 	box-sizing: border-box;
-	/* Undoes the base .meter's max-width: 420px — that cap exists for the
-	   FLOATING instrument (must stay small so it doesn't cover the map), not
-	   this one, which sits in a rail and should use the rail's full width. */
+	/* undoes base .meter's max-width:420px — that cap is for the FLOATING instrument (must stay small, not cover the map), not this one which uses the rail's full width. */
 	max-width: none;
 }
 
 .meter {
-	/* FIXED to the VIEWPORT, not the phone frame. This is a debugging
-	   instrument, not app UI — inside the frame it sat under the shovel and
-	   the tab bar, exactly where you can't read it. Top-left of the whole
-	   window keeps it clear of the phone and of DevTools on the right. */
+	/* fixed to the VIEWPORT not the phone frame — inside the frame it sat under the shovel/tab bar unreadable; top-left keeps it clear of the phone and DevTools. */
 	position: fixed;
 	left: 10px;
 	top: 10px;
@@ -758,8 +603,7 @@ tr.hot .name {
 	max-width: 100%;
 	white-space: normal;
 }
-/* MEMORY block — three bar rows (now/avg/peak) + a session sparkline,
-   matched to the design handoff's .memrow/.sparkwrap layout. */
+/* MEMORY block — three bar rows (now/avg/peak) + a session sparkline, matched to the design handoff's .memrow/.sparkwrap layout. */
 .heap {
 	margin-top: 16px;
 }
@@ -867,8 +711,7 @@ tr.hot .name {
 .zero-btn {
 	margin-top: 8px;
 }
-/* A skip is amber, not red: refusing to run is often CORRECT. It earns
-   attention because it explains an empty panel, not because it is a fault. */
+/* skip is amber not red — refusing to run is often CORRECT; it earns attention because it explains an empty panel, not because it's a fault. */
 .skip {
 	color: var(--amber);
 }
@@ -877,8 +720,7 @@ tr.hot .name {
 	font-size: 11px;
 	padding-bottom: 3px;
 }
-/* Payload section — separated by a rule because it answers a different
-   question from the timing rows above it (bytes re-parsed, not ms spent). */
+/* payload section separated by a rule — answers a different question from the timing rows above it (bytes re-parsed, not ms spent). */
 .paysec {
 	margin-top: 6px;
 	padding-top: 4px;
@@ -909,8 +751,7 @@ tr.hot .name {
 	text-decoration: underline;
 }
 
-/* LIVE BAKE ROW — the panel's answer to "is anything happening right now?".
-   Dim when idle so it never competes with the numbers; lit while working. */
+/* LIVE BAKE ROW — answers "is anything happening right now?"; dim when idle so it never competes with the numbers, lit while working. */
 .bake-live {
 	display: flex;
 	align-items: baseline;
@@ -931,7 +772,6 @@ tr.hot .name {
 .bake-note {
 	padding-bottom: 0.25rem;
 }
-/* ── header row: title + export ───────────────────────────────────────── */
 .head-row {
 	flex-wrap: wrap;
 	gap: 8px 10px;
@@ -945,9 +785,7 @@ tr.hot .name {
 	position: relative;
 	display: inline-flex;
 }
-/* OUTLINED icon button — the Get Cache export affordance. Gold ink on a gold
-   hairline, not a gold fill: the fill is reserved for the DEFAULT choice
-   inside the popup, so the loud element is the commit, not the opener. */
+/* OUTLINED icon button (Get Cache export affordance) — gold ink on hairline, not fill; fill is reserved for the DEFAULT choice in the popup, so the loud element is the commit, not the opener. */
 .export-trigger {
 	flex: 0 0 auto;
 	display: inline-flex;
@@ -992,9 +830,7 @@ tr.hot .name {
 	font-size: 14px;
 	line-height: 1;
 }
-/* Popup of formats, anchored under the trigger. In-flow (not portaled) —
-   the panel is fixed-position and never clips at this corner, so the
-   portal machinery SharePicker needs isn't warranted here. */
+/* popup of formats, anchored under the trigger, in-flow not portaled — the panel is fixed-position and never clips here, so SharePicker's portal machinery isn't warranted. */
 .export-menu {
 	position: absolute;
 	top: calc(100% + 8px);
@@ -1034,9 +870,7 @@ tr.hot .name {
 .em-opt:hover {
 	background: rgba(232, 185, 35, 0.14);
 }
-/* The DEFAULT choice wears the full gold — same gradient/bevel recipe as
-   Get Cache's .rt-gold-btn, hand-matched because the open-core boundary
-   bans importing it. */
+/* DEFAULT choice wears full gold — same gradient/bevel as Get Cache's .rt-gold-btn, hand-matched since the open-core boundary bans importing it. */
 .em-opt--active {
 	background: linear-gradient(180deg, #f5d565 0%, #e8b923 100%);
 	border-color: transparent;
@@ -1049,8 +883,7 @@ tr.hot .name {
 .em-opt--active:hover {
 	background: linear-gradient(180deg, #f5d565 0%, #e8b923 100%);
 }
-/* Fail LOUD (spec rule 3) — the error keeps its home now the button face
-   no longer carries the message. */
+/* fail LOUD (spec rule 3) — error keeps its home now the button face no longer carries the message. */
 .em-err {
 	font-size: 10px;
 	color: var(--red, #e2553f);
@@ -1066,10 +899,7 @@ tr.hot .name {
 		opacity: 1;
 	}
 }
-/* Confirmation flash — a quick green pulse so a copy/download registers as a
-   state change on the button itself, not just a word swap that's easy to
-   miss. Reminds you the JSON is still on your clipboard after the flash
-   fades, per the ask ("reminds me it's on my clipboard"). */
+/* confirmation flash — quick green pulse so copy/download registers as a state change, not just an easy-to-miss word swap; reminds you the JSON is still on your clipboard after it fades. */
 .export-trigger.did {
 	animation: export-flash 1.8s ease-out;
 }

@@ -1,14 +1,6 @@
 /**
  * fireRelevance.test.ts — "you show nothing after 500 kilometers, period".
- *
- * Written from the actual failing screenshot: the blue dot on the BC coast,
- * fire clusters over Winnipeg, Bismarck, Minneapolis and Des Moines. Those four
- * cities are the regression cases — if any of them can render again, the layer
- * is broken in exactly the way it was broken three fixes running.
- *
- * The earlier attempts all failed because they measured the wrong thing:
- * fetch radius, cluster size, then the SCREEN box. Distance from the USER is
- * the only measure that closes it.
+ * Regression cases: Winnipeg/Bismarck/Minneapolis/Des Moines rendering again means the wall is broken.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -37,8 +29,7 @@ const spot = (lng: number, lat: number, frp = 100): FireHotspot => ({
 
 /** The blue dot in the screenshot — BC coast near Vancouver. */
 const USER: [number, number] = [-123.1, 49.28];
-/** The user's fix as an ANCHOR SET — origin is a list now, because relevance is
- *  measured from every place you have a stake in, not just your body. */
+/** The user's fix as an ANCHOR SET — relevance is measured from every place you have a stake in, not just your body. */
 const AT_USER: Array<readonly [number, number]> = [USER];
 
 // The offenders, straight off the screenshot.
@@ -60,8 +51,7 @@ describe("THE WALL — nothing past 500 km from the user", () => {
 	});
 
 	it("drops them even at an absurd 5000 MW — size never buys past the wall", () => {
-		// This is the crucial one. The far-field gate is size-vs-distance, but
-		// the WALL is absolute: no fire, however enormous, renders past 500 km.
+		// crucial: the far-field gate is size-vs-distance, but the WALL is absolute — no fire renders past 500km, however enormous
 		const monster = spot(-97.14, 49.9, 999_999);
 		expect(relevantHotspots([monster], AT_USER)).toHaveLength(0);
 	});
@@ -116,27 +106,10 @@ describe("frpGateAt — the size-vs-distance ramp", () => {
 	});
 });
 
-// ⚠️ ONLINE MAP MOVED TO THE CHILD, 28 Aug 2026. This block read
-// src/routes/(getcache)/map/fireLayer.ts as TEXT. That whole folder — 32 files,
-// 10,873 lines — was a SECOND online map beside getCache_OnlineMap's, and it was
-// deleted; /map is now a two-line address rendering the child's component, the
-// same operation /offline had on 27 Aug.
-//
-// The law this asserts (ONE fire layer, no per-route re-implementation) is now
-// enforced STRUCTURALLY: a route that is an import and a tag has nowhere to put
-// a second copy. That is the deeper wall this grep was standing in for.
-//
-// ⛔ DO NOT DELETE. The fire RENDER layer has no home yet — it is in neither
-// child (verified 28 Aug: no ids.outline / attachFireLayer outside the deleted
-// folder). When it lands in getCache_OnlineMap, RE-POINT AT IT AND UNSKIP.
+// ⛔ DO NOT DELETE — fire render layer has no home yet (moved out of deleted online-map folder 28 Aug); re-point at getCache_OnlineMap and unskip when it lands
 describe.skip("NO DISTANCE FADE — a drawn fire is a fire", () => {
-	// The fade (`prominenceAt`) is deleted, not tuned. It faded opacity 1.0 → 0.25
-	// with distance, which was coherent when the wall had ONE origin. With ANCHORS
-	// it drew the same hazard two different ways: fires around a pinned block came
-	// out at ~0.3 while fires by the live fix sat at 1.0. Reported from the field
-	// as "the pinned fire blob is really faint, the location one isn't".
-	// Orphaned by the map move — see the note above. "" keeps the skipped
-	// block collectable instead of throwing at import.
+	// prominenceAt (distance fade) is deleted, not tuned — re-adding it reintroduces the two-tone bug once anchors exist
+	// orphaned by the map move; "" keeps this block collectable instead of throwing at import
 	const layer = "";
 
 	it("the module exports no prominence function", () => {
@@ -151,46 +124,29 @@ describe.skip("NO DISTANCE FADE — a drawn fire is a fire", () => {
 	});
 
 	it("distance still reaches the CARD — it just doesn't touch paint", () => {
-		// Deleting the fade must not delete the information. "190 km E" on the tap
-		// card is where distance belongs.
+		// deleting the fade must not delete the information — distance belongs on the tap card ("190 km E")
 		const far = relevantHotspots([KAMLOOPS], AT_USER)[0];
 		expect(far.km).toBeGreaterThan(NEAR_KM);
 	});
 
 	it("no paint property multiplies by prom", () => {
-		// The real regression guard: someone re-adding `["get","prom"]` to any
-		// opacity brings the two-tone bug straight back.
+		// regression guard: re-adding ["get","prom"] to any opacity brings the two-tone bug back
 		expect(layer).not.toContain('["get", "prom"]');
 	});
 });
 
 describe("no origin — refuse to guess", () => {
 	it("shows NOTHING rather than a continent of dots", () => {
-		// Callers always have a map centre to pass; reaching here means we truly
-		// have no reference point, and a world of dots is the worse failure.
+		// callers always have a map centre; reaching here means truly no reference point — showing a world of dots is worse
 		expect(relevantHotspots([SQUAMISH, WINNIPEG], null)).toHaveLength(0);
 	});
 
 	it("treats an EMPTY anchor list the same as none", () => {
-		// `fireAnchors` returns [] when nothing qualifies. That must read as "no
-		// reference point", not as "no wall" — an empty list that fell through to
-		// showing everything would be the continent-of-dots bug wearing a hat.
+		// empty anchor list must read as "no reference point", not "no wall" — falling through to show-everything is the continent-of-dots bug again
 		expect(relevantHotspots([SQUAMISH, WINNIPEG], [])).toHaveLength(0);
 	});
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ANCHORS — the Manitoba watermelon.
-//
-// Straight from the report: a user in Vancouver created a feature near
-// Camperville, Manitoba. The bake service had ALREADY downloaded the fires
-// around it (refreshFires bakes a disc per feature anchor), and the map drew
-// none of them — they were ~1,900 km from the phone, so the wall ate every one.
-//
-// The layer went silent about the exact ground the user had just told it they
-// cared about. These tests pin the fix: relevance is proximity to any place you
-// have a stake in, and your body is only one of them.
-// ─────────────────────────────────────────────────────────────────────────────
 describe("ANCHORS — fires near ground you touched, not just near your body", () => {
 	/** The watermelon feature: ~115 km NE of Camperville, MB. */
 	const BLOCK: [number, number] = [-99.6, 52.4];
@@ -198,8 +154,7 @@ describe("ANCHORS — fires near ground you touched, not just near your body", (
 	const NEAR_BLOCK = spot(-99.6, 52.67, 20);
 
 	it("THE BUG: a fire beside your new block is invisible from your fix alone", () => {
-		// This is the failing screenshot, asserted. It must stay true — it is what
-		// makes the next test meaningful rather than vacuous.
+		// the failing screenshot, asserted — must stay true, or the next test becomes vacuous
 		expect(distKm(USER, NEAR_BLOCK.coordinates)).toBeGreaterThan(1500);
 		expect(relevantHotspots([NEAR_BLOCK], AT_USER)).toHaveLength(0);
 	});
@@ -207,23 +162,19 @@ describe("ANCHORS — fires near ground you touched, not just near your body", (
 	it("THE FIX: it renders once that block is an anchor", () => {
 		const kept = relevantHotspots([NEAR_BLOCK], [USER, BLOCK]);
 		expect(kept).toHaveLength(1);
-		// Measured from the BLOCK (~30 km), not the phone (~1,900 km) — so it
-		// reads as the near, loud thing it actually is.
+		// measured from the BLOCK (~30km), not the phone (~1,900km) — reads as the near, loud thing it is
 		expect(kept[0].km).toBeLessThan(NEAR_KM);
 	});
 
 	it("adding an anchor never hides what the user's fix already showed", () => {
-		// Anchors are strictly ADDITIVE. A second stake must not cost you the
-		// fires at your feet — that would trade one silence for another.
+		// anchors are strictly ADDITIVE — a second stake must not cost you the fires at your feet
 		const withFixOnly = relevantHotspots([SQUAMISH, KAMLOOPS], AT_USER);
 		const withBoth = relevantHotspots([SQUAMISH, KAMLOOPS], [USER, BLOCK]);
 		expect(withBoth.length).toBeGreaterThanOrEqual(withFixOnly.length);
 	});
 
 	it("still refuses the whole continent — the wall holds per anchor", () => {
-		// The danger of a set is that enough anchors mean no wall at all. Winnipeg
-		// is ~350 km from the Manitoba block, so it legitimately survives; the
-		// screenshot's far cities must not.
+		// danger of a set: enough anchors could mean no wall at all — Winnipeg legitimately survives (~350km from the block), the screenshot's far cities must not
 		const kept = relevantHotspots(
 			[BISMARCK, MINNEAPOLIS, DES_MOINES],
 			[USER, BLOCK],
@@ -239,8 +190,7 @@ describe("fireAnchors — bounded, deduped, recency-first", () => {
 	});
 
 	it("keeps the most recently touched ground when over the cap", () => {
-		// The promise: what you touched LAST always survives. Creating a feature
-		// and seeing no change would be the original bug back again.
+		// promise: what you touched LAST always survives the cap — creating a feature and seeing no change would be the original bug back
 		const anchors = fireAnchors([
 			at(-123.1, 49.28, 1000), // Vancouver, oldest
 			at(-99.6, 52.4, 5000), // Manitoba, newest
@@ -253,9 +203,7 @@ describe("fireAnchors — bounded, deduped, recency-first", () => {
 	});
 
 	it("collapses anchors whose discs would overlap anyway", () => {
-		// Three pins on one block are ONE place. Without this, a busy day's work
-		// spends every anchor slot inside a single 500 km disc and the block you
-		// drove to last week silently drops off.
+		// three pins on one block are ONE place — without this, a busy day spends every anchor slot in one disc and last week's block silently drops off
 		const anchors = fireAnchors([
 			at(-123.1, 49.28, 3000),
 			at(-123.2, 49.3, 2000), // ~11 km away — same place
@@ -277,8 +225,7 @@ describe("fireAnchors — bounded, deduped, recency-first", () => {
 	});
 
 	it("ignores candidates with unusable coordinates", () => {
-		// A feature with broken geometry must not become an anchor at NaN, which
-		// would make every distance NaN and quietly empty the layer.
+		// broken geometry must not become an anchor at NaN — that would make every distance NaN and quietly empty the layer
 		const anchors = fireAnchors([
 			at(Number.NaN, 49.28, 3000),
 			at(-99.6, 52.4, 1000),
@@ -316,16 +263,6 @@ describe("scale — the real cache that produced the screenshot", () => {
 	});
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// fireFeatureCollection — the ONE hotspots→features builder.
-//
-// This block exists because the two maps drifted. `fireLayer.ts` (online) and
-// `offlinev4/+page.svelte` (offline) each hand-rolled the same walk, and when
-// `ind` (the industrial-source flag) was added it landed in the online one
-// only — so a refinery dimmed on one map and read as a wildfire on the other.
-// These tests pin the properties every feature must carry, so a property added
-// for one map cannot silently skip the other.
-// ─────────────────────────────────────────────────────────────────────────────
 describe("fireFeatureCollection — both maps get identical features", () => {
 	const NOW = 1_786_003_600_000; // exactly 1 h after `spot`'s default t
 
@@ -360,8 +297,7 @@ describe("fireFeatureCollection — both maps get identical features", () => {
 		expect(fc.features.length).toBeGreaterThan(0);
 		for (const f of fc.features) {
 			const p = f.properties as Record<string, unknown>;
-			// Both, on every feature. `ind` is the one that used to be missing
-			// on the offline map — that is the whole point of this assertion.
+			// `ind` used to be missing on the offline map — that is the whole point of this assertion
 			expect(p.ageH).toBeCloseTo(1, 6);
 			expect(p.ind).toBe(0);
 			// `prom` (the distance fade) is deleted — see "NO DISTANCE FADE".
@@ -380,8 +316,7 @@ describe("fireFeatureCollection — both maps get identical features", () => {
 	});
 
 	it("FLAGS an industrial source rather than dropping it", () => {
-		// A refinery genuinely can catch fire; deleting means the app says nothing
-		// on the day it does. So the feature must still be present, just marked.
+		// a refinery genuinely can catch fire; deleting means the app says nothing on the day it does — must stay present, just marked
 		const { fc } = build({ hotspots: [SQUAMISH], isStatic: () => true });
 		expect(fc.features).toHaveLength(1);
 		expect((fc.features[0].properties as Record<string, unknown>).ind).toBe(1);
@@ -391,16 +326,12 @@ describe("fireFeatureCollection — both maps get identical features", () => {
 		const { fc, shown } = build({ hidden: true });
 		expect(fc.features).toHaveLength(0);
 		expect(shown).toHaveLength(0);
-		// And un-hiding brings the same features straight back — the layer stays
-		// mounted, so the eye is one setData, never a layer re-add.
+		// un-hiding brings the same features straight back — the layer stays mounted, the eye toggle is one setData, never a layer re-add
 		expect(build({ hidden: false }).fc.features.length).toBeGreaterThan(0);
 	});
 
 	it("a NEAR and a FAR fire get identical paint properties", () => {
-		// This replaces a test that asserted the opposite (near = full prominence,
-		// far = faded). That was the two-tone bug in test form: with anchors, "far"
-		// only means far from whichever anchor qualified it, and a fire beside a
-		// block you pinned is not a lesser fire. Same age, same flag → same paint.
+		// same age, same flag → same paint — "far" means far from whichever anchor qualified it, not less important (the two-tone bug)
 		const { fc } = build({ hotspots: [SQUAMISH, KAMLOOPS] });
 		const paintOf = (lng: string) =>
 			fc.features

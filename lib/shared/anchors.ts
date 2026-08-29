@@ -1,21 +1,7 @@
 /**
- * anchors.ts — the canonical "where does a feature get offline blobs" map.
- *
- * ONE source of truth for the anchor points a feature bakes under. The reconcile
- * (`/mobile/offlinev4`) uses it to decide which satellite/vector areas to build;
- * the debug array (`/debug/blobs/array`) uses the SAME function to map
- * a feature back to its registry areaKeys, so membership lines up exactly instead
- * of being re-guessed per page.
- *
- * EVERY feature type gets offline data:
- *   • Point        → one blob at the point
- *   • Line         → blobs sampled ALONG it (`sampleLineAnchors`) so the whole
- *                    line is a ribbon of satellite + road discs, not one midpoint
- *   • Polygon      → ONE blob at the centroid (`polygonAnchor`) — deters huge polys
- *   • PDF / overlay→ a blob at EACH of the four `overlayBounds` corners, so an
- *                    imported sheet is covered corner-to-corner.
- * Overlap is expected; anchors dedup downstream by `satImageKey` and overlapping
- * tile discs share the ONE global deduped tile pile, so nothing bakes twice.
+ * anchors.ts — canonical "where does a feature get offline blobs" map, shared by the reconcile (`/mobile/offlinev4`) and the debug array (`/debug/blobs/array`).
+ * Point → one blob at the point. Line → sampled ALONG it (`sampleLineAnchors`), a ribbon not one midpoint. Polygon → ONE blob at centroid (`polygonAnchor`), deters huge polys. PDF/overlay → a blob at each of the four `overlayBounds` corners.
+ * Overlap is expected — anchors dedup downstream by `satImageKey`, tile discs share one global deduped pile, nothing bakes twice.
  */
 import { kmBetween } from "./kmGeo";
 import { BAKE_RADIUS_KM } from "../onPhone/satellite/satelliteImage";
@@ -44,16 +30,10 @@ function featureCenter(geom: GeoJSON.Geometry | undefined): Pt | null {
 	return [(box.w + box.e) / 2, (box.s + box.n) / 2];
 }
 
-// LINE sampling step: how far apart, along a line, to drop satellite-blob anchors.
-// The satellite photo is a BAKE_RADIUS_KM-radius disc (~6 km wide), so stepping
-// ~1.6× the radius makes consecutive discs OVERLAP into one continuous ribbon down
-// the line (never a gap). A line has no centre, so we walk its length at this step.
+// LINE sampling step: satellite disc is BAKE_RADIUS_KM-radius (~6km wide); stepping ~1.6× the radius makes consecutive discs OVERLAP into one continuous ribbon (never a gap).
 const LINE_SAMPLE_STEP_KM = BAKE_RADIUS_KM * 1.6;
 
-/** Walk a polyline and drop an anchor at the start, every LINE_SAMPLE_STEP_KM,
- *  and at the end — so the whole line gets satellite+road coverage, not just one
- *  blob at its midpoint. Overlapping anchors are deduped downstream by
- *  `satImageKey` (and overlapping tile discs by the global tile pile). */
+/** Walk a polyline, drop an anchor at the start, every LINE_SAMPLE_STEP_KM, and at the end — overlapping anchors dedup downstream by `satImageKey` (tile discs by the global tile pile). */
 function sampleLineAnchors(coords: Pt[]): Pt[] {
 	const pts = (coords ?? []).filter(
 		(p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]),
@@ -81,10 +61,7 @@ function sampleLineAnchors(coords: Pt[]): Pt[] {
 	return out;
 }
 
-/** A polygon's centroid (area-weighted, outer ring) — ONE blob, on purpose: a
- *  polygon gets a single satellite at its middle regardless of size, which deters
- *  drawing a giant polygon to vacuum up a huge offline area. Falls back to the
- *  vertex mean for a degenerate (zero-area) ring. */
+/** A polygon's centroid (area-weighted, outer ring) — ONE blob on purpose, deters drawing a giant polygon to vacuum a huge area; falls back to vertex mean for a degenerate (zero-area) ring. */
 function polygonAnchor(rings: Pt[][]): Pt[] {
 	const outer = rings?.[0];
 	if (!outer || outer.length < 3) {
@@ -112,29 +89,14 @@ function polygonAnchor(rings: Pt[][]): Pt[] {
 	return [[cx / (6 * a), cy / (6 * a)]];
 }
 
-/** Should this feature seed offline blobs at all? EVERY feature does — user pins,
- *  PDF/KML/KMZ maps, polygons, lines, AND Quality-704 PLOT pins. A plot is real
- *  data the surveyor put in the ground, so it earns offline coverage like anything
- *  else. The old budget worry (a planting block is wall-to-wall plots a few metres
- *  apart) is handled downstream, NOT here: `anchorsOf` gives a plot ONE point
- *  anchor, and the bake service's `note()` keys every anchor by `satImageKey`
- *  (the disc-grid cell), so all the plots in a block collapse into the ONE disc
- *  their block sits in — one blob per block, not one per plot. The single source
- *  of truth for "is this an offline anchor" — used everywhere features feed
- *  `anchorsOf`. Kept as a function (not inlined) so every call site shares this
- *  one definition if the policy ever narrows again. */
+/** Should this feature seed offline blobs at all? EVERY feature does today (pins, PDF/KML/KMZ, polygons, lines, plots) — kept as a function so every `anchorsOf` call site shares one definition if the policy ever narrows. */
 export function isBlobAnchor(_f: {
 	geometry: GeoJSON.Feature | null;
 }): boolean {
 	return true;
 }
 
-/** The offline-coverage anchors for ANY feature — a LIST, because one blob per
- *  feature isn't enough for long geometry. See the file header for the per-type
- *  rules. Applies to imported AND created data alike (it's just geometry).
- *  NOTE: callers iterating over a feature collection should gate on
- *  {@link isBlobAnchor} first — it's the shared blob-ownership hook (today it
- *  passes every feature, plots included). */
+/** The offline-coverage anchors for ANY feature — a LIST, since one blob isn't enough for long geometry (see file header for per-type rules). Callers iterating a feature collection should gate on {@link isBlobAnchor} first. */
 export function anchorsOf(f: {
 	geometry: GeoJSON.Feature | null;
 	overlayBounds: [number, number, number, number] | null;
@@ -143,8 +105,7 @@ export function anchorsOf(f: {
 	if (!g) {
 		if (f.overlayBounds) {
 			const [w, s, e, n] = f.overlayBounds;
-			// The FOUR CORNERS of the PDF/map sheet — covers the whole imported
-			// extent (the 30 km road discs from the corners fill the middle in).
+			// four corners of the PDF/map sheet — covers the whole imported extent (30km road discs from the corners fill the middle in).
 			return [
 				[w, s],
 				[w, n],

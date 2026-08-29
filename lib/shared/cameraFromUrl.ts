@@ -1,29 +1,4 @@
-/**
- * THE CAMERA, FROM THE URL. One place, both routes.
- *
- * `/offline` and `/offline/debug` are the same component, so a coordinate in
- * the query string opens BOTH at the same spot — which is the whole point:
- * you see a bug on one, change `/offline` to `/offline/debug` in the address
- * bar, and land on the identical view with the rails up. A debugger that
- * cannot be pointed at the thing you just saw is not a debugger.
- *
- * ⚠️ ORDER IS LAT,LNG — the order a phone's GPS reports, the order Google
- * Maps prints, the order a human reads one off a screen. It is the OPPOSITE
- * of the [lng, lat] order MapLibre and GeoJSON use internally, and that
- * mismatch is the single thing this module exists to get right: the parse
- * takes what a human pastes and returns what the map wants.
- *
- * Accepted, all equivalent:
- *   ?at=58.7986,-122.6761          named, the form to prefer
- *   ?58.7986,-122.6761             bare — a pasted pair with nothing else
- *   ?=58.7986,-122.6761            bare with a stray `=`, which is what you
- *                                  get pasting into an empty query string
- *   ?at=58.7986,-122.6761&z=13     with a zoom
- *
- * The bare forms are supported because they are what actually gets typed. A
- * parser that rejects the spelling a human reaches for first is a parser that
- * sends them back to hardcoding coordinates in the source.
- */
+/** ⚠️ ORDER IS LAT,LNG here — OPPOSITE of MapLibre/GeoJSON's [lng, lat]; the parse flips it once for the map. */
 
 /** What the map needs: MapLibre's own [lng, lat] order, plus optional zoom. */
 export interface UrlCamera {
@@ -54,13 +29,7 @@ function parsePair(raw: string): [number, number] | undefined {
 	return [lng, lat];
 }
 
-/**
- * Read a camera out of a query string. `undefined` means "nothing was asked
- * for" — the caller keeps its own default rather than being handed a
- * fabricated one. [[no-silent-fallbacks]]
- *
- * @param search  `location.search`, with or without the leading `?`.
- */
+/** undefined means "nothing was asked for" — the caller keeps its own default, never a fabricated one. */
 export function cameraFromUrl(search: string): UrlCamera | undefined {
 	const q = search.startsWith("?") ? search.slice(1) : search;
 	if (!q) return undefined;

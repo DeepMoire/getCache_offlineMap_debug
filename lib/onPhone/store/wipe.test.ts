@@ -1,10 +1,4 @@
-/**
- * The wipe must actually wipe, and must never touch user data.
- *
- * The second test is the important one: `rt-treeStuff` holds plots, maps and
- * tallies. Tiles are re-downloadable; a plot is not. A wipe that widens by one
- * name destroys work that cannot be recovered.
- */
+/** ⚠️ The wipe must never touch user data — rt-treeStuff holds plots/maps/tallies; widening the wipe list by one name destroys work that cannot be recovered. */
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { NEVER_WIPE, wipeOfflineData, WIPE_DBS } from "./wipe";

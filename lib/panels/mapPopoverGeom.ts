@@ -1,15 +1,5 @@
 // Map-popover placement math — pure, so it can be tested without a map.
-//
-// Extracted from MapPopoverShell's $derived. The shell owns the DOM, the
-// gestures and the crow measurement; this owns WHERE the card goes.
-//
-// THE LAW: the side is CHOSEN BY MEASUREMENT, never assumed. Points used to
-// hardcode "always below" on the premise that a tapped pin is first flown to
-// PIN_TARGET_Y (240) near the top of the screen. That premise is only true at
-// the instant of the tap — the bbox is recomputed on every map `move`, so as
-// soon as the user pans, the pin can sit anywhere, and an always-below card
-// walked straight off the bottom of the viewport. Polygons never had the bug
-// because they always measured both sides. Now everything measures.
+// THE LAW: side is CHOSEN BY MEASUREMENT, never assumed — an always-below card can walk off the bottom of the viewport once the pin pans away from its post-tap landing spot.
 
 export type Bbox = { minX: number; minY: number; maxX: number; maxY: number };
 
@@ -24,8 +14,7 @@ export type PlaceInput = {
 	/** Chrome reserves: app top bar / draw strip, and tab bar / shovel. */
 	topReserve: number;
 	bottomReserve: number;
-	/** The card's measured height, when the DOM has reported one. Before first
-	 *  measure, callers pass undefined and we fall back to ESTIMATED_HEIGHT. */
+	/** The card's measured height once the DOM has reported one; undefined before first measure, falls back to ESTIMATED_HEIGHT. */
 	measuredHeight?: number;
 	/** The crow / basemap tile's no-go rect, in container coordinates. */
 	crow?: { left: number; top: number; bottom: number } | null;
@@ -48,20 +37,12 @@ const PIN_GAP = 18;
 const PAD = 8;
 /** Keep clear of the crow tile by this much. */
 const CROW_CLEARANCE = 10;
-/** Height assumed before the card has been measured. Matches the old
- *  polygon-branch constant, which was tuned against the compact card. */
+/** Height assumed before the card has been measured. */
 export const ESTIMATED_HEIGHT = 220;
 /** Never squeeze the card below this, however tight the viewport. */
 const MIN_HEIGHT = 160;
 const MIN_WIDTH = 160;
 
-/**
- * Place the popover card against its anchor.
- *
- * Side choice is symmetric for points and polygons: take the side with more
- * room, unless the preferred side can hold the whole card. A point adds
- * PIN_GAP to its anchor offset on both sides so the card never crowds the pin.
- */
 export function placePopover(input: PlaceInput): Placement {
 	const {
 		bbox,
@@ -89,11 +70,7 @@ export function placePopover(input: PlaceInput): Placement {
 	const roomBelow = usableBottom - (bbox.maxY + gap);
 	const roomAbove = bbox.minY - gap - usableTop;
 
-	// MEASURE, DON'T ASSUME. Below is the default — a card under the anchor
-	// reads better and keeps the anchor in view above it. Flip up only when
-	// below genuinely can't hold the card AND above has more room. That's the
-	// off-the-viewport case the user hit: pin near the bottom, card below it
-	// walking off-screen, when there was plenty of room above the pin.
+	// MEASURE, DON'T ASSUME — below is default; flip up only when below can't hold the card AND above has more room.
 	const fitsBelow = roomBelow >= height;
 	const side: "above" | "below" =
 		fitsBelow || roomBelow >= roomAbove ? "below" : "above";
@@ -104,10 +81,7 @@ export function placePopover(input: PlaceInput): Placement {
 			: // Above: the card's BOTTOM sits `gap` over the anchor's top edge.
 				bbox.minY - gap - height;
 
-	// Clamp into the usable band. Above-placement can still overshoot the top
-	// reserve when the card is taller than the room; below-placement is pulled
-	// back up so its bottom clears the tab bar. Top clamp wins (never hide the
-	// card's header under the chrome) — a too-tall card then scrolls via maxH.
+	// Clamp into the usable band — top clamp wins (never hide the card's header under the chrome); an overly tall card scrolls via maxH instead.
 	if (side === "below") top = Math.min(top, usableBottom - height);
 	top = Math.max(usableTop, top);
 
@@ -117,17 +91,7 @@ export function placePopover(input: PlaceInput): Placement {
 	let left = centerX - width / 2;
 	left = Math.max(PAD, Math.min(left, containerWidth - width - PAD));
 
-	// CROW NO-GO: if the card's vertical span overlaps the crow tile's band,
-	// keep its right edge LEFT of the tile. Prefer shifting the card left; if
-	// it can't shift far enough, shrink it so the tile stays reachable.
-	//
-	// WIDTH MUST NOT DEPEND ON HEIGHT. The overlap test deliberately uses the
-	// card's FULL available band (usableTop..usableBottom), not its measured
-	// height. Using the height here closed a feedback loop through layout:
-	// measured height → vertOverlap → width shrinks → content re-wraps →
-	// height changes → measured again ("ResizeObserver loop completed with
-	// undelivered notifications"). Width now depends only on the container and
-	// the tile — both independent of content — so measuring can never change it.
+	// WIDTH MUST NOT DEPEND ON HEIGHT — that closed a real ResizeObserver feedback loop (measured height → width shrinks → content re-wraps → height changes → measured again). Width depends only on the container and the crow tile, both content-independent.
 	if (crow) {
 		const vertOverlap = usableTop < crow.bottom && usableBottom > crow.top;
 		if (vertOverlap) {
@@ -149,11 +113,6 @@ export function placePopover(input: PlaceInput): Placement {
 
 export type Leader = { x0: number; y0: number; x1: number; y1: number };
 
-/**
- * The dotted trail tying a pin to its card. Runs from the pin edge to the
- * NEAR edge of the card — the card's top when it sits below, its bottom when
- * it sits above. Returns null when the gap is too short to read as a trail.
- */
 export function leaderLine(
 	bbox: Bbox,
 	place: Placement,

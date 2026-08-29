@@ -1,24 +1,4 @@
-/**
- * TWO ENVIRONMENTS MUST EXIST: local_dev AND r2_prod.
- *
- * This test exists because documentation did not work. The folders were
- * deleted at least four times — three of them in one afternoon (24 Aug 2026),
- * by an agent that had read the project's CLAUDE.md in the same session.
- *
- * The failure mode is always identical, and it is seductive rather than
- * careless: the two folders hold byte-for-byte identical files, so any tool or
- * agent auditing for duplication reports one as redundant and is CORRECT ABOUT
- * THE BYTES. It is wrong about the world. One of these is deployed to
- * Cloudflare and serves live traffic at tiles-prod.getcache.org; the other runs on
- * a laptop at 127.0.0.1:8787 and exists to be broken. Same code, different
- * moment in its life. The gap between them is TIME, not content.
- *
- * A prose warning cannot stop that reasoning, because the reasoning never
- * doubts itself — it feels like tidying. A red test can, because it turns a
- * silent tidy-up into a build failure with this explanation attached.
- *
- * See README.md next to this file. Do not edit this test to make it pass.
- */
+// ⛔ TWO ENVIRONMENTS MUST EXIST (local_dev AND r2_prod) — they hold byte-for-byte identical files on purpose (dev vs. deployed prod), so do NOT delete one as a "duplicate"; do not edit this test to make it pass — see README.md.
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,12 +43,7 @@ describe("r2Worker keeps BOTH environments", () => {
 		});
 	}
 
-	/**
-	 * The identical-ness is the thing that gets them deleted, so assert it
-	 * OUT LOUD. If this ever fails, the two environments have genuinely
-	 * diverged — which is allowed, and means this expectation should be
-	 * relaxed deliberately, not that a folder should be removed.
-	 */
+	// if this ever fails, the environments have genuinely diverged — relax this test deliberately, never remove a folder to fix it.
 	it("both environments carry the same file names (identical is CORRECT)", () => {
 		const names = ENVIRONMENTS.map((env) => {
 			const walk = (d: string, prefix = ""): string[] =>

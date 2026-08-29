@@ -1,114 +1,31 @@
 /**
  * fireCacheV2 — one disc of wildfire detections on disk, and nothing else.
  *
- * ══════════════════════════════════════════════════════════════════════════
- * WHY V2 EXISTS — read this before touching anything in this folder.
- * ══════════════════════════════════════════════════════════════════════════
+ * RULE: the phone renders — it does not compute geometry (no union, no hull, no distance loop, nothing to memoize).
  *
- * V1 was measured, on an idle page with nothing moving, at:
- *
- *     ~4,000 MB total JS heap  (the tab eventually crashed)
- *     119% CPU
- *     kmBetween      7,982 ms   30.1% of the main thread
- *     unionHotspots  5,474 ms   20.6%
- *     paintInner                63.6% of TOTAL time
- *
- * Turning the fire layer off — and ONLY the fire layer — took the same page to
- * 963 MB, and the online map to 274 MB. A 15× swing from one subsystem.
- *
- * The cause was never one bad function. It was an ARCHITECTURE in which the
- * phone holds every raw detection and re-derives geometry from them:
- *
- *   • ~36,489 raw detections cached for a single 500 km disc
- *   • a union pass that deduped every detection against every other disc
- *   • a supersede pass that ran a distance test per (detection × newer disc)
- *   • a hull builder that clustered 12,197 cells into 142 outlines
- *   • an urban classifier walking the same pile again
- *   • five separate memo layers bolted on to stop all of that running per-pan
- *
- * ~3,200 lines across 9 modules, to draw dots on a map.
- *
- * ── THE V2 RULE ──
- * **The phone renders. It does not compute geometry.**
- * A disc arrives from the Worker already deduped, already clustered, already
- * outlined, already urban-filtered — render-ready. The phone stores those bytes
- * and hands them to Mapbox. There is no union, no hull, no distance loop, and
- * therefore nothing to memoize. This is the `server-is-hot-phone-is-cold`
- * memory applied to the one subsystem that broke it hardest.
- *
- * What that buys, structurally: the expensive passes cannot come back, because
- * the data the phone holds is no longer the shape you could run them on.
- *
- * ── WHAT V2 KEEPS FROM V1, DELIBERATELY ──
- * Every one of these was learned from a field failure. They are not carried
- * over out of caution; each is load-bearing.
- *
- *   • `fetchedAt` on every record, and an age shown in words. Painting stale
- *     dots as live is the one genuinely dangerous failure this layer has.
- *   • A version stamp that invalidates on CONTENT, not just shape — a TTL
- *     expires stale data, never data that was WRONG when written.
- *   • Never clear on failure. Stale dots with an honest age beat an empty map
- *     that reads as "no fires near you".
- *   • A phone TTL well UNDER the edge cache's (20 min vs ~1 h). Two caches in a
- *     row compound rather than overlap; the edge cache is what protects NASA,
- *     not this one.
+ * Kept from v1, deliberately — each load-bearing, each learned from a field failure:
+ *   • fetchedAt on every record — painting stale dots as live is the one genuinely dangerous failure this layer has.
+ *   • Version stamp invalidates on CONTENT, not just shape — a TTL expires stale data, never data that was WRONG when written.
+ *   • Never clear on failure — stale dots with an honest age beat an empty map reading as "no fires near you".
+ *   • Phone TTL stays well UNDER the edge cache's (20 min vs ~1h) — two caches in a row compound rather than overlap.
  *
  * Its own IndexedDB DB, sandbox-aware, via the shared keyedIdbStore.
  */
 
 import { makeKeyedIdbStore } from "../../../lib/onPhone/store/keyedIdbStore";
 
-/**
- * Bump when the stored shape changes OR when the DATA was wrong.
- *
- * v1 of the V2 format. Distinct DB from the v1 system (`rt-fire-cache`), so
- * both can coexist during the cutover and neither reads the other's records.
- */
+/** Bump when the stored shape changes OR when the DATA was wrong. Distinct DB from v1 (`rt-fire-cache`) — both coexist during cutover; neither reads the other's records. */
 export const FIRE_V2_VERSION = 1;
 
-/**
- * Disc radius requested per area — the smoke shed, not just the block.
- *
- * ⚠️ STAYS AT 500. This was briefly cut to 300 in v1 to stop the layer
- * dominating the map; that failed, as did shrinking the circles and filtering
- * to the screen box. All three treated a rendering symptom by throwing away
- * DOWNLOADED INFORMATION. 500 km is the smoke shed and costs ~180 KB gzipped.
- * If the layer looks too busy, that is a RENDER rule (zoom gates), never a
- * reason to know less about a fire upwind of a block.
- */
+/** Disc radius requested per area — the smoke shed, not just the block. ⚠️ STAYS AT 500 — cutting it (or shrinking circles / filtering to the screen box, both tried in v1) treats a RENDER symptom by throwing away downloaded information; use zoom gates instead. */
 export const FIRE_V2_RADIUS_KM = 500;
 
 /**
  * How long the phone keeps its own copy before asking the Worker again.
  *
- * ⚠️ 20 MINUTES, NOT AN HOUR. v1 used an hour — matching the Worker's edge
- * cache — and produced the field report **"Last checked — 5h ago" with the app
- * sitting open**. Two one-hour caches do not overlap, they COMPOUND: the phone
- * can receive a copy that is already 59 minutes old and hold it another hour.
- * Staying well under the edge TTL is what stops that compounding.
+ * ⚠️ 20 MINUTES, NOT AN HOUR — two one-hour caches don't overlap, they COMPOUND (v1: "Last checked — 5h ago" with the app open); staying well under the edge TTL stops that.
  *
- * ── Why 20 minutes is safe, and what it actually governs ──
- * The TTL is NOT the mechanism that keeps a field phone current. `fireArrival`
- * is. It arms a bypass debt at the three ARRIVAL moments — app open, the app
- * becoming visible again, and connectivity returning — and those are precisely
- * the moments when staleness matters: someone drives back into service and
- * opens the app to find out whether the fire has moved. An arrival bypasses the
- * TTL outright, so no arrival is ever answered from a 19-minute-old copy.
- *
- * That leaves the TTL governing exactly ONE scenario: the app held continuously
- * in the foreground, never backgrounded, never losing signal, for 20+ minutes.
- * FIRMS itself refreshes roughly hourly, so a 20-minute ceiling on that case is
- * comfortably inside the upstream cadence — nothing new is being missed.
- *
- * The cost side is what changed: with conditional GETs (`If-None-Match`, see
- * `fireFetchV2`) a re-ask inside the edge window is a bodiless 304 rather than
- * ~180 KB. Raising 5 → 20 cuts the redundant round trips by 4× on top of that.
- *
- * ⚠️ Do NOT read `fireArrival` as a permanent override. Its debt is per-READER
- * (`bake` and `map` refresh different ground and cannot discharge each other's
- * debt), it is PEEKED at the gate and only settled once a fetch has actually
- * been attempted, and it is cleared on consumption. A pass that never runs
- * leaves nothing armed. Do not modify `fireArrival` to prop this TTL up.
+ * ⚠️ Do NOT read `fireArrival` as a permanent override — its debt is per-READER (bake/map can't discharge each other's), peeked at the gate, settled only after a fetch attempt, cleared on consumption; do not modify `fireArrival` to prop this TTL up.
  */
 export const FIRE_V2_TTL_MS = 20 * 60 * 1000;
 
@@ -118,27 +35,13 @@ export type FireConfidenceV2 = "low" | "nominal" | "high";
 /**
  * ONE RENDER-READY DISC.
  *
- * The three GeoJSON members are handed to `setData()` untouched. They are
- * stored as SERIALIZED STRINGS, not objects, and that is deliberate on three
- * counts:
+ * Stored as SERIALIZED STRINGS, not objects — parsed objects carry no `$state` proxies, and proxies crossing the mapbox-boundary corrupt the transfer with features silently vanishing (mapbox-boundary law).
  *
- *   1. A string is one heap object regardless of how many features it encodes.
- *      v1 held ~36,489 live JS objects per disc, each with its own coordinate
- *      array — the shape that made every pass over them expensive.
- *   2. `JSON.parse` at paint time produces a plain object with no `$state`
- *      proxies, which is exactly what the GL worker boundary requires
- *      (mapbox-boundary law: proxies corrupt the transfer and features silently
- *      vanish). v1 needed a defensive `JSON.parse(JSON.stringify(...))` clone
- *      on every paint; here the stored form is already safe.
- *   3. IndexedDB stores it without structured-cloning a deep object graph.
- *
- * The phone never inspects what is inside these strings. If it ever needs to,
- * that is the Worker's job — add a field, do not add a parser.
+ * The phone never inspects what's inside these strings — if it needs to, that's the Worker's job: add a field, do not add a parser.
  */
 export interface FireDiscV2 {
 	readonly version: number;
-	/** Server's fetch time. The edge may serve a cached slice, so our own clock
-	 *  would overstate freshness by up to the cache TTL. */
+	/** Server's fetch time — our own clock would overstate freshness by up to the cache TTL if used instead. */
 	readonly fetchedAt: number;
 	/** Disc centre this was fetched for, [lng, lat]. */
 	readonly center: readonly [number, number];
@@ -151,19 +54,12 @@ export interface FireDiscV2 {
 	readonly clustersJson: string;
 	/** Render-ready outline polygons. Empty FeatureCollection if none. */
 	readonly outlinesJson: string;
-	/** How many detections the Worker put in `pointsJson`. Stored so the UI can
-	 *  say "0 fires here" WITHOUT parsing the payload — the one number the phone
-	 *  legitimately needs about the contents. */
+	/** How many detections the Worker put in `pointsJson` — lets the UI say "0 fires here" without parsing the payload. */
 	readonly pointCount: number;
 	/**
-	 * The Worker's `ETag` for the body in `pointsJson`/`clustersJson`/
-	 * `outlinesJson`, when it sent one. Replayed as `If-None-Match` on the next
-	 * fetch so an unchanged disc costs a bodiless 304 instead of ~180 KB.
+	 * The Worker's `ETag` for pointsJson/clustersJson/outlinesJson, replayed as `If-None-Match` so an unchanged disc costs a bodiless 304 instead of ~180 KB.
 	 *
-	 * OPTIONAL, and deliberately NOT a reason to bump `FIRE_V2_VERSION`: records
-	 * written before this field existed simply lack it, so their first fetch
-	 * after upgrade is an ordinary 200 that fills it in. Absent means "ask
-	 * unconditionally", never "invalid".
+	 * OPTIONAL — deliberately NOT a reason to bump `FIRE_V2_VERSION`; absent means "ask unconditionally", never "invalid".
 	 */
 	readonly etag?: string;
 }
@@ -173,8 +69,7 @@ const idb = makeKeyedIdbStore<FireDiscV2>({
 	storeName: "discs",
 });
 
-/** A stable key for a disc centre. Same ~11 m rounding the rest of the offline
- *  system uses, so a moving user does not mint a new disc every few paces. */
+/** A stable key for a disc centre — same ~11 m rounding the rest of the offline system uses, so a moving user does not mint a new disc every few paces. */
 export function fireDiscKey(center: readonly [number, number]): string {
 	return `${center[0].toFixed(4)},${center[1].toFixed(4)}`;
 }
@@ -182,10 +77,7 @@ export function fireDiscKey(center: readonly [number, number]): string {
 /**
  * This disc, or null if absent / written by an older format.
  *
- * Deliberately returns STALE records. Freshness is the caller's decision
- * (`isFreshV2`), because the viewer wants whatever exists — however old — while
- * a refresh is in flight. Returning null for "stale" would blank the map at
- * exactly the moment a planter is checking it.
+ * Deliberately returns STALE records — freshness is the caller's call (`isFreshV2`); returning null for "stale" would blank the map exactly when a planter checks it.
  */
 export async function readFireDisc(key: string): Promise<FireDiscV2 | null> {
 	const rec = await idb.get(key);
@@ -206,26 +98,13 @@ export async function deleteFireDisc(key: string): Promise<void> {
 }
 
 /**
- * THE LIGHT INDEX — every stored disc's centre, radius and age. Never payloads.
+ * THE LIGHT INDEX — every stored disc's centre, radius, age; never payloads.
  *
- * ══════════════════════════════════════════════════════════════════════════
- * ⛔ THIS IS THE ONLY WHOLE-STORE READ IN V2, AND IT MUST STAY LIGHT.
- * ══════════════════════════════════════════════════════════════════════════
+ * ⛔ THE ONLY WHOLE-STORE READ IN V2 — MUST STAY LIGHT.
  *
- * Every question the app asks ACROSS discs is geographic or temporal:
- *   "is this view covered?"  "is that disc stale?"  "which should I evict?"
- * None of them needs a single detection.
+ * `getAllProjected` cursor-streams — each record is deserialized, reduced to four scalars, and immediately collectable; peak heap is one disc, not all of them.
  *
- * v1 answered exactly these questions by loading full records, and a DevTools
- * allocation profile put that read at **616 MB — 90.4% of the entire profile**,
- * with the browser reporting a `'success' handler took 600–1140 ms`. The fix
- * there was `getAllProjected`; here the projection is the ONLY way in, so the
- * expensive read has no door to come back through.
- *
- * `getAllProjected` cursor-streams: each record is deserialized, reduced to
- * these four scalars, and immediately collectable. Peak heap is one disc, not
- * all of them. See `scripts/check-blob-getall.mjs` for the guard that stops a
- * future caller reaching for `getAll()` instead.
+ * A guard in `scripts/check-blob-getall.mjs` stops a future caller reaching for `getAll()` instead.
  */
 export interface FireDiscMetaV2 {
 	readonly key: string;
@@ -235,9 +114,7 @@ export interface FireDiscMetaV2 {
 	readonly pointCount: number;
 }
 
-/** Memoized because the index is tiny (tens of entries) and read on every
- *  coverage check. Invalidated by every write and delete, so a freshly-baked
- *  disc is visible to the very next question. */
+/** Memoized — the index is tiny (tens of entries) and read on every coverage check; invalidated by every write/delete so a freshly-baked disc is visible next question. */
 let indexMemo: FireDiscMetaV2[] | null = null;
 
 export function invalidateDiscIndex(): void {
@@ -278,12 +155,9 @@ export function isFreshV2(
 }
 
 /**
- * Age in plain English. SAFETY COPY, not a debug string — this is what a
- * planter reads before deciding whether to trust the dots.
+ * Age in plain English. SAFETY COPY, not a debug string — what a planter reads before trusting the dots.
  *
- * Never reports a negative age: a phone whose clock has drifted behind the
- * server's would otherwise render "in 3 minutes", which reads as nonsense at
- * the exact moment the number matters.
+ * Never reports a negative age — clock drift would otherwise render "in 3 minutes", reading as nonsense exactly when it matters.
  */
 export function fireAgeLabelV2(
 	fetchedAt: number | null,

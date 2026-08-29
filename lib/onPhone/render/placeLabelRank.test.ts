@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildOfflineBaseStyle } from "./offlineBaseStyle";
 
-// The place-label rank expression is duplicated across filter / sort-key / text-size.
-// If any copy is malformed Mapbox drops the whole layer SILENTLY — so assert the
-// style object is well-formed and the three copies agree.
+// If any of the three duplicated rank-expression copies (filter / sort-key / text-size) is malformed, Mapbox drops the whole layer silently.
 describe("offline base style — place-label ranking", () => {
 	const style = buildOfflineBaseStyle() as any;
 	const layer = style.layers.find((l: any) => l.id === "place-label");
@@ -12,8 +10,6 @@ describe("offline base style — place-label ranking", () => {
 		expect(layer).toBeTruthy();
 	});
 
-	// Evaluate the effective-rank expression by hand against real rows, mirroring
-	// what Mapbox will compute, and check the cross-border cases that regressed.
 	const popRank = (p: number) =>
 		p >= 1_000_000 ? 1 : p >= 300_000 ? 2 : p >= 100_000 ? 3 : p >= 50_000 ? 4
 		: p >= 20_000 ? 5 : p >= 10_000 ? 6 : p >= 3_000 ? 7 : 8;
@@ -46,7 +42,6 @@ describe("offline base style — place-label ranking", () => {
 	});
 
 	it("population never makes a place WORSE than its scalerank", () => {
-		// Jasper: NE promotes it editorially despite a small population.
 		expect(eff(7, 4590)).toBeLessThanOrEqual(7);
 	});
 });

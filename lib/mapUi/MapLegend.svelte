@@ -1,45 +1,8 @@
-<!--
-  MapLegend — the colour/symbol key for the map, shared by BOTH the online
-  Sandbox map (/mobile/map) and the offline map (/mobile/offlinev4).
-
-  PRESENTATION — a TOP DRAWER that slides down and STAYS down. It portals out
-  of the page (overlayPortal, position:fixed, z:51) exactly like the typing
-  top-drawers (InputPopover) so it drops from the true top edge, OVER the z:50
-  nav — without the portal, the page's .mobile-content z:0 stacking context
-  traps it beneath the nav and the close is unreachable. Unlike InputPopover
-  there is deliberately NO backdrop and NO tap-outside dismiss: the whole point
-  is flipping the show/hide eyes and the PDF opacity slider while panning the
-  live map underneath and watching the effect. The ONLY way out is the gold OK
-  button (header styled 1:1 after InputPopover's inline-confirm header).
-  Opening it collapses the bottom modules drawer (MapDrawControls wraps
-  onLegend) so the map is clear.
-
-  It always lists the USER OVERLAY types the inspector draws — Pin, Plot,
-  Polygon, PDF map — because those are what's actually on the map and were
-  missing from the old basemap-only legend. This is also the ONE place the
-  show/hide toggles live (they used to be duplicated in the Basemap popover).
-  The PDF row carries the shared overlay-opacity slider INLINE between its
-  label and eye (same overlayOpacity store as the inbox sheet + layers panel,
-  so all three sliders stay in sync). The Polygon row carries the same kind of
-  slider — a blanket fill-opacity for ALL drawn polygons (polygonOpacity store
-  → applyPolygonFillOpacity in mapDraw.ts); outlines never fade. BOTH sliders
-  rest at CENTRE (their default strength — a tick above the track marks it):
-  left fades toward invisible, right pushes stronger. Labels in slider rows are
-  a fixed-width column so the two tracks align and run the same length.
-  Callers may pass extra `basemapRows` for
-  the basemap line/fill types (roads, water, …) which differ per route; those
-  render in a second group below the overlays.
-
-  Swatches mirror how each thing renders on the map:
-    • Pin        — the default pin glyph (pin_default_sm.webp, same asset as the marker)
-    • Plot       — gold "N" plaque (numbered Quality-704 plot pin)
-    • Polygon    — terracotta fill + solid terracotta outline (POLYGON_FILL/OUTLINE)
-    • PDF map    — the pdfMaps globe icon (the imported-overlay layer)
--->
+<!-- MapLegend — colour/symbol key shared by the online (/mobile/map) and offline (/mobile/offlinev4) maps. -->
+<!-- ⚠️ Must render via overlayPortal (position:fixed, z:51) — without it, .mobile-content's z:0 stacking context traps the drawer under the nav and the close becomes unreachable. -->
 <script lang="ts">
 import { cubicOut } from "svelte/easing";
 import { fly } from "svelte/transition";
-// These stores moved into this child with the legend (28 Aug 2026).
 import {
 	FIRE_HIDE_TTL_MS,
 	type OverlayKind,
@@ -49,7 +12,6 @@ import {
 	overlayOpacity,
 	polygonOpacity,
 } from "../mapState/overlayOpacity.svelte";
-// Now comes from the host through mapHostPorts (28 Aug 2026).
 // overlayPortal and createEyeToggle are ports.ui.*.
 import type { MapHostPorts } from "../shared/mapHostPorts";
 
@@ -66,8 +28,6 @@ let {
 // `use:` wants a plain identifier, so the host's action is bound locally.
 const overlayPortal = ports.ui.overlayPortal;
 
-// Toggle eyes — hiding a type plays the close sequence (rests closed), showing
-// plays open (rests open). Keyed by overlay kind so only the tapped row moves.
 const eyeToggle = ports.ui.createEyeToggle();
 $effect(() => () => eyeToggle.destroy());
 
@@ -87,10 +47,7 @@ type SwatchKind =
 	| "fire";
 export type LegendRow = { label: string; color: string; swatch: SwatchKind };
 
-// The drawn-overlay rows. Every row maps to an OverlayKind and is a TAP TOGGLE
-// (tap to show/hide that type on a busy map; off = dimmed). Colours mirror the
-// real render paints: POLYGON_FILL/OUTLINE in $parent/siblings/.../mapDraw.ts, gold glyphs
-// in pinMarkers.
+// OVERLAY_ROWS — tap-to-toggle rows; colours mirror the real map paints (POLYGON_FILL/OUTLINE in mapDraw.ts, gold glyphs in pinMarkers).
 type OverlayRow = { label: string; color: string; swatch: SwatchKind; kind: OverlayKind };
 const OVERLAY_ROWS: readonly OverlayRow[] = [
 	{ label: "Pin", color: "#f5d565", swatch: "pin", kind: "pins" },
@@ -99,11 +56,7 @@ const OVERLAY_ROWS: readonly OverlayRow[] = [
 	{ label: "PDF map", color: "#f5d565", swatch: "pdf", kind: "pdf" },
 ] as const;
 
-// Wildfire sits in its OWN group, below "your marks", because it is not one of
-// your marks — it's someone else's ground truth laid over your map. Same row
-// chrome and the same eye as everything else (one component, one set of
-// styles), but its own heading so the distinction is visible rather than
-// implied. Terracotta, never red: red means a destructive action here.
+// ⚠️ Terracotta, never red — red means a destructive action in this app.
 const FIRE_ROW: OverlayRow = {
 	label: "Wildfire",
 	color: "#b36940",
@@ -111,20 +64,17 @@ const FIRE_ROW: OverlayRow = {
 	kind: "fires",
 };
 
-/** TTL in whole hours, for the note under the row. Derived, never retyped. */
+/** TTL in whole hours — derived, never retyped. */
 const FIRE_HIDE_HOURS = Math.round(FIRE_HIDE_TTL_MS / 3_600_000);
 /** The note swaps to the expiry promise only while fires are actually hidden. */
 const fireHiddenNote = $derived(!overlayVisibility.fires);
 const fireOn = $derived(overlayVisibility.isVisible(FIRE_ROW.kind));
-/** Same lit-while-animating lag as the rows above: the lid finishes closing in
- *  a LIT row, THEN the row dims. */
+/** Lit-while-animating law: the lid finishes closing lit, THEN the row dims (no lag on open). */
 const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 
 </script>
 
-<!-- Same window-blind motion as the InputPopover top drawers (fly from above,
-     cubicOut). |global because the parents mount/unmount us via {#if legendOpen}.
-     overlayPortal lifts it out of the page so z:51 beats the z:50 nav bar. -->
+<!-- |global — parents mount/unmount this via {#if legendOpen}, so the transition needs the global modifier. -->
 <div
 	class="legend-card"
 	role="dialog"
@@ -133,34 +83,21 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 	in:fly|global={{ y: -420, duration: 500, easing: cubicOut, opacity: 1 }}
 	out:fly|global={{ y: -420, duration: 380, easing: cubicOut, opacity: 1 }}
 >
-	<!-- Header matches the InputPopover drawers' inline-confirm header 1:1
-	     (lowercase gold title + glossy gold OK) — the legend can't literally BE
-	     an InputPopover (that closes on tap-outside; this must not), so the
-	     title/OK styles below are copied from it. OK is the only way out. -->
+	<!-- Header copies InputPopover's inline-confirm style but must not close on tap-outside like InputPopover does. -->
 	<div class="legend-head">
 		<h2 class="legend-title">legend</h2>
 		<button type="button" class="legend-ok" aria-label="Close legend" onclick={onClose}>OK</button>
 	</div>
 
-	<!-- Your marks — always present. Toggleable rows (kind != null) tap to show/hide
-	     that overlay type; off = dimmed + struck eye. The ruler row is a static key. -->
 	<p class="legend-group-label">Your marks · tap to show / hide</p>
 	<ul class="legend-list">
 		{#each OVERLAY_ROWS as entry (entry.label)}
 			{@const on = overlayVisibility.isVisible(entry.kind)}
-			<!-- `dark` lags `on` by the close animation (lit-while-animating law in
-			     eyeBlink.svelte.ts): the lid must finish closing in a LIT row, THEN
-			     the row dims. Opening needs no lag — un-dim first, lid opens lit. -->
+			<!-- `dark` lags `on` (lit-while-animating law, eyeBlink.svelte.ts) — closes lit, then dims; opening has no lag. -->
 			{@const dark = eyeToggle.isSettledOff(on, entry.kind)}
 			<li class="legend-row">
 				{#if entry.kind === "pdf" || entry.kind === "shapes"}
-					<!-- Slider rows — PDF drives the shared overlay opacity (inbox
-					     sheet + layers panel move in sync); Polygon drives the blanket
-					     fill-opacity for ALL drawn polygons (outlines stay put). Either
-					     way the slider sits INLINE between the label and the eye and the
-					     map fades live as you drag. A slider can't nest inside a
-					     <button>, so these rows are divs and the EYE is the show/hide
-					     toggle. -->
+					<!-- A <range> can't nest inside a <button> — these rows are divs; the eye is the toggle button. -->
 					{@const slider = entry.kind === "pdf" ? overlayOpacity : polygonOpacity}
 					<div class="legend-toggle legend-toggle--slider" class:is-off={dark}>
 						{#if entry.kind === "pdf"}
@@ -171,8 +108,7 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 							<span class="legend-swatch legend-swatch--fill" style:--swatch-color={entry.color}></span>
 						{/if}
 						<span class="legend-label">{entry.label}</span>
-						<!-- Wrapper carries the centre TICK (::before) — both sliders
-						     rest at 50%, the designed strength, so the tick marks home. -->
+						<!-- Wrapper carries the centre TICK (::before) — sliders rest at 50%, so the tick marks home. -->
 						<span class="legend-slider-wrap">
 							<input
 								class="legend-slider"
@@ -222,11 +158,7 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 		{/each}
 	</ul>
 
-	<!-- Wildfire — its own group because it is NOT one of your marks. Same row
-	     chrome, same eye, same styles as above (literally the same component and
-	     the same CSS, not a lookalike). The note under it is the honest part: the
-	     eye is a shift-length declutter, not a preference, and it re-arms itself
-	     (FIRE_HIDE_TTL_MS in overlayVisibility.svelte.ts). -->
+	<!-- Wildfire eye re-arms itself after FIRE_HIDE_TTL_MS (overlayVisibility.svelte.ts). -->
 	<p class="legend-group-label">Wildfire · not your marks</p>
 	<ul class="legend-list">
 		<li class="legend-row">
@@ -268,12 +200,7 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 </div>
 
 <style>
-	/* Top drawer — full-width sheet flush with the top edge, rounded bottom
-	   corners. position:fixed + overlayPortal = frame-local on dt-web (the
-	   phone frame's contain:layout is the containing block) and above the
-	   z:50 nav (z:51, same as InputPopover — portalling out of the page's
-	   .mobile-content z:0 stacking context is what lets 51 beat 50). No
-	   backdrop: the map underneath stays fully interactive while it's open. */
+	/* position:fixed + overlayPortal is frame-local on dt-web — the phone frame's contain:layout is the containing block. */
 	.legend-card {
 		position: fixed;
 		z-index: 51;
@@ -292,9 +219,6 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 		border-top: none;
 		box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 	}
-	/* Header — copied from InputPopover's inline-confirm header
-	   (.cache-popover-header / .cache-popover-title--inline / .cache-popover-ok)
-	   so this drawer reads as the same family as every other top drawer. */
 	.legend-head {
 		display: flex;
 		align-items: center;
@@ -371,10 +295,7 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 		color: var(--color-accent-sage, #9bb07a);
 	}
 	.legend-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-	/* One-line key note under the wildfire row. Sage (never grey — the
-	   no-gray-on-black rule; this is read outdoors), and full-size rather than
-	   shrunk-to-fine-print: it carries the "it comes back on" promise, which is
-	   the whole reason hiding a hazard layer is acceptable at all. */
+	/* Sage, never grey — no-gray-on-black rule (read outdoors); full-size, not fine print. */
 	.legend-note {
 		margin: 0;
 		padding: 0 0.2rem;
@@ -387,8 +308,7 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 	.legend-label { font-size: 0.85rem; line-height: 1.2; color: var(--rt-fg, #f3efe9); }
 	.legend-swatch { flex: none; width: 1.5rem; height: 1rem; display: block; }
 
-	/* Toggle row — a tappable button (fine gold border so it reads as one). On = full
-	   opacity + gold eye; off = dimmed + faded eye (the overlay is hidden on the map). */
+	/* On = full opacity + gold eye; off = dimmed + faded eye (overlay hidden on map). */
 	.legend-toggle {
 		flex: 1;
 		display: flex;
@@ -405,16 +325,10 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 		transition: opacity 160ms ease, border-color 160ms ease, background 160ms ease;
 	}
 	.legend-toggle:active { background: color-mix(in srgb, var(--color-accent), transparent 88%); }
-	/* OFF — fade the whole row and soften the border so "hidden" reads at a glance. */
 	.legend-toggle.is-off {
 		opacity: 0.45;
 		border-color: color-mix(in srgb, var(--color-accent), transparent 85%);
 	}
-	/* Inline opacity sliders (PDF + Polygon rows) — a proper aligned COLUMN.
-	   The label gets a fixed width so every slider starts at the same x and
-	   runs the same length, instead of staggering after each label. Kept TIGHT
-	   (both slider labels are 7ch — "Polygon" / "PDF map") so the track gets
-	   the extra length (~180px on the 390 frame, not ~130). */
 	.legend-toggle--slider .legend-label {
 		flex: 0 0 8ch;
 		overflow: hidden;
@@ -428,8 +342,7 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 		display: flex;
 		align-items: center;
 	}
-	/* Centre TICK — both sliders rest at 50% (the designed strength), so a
-	   small white notch above the track marks home. */
+	/* Centre TICK — sliders rest at 50%, so a small white notch marks home. */
 	.legend-slider-wrap::before {
 		content: "";
 		position: absolute;
@@ -446,8 +359,7 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 		width: 100%;
 		accent-color: var(--accent-gold, #f5d04a);
 	}
-	/* Slider rows are divs (a slider can't live inside a <button>), so the eye
-	   gets its own real button — bare chrome, generous tap target. */
+	/* Slider rows are divs — the eye gets its own real button (bare chrome, tap target). */
 	.legend-eye-btn {
 		flex: none;
 		margin: -0.2rem -0.25rem;
@@ -483,16 +395,14 @@ const fireDark = $derived(eyeToggle.isSettledOff(fireOn, FIRE_ROW.kind));
 			repeating-linear-gradient(90deg, var(--swatch-color) 0 2px, transparent 2px 7px),
 			linear-gradient(var(--swatch-color), var(--swatch-color)) center / 100% 2px no-repeat;
 	}
-	/* Filled chip (water; polygon — terracotta fill + solid terracotta outline,
-	   matching the on-map POLYGON_FILL/OUTLINE paints). */
+	/* Filled chip (water; polygon — terracotta fill + solid terracotta outline, matching POLYGON_FILL/OUTLINE). */
 	.legend-swatch--fill {
 		height: 1rem;
 		border-radius: 0.25rem;
 		background: color-mix(in srgb, var(--swatch-color), transparent 60%);
 		border: 1.5px solid var(--swatch-color);
 	}
-	/* Wildfire — the real on-map flame asset, so the key matches the map 1:1
-	   (same reasoning as the pin swatch below). */
+	/* Wildfire — the real on-map flame asset, matching the map 1:1. */
 	.legend-swatch--fire,
 	/* Pin — the real default-pin marker asset, so the key matches the map 1:1. */
 	.legend-swatch--pin,

@@ -1,35 +1,4 @@
-/**
- * TWO PARENTS, ONE CHILD, ONE COMPONENT.
- *
- * Every route in every tier that shows the offline map must render the SAME
- * FILE. Not a copy of it, not a fork of it, not a second implementation that
- * looks the same — one file on disk, reached by import.
- *
- * WHY THIS TEST EXISTS
- * On 28 Aug 2026 this was argued for roughly twelve hours. A duplicate offline
- * map kept reappearing in ReTreever; it was deleted four times and recreated
- * four times. Every non-mechanical guard was tried and every one failed:
- *
- *   - Comments saying "do not duplicate this"  -> written, then ignored.
- *   - An agent stating it understood           -> stated repeatedly, then not.
- *   - Deleting the duplicate by hand           -> held until it was recreated.
- *   - kit.files.routes pointing at the child   -> WORST. That option REPLACES
- *     a repo's whole route tree, so making ReTreever share the component
- *     deleted the rest of Get Cache: /menu /cache /inbox /account /quality704
- *     all 404'd at once.
- *
- * Prose cannot fail a build. This can. If a second copy appears, this test
- * names the file and goes red, in CI and locally, without anyone having to
- * notice or remember.
- *
- * WHAT "SHARING" MEANS HERE, AND WHAT IT DOES NOT
- * Sharing happens at the IMPORT layer: a small route file in each tier imports
- * the one component. That ADDS a route without touching the others. It does
- * not happen at the ROUTE-TREE layer: `kit.files.routes` takes exactly one
- * path and does not merge, so pointing a parent at the child's routes replaces
- * everything that parent had. rapper may do it (it has no routes of its own to
- * lose); ReTreever may not (it has thirty). See the assertion at the bottom.
- */
+// ⛔ Never point a parent's kit.files.routes at the child's route dir when that parent has its own routes (e.g. ReTreever) — it REPLACES the whole route tree rather than merging, so every other route 404s at once. Share at the import layer instead: a small route file per tier imports the one shared component.
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,11 +13,7 @@ const RAPPER = join(FETCH, "rapper");
 /** The one file every tier must land on. */
 const COMPONENT = join(CHILD, "lib/OfflineMapPage.svelte");
 
-/**
- * Resolve an import specifier the way the bundler does, so the test proves the
- * real thing rather than a string match. `$parent/siblings/<child>` is the
- * alias both parents declare; from a parent it means `../<child>`.
- */
+/** Resolves an import specifier the way the bundler does; `$parent/siblings/<child>` means `../<child>` from a parent. */
 function resolveSpecifier(spec: string, fromFile: string): string | null {
 	let path: string;
 	if (spec.startsWith("$parent/siblings/")) {
@@ -102,10 +67,7 @@ describe("two parents, one child, one component", () => {
 		expect(existsSync(COMPONENT), `the offline map component is missing: ${COMPONENT}`).toBe(true);
 	});
 
-	/**
-	 * THE CORE ASSERTION. Every route that renders the offline map resolves to
-	 * the same inode. A second copy anywhere makes this fail and names it.
-	 */
+	/** THE CORE ASSERTION: every route that renders the offline map resolves to the same inode — a second copy anywhere makes this fail and names it. */
 	it("every importer of the offline map resolves to the SAME file", () => {
 		const importers = importersOfComponent([
 			join(CHILD, "routes"),
@@ -120,12 +82,7 @@ describe("two parents, one child, one component", () => {
 		).toBe(true);
 	});
 
-	/**
-	 * NO SECOND IMPLEMENTATION. A copy does not have to be imported to do
-	 * damage — the duplicate that cost 28 Aug 2026 was a standalone 1,702-line
-	 * page in ReTreever that nothing imported. Detect it by SHAPE: any other
-	 * route file carrying the map engine's own markers is a fork.
-	 */
+	/** NO SECOND IMPLEMENTATION — a copy doesn't have to be imported to do damage. Detected by SHAPE: any other route file carrying the map engine's own markers is a fork. */
 	it("no second offline-map implementation exists in either parent", () => {
 		const FINGERPRINTS = ["class=\"stage\"", "class=\"rig\"", "mapContainer"];
 		const forks: string[] = [];
@@ -144,15 +101,7 @@ describe("two parents, one child, one component", () => {
 		).toBe(0);
 	});
 
-	/**
-	 * RETREEVER MUST KEEP ITS OWN ROUTE TREE.
-	 *
-	 * `kit.files.routes` takes ONE path and does not merge. Setting it in
-	 * ReTreever replaces all thirty-odd Get Cache routes with the child's two.
-	 * Measured 28 Aug 2026: /menu /cache /map /inbox /account /quality704 all
-	 * 404'd simultaneously and the child's dev nav rendered on ReTreever's host.
-	 * Sharing belongs at the import layer, which adds instead of replacing.
-	 */
+	// ⛔ kit.files.routes takes ONE path and doesn't merge — setting it in ReTreever replaces all thirty-odd Get Cache routes with the child's two (measured 28 Aug 2026: /menu /cache /map /inbox /account /quality704 all 404'd at once). Share at the import layer instead.
 	it("ReTreever does not hand its route tree to the child", () => {
 		const config = join(RETREEVER, "svelte.config.js");
 		if (!existsSync(config)) return; // ReTreever not checked out beside us

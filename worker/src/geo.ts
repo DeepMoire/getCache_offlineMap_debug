@@ -1,12 +1,3 @@
-/**
- * Tile geometry for the blob. Pure maths — no I/O, no MapLibre, no storage.
- *
- * Everything here answers one of two questions:
- *   1. WHICH tiles does a 30 km circle touch?
- *   2. WHERE is that circle inside a given tile? (so the clip can cut to it)
- */
-
-
 export interface TileId {
 	z: number;
 	x: number;

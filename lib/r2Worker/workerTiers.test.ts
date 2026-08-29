@@ -1,21 +1,7 @@
 /**
- * TWO CLOUD TIERS, AND NO LOCAL ONE.
- *
- * Chris's call, 27 Aug 2026, after a day lost to a switch that looked broken:
- *
- *   r2_prod — tiles-prod.getcache.org.     Every shipped phone. Real users.
- *   r2_dev  — tiles-dev.getcache.org. A deployed sandbox. Contractors deploy here.
- *
- * `local_dev` (127.0.0.1:8787) was REMOVED from the CONFIG panel: it only
- * answered while a terminal stayed open, so the switch was usually dead, and a
- * dead switch reads as a broken app. "Delete the local one, it's too much work."
- *
- * Both tiers read the SAME R2 bucket, so a difference between them is always
- * CODE and never data — that is the entire point of having two.
- *
- * NEITHER HOST IS BAKED IN. Both are injected by the app at boot
- * (configureTilesHost / configureTilesDevHost), because this child is
- * published on its own and a hardcoded origin would bill whoever owns it.
+ * ⚠️ Neither host is baked in — both injected at boot (configureTilesHost / configureTilesDevHost), since this child ships standalone and a hardcoded origin would bill whoever owns it.
+ * r2_prod — tiles-prod.getcache.org, every shipped phone, real users.
+ * r2_dev — tiles-dev.getcache.org, a deployed sandbox, contractors deploy here.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -26,8 +12,6 @@ beforeEach(() => {
 describe("worker tiers", () => {
 	it("offers exactly production and r2Dev — localDev is gone from the switch", async () => {
 		const m = await import("./local_dev/tilesHost");
-		// The type is compile-time, so assert on behaviour: both cloud tiers
-		// resolve once configured, and each resolves to its OWN host.
 		m.configureTilesHost("https://prod.example.test");
 		m.configureTilesDevHost("https://dev.example.test");
 
@@ -41,10 +25,8 @@ describe("worker tiers", () => {
 	it("r2Dev is null until an app configures it — never a silent fallback to prod", async () => {
 		const m = await import("./local_dev/tilesHost");
 		m.configureTilesHost("https://prod.example.test");
-		// Deliberately NOT configuring the dev host.
 		m.setWorkerTarget("r2Dev");
-		// Falling back to production here would mean a developer testing dev
-		// while silently hitting what users read. Null greys the row instead.
+		// falling back to prod would let a dev-tester silently hit real user data — null greys the row instead.
 		expect(m.tilesHost()).toBeNull();
 		expect(m.packUrl()).toBeNull();
 	});
@@ -59,8 +41,7 @@ describe("worker tiers", () => {
 			import("./local_dev/tilesHost"),
 			import("./r2_prod/tilesHost"),
 		]);
-		// The r2Worker README requires local_dev/ and r2_prod/ stay identical;
-		// a tier added to one and not the other is the drift it warns about.
+		// r2Worker README requires local_dev/ and r2_prod/ stay identical — a tier added to only one is the drift this catches.
 		expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
 	});
 });

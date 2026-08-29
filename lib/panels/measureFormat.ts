@@ -1,12 +1,4 @@
-// Shared number formatting for on-map measurement readouts — used by BOTH the
-// Snake Ruler (snakeRuler/SnakeRuler.svelte) and the line/polygon draw tool
-// (lineLabels.ts, MapDrawControls), so totals + subtotals round identically.
-//
-// Conventions (the ruler's, kept as the canonical one):
-//   • distance: <1 km → whole metres; ≥1 km → km (≥20 km integer, else 1 dp)
-//   • area:     <1 ha → 2 dp; 1–<30 ha → 1 dp; ≥30 ha → integer ha;
-//               ≥100,000 ha → switch up to km² (1 km² = 100 ha)
-//   • all integer parts get thousands separators ("18,194").
+// Shared number formatting for on-map measurement readouts — used by BOTH the Snake Ruler (snakeRuler/SnakeRuler.svelte) and the line/polygon draw tool (lineLabels.ts, MapDrawControls); keep rounding conventions in sync so totals + subtotals round identically.
 
 /** Insert thousands separators into the integer part of a numeric string. */
 export function commas(s: string): string {

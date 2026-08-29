@@ -1,32 +1,4 @@
-/**
- * offlineBakeService — the offline map's DATA engine, running APP-WIDE.
- *
- * ⛔ THE ROOT LAW THIS FILE EXISTS TO ENFORCE:
- *   An offline blob is downloaded the moment a feature is created/touched and
- *   then stays on the device, ready forever. The user NEVER has to visit the
- *   offline map for their blobs to exist — visiting it only VIEWS them. If a
- *   blob only materialised when you opened /mobile/offlinev4, it's already too
- *   late: the whole value proposition (confidence the data is there when you
- *   have no signal) is broken. (See OFFLINE_PLAN.md "Reconcile".)
- *
- * So the bake/download/evict brain lives HERE, started once from the mobile
- * layout, and reacts to host place changes regardless of which route is open.
- * The offline PAGE (`/mobile/offlinev4`) is a pure VIEWER: it reads whatever
- * this service has already written to disk and never bakes or downloads.
- *
- * This module touches NO Mapbox map — it only reads the HOST PORT (the shared
- * singleton, self-hydrating from TinyBase) and writes IndexedDB:
- *   • satellite photo   → `satelliteImage` (retreever-v3-satimg)
- *   • wall-map tiles     → `v4CloudflareTiles` (retreever-v4-tiles via /pack)
- *   • coverage registry  → `coverageRegistry` (dedup / budget / eviction brain)
- *
- * It notifies subscribers (the page) via a callback (the applier pattern —
- * NOT a reactive cross-module getter, which is brittle under HMR; see the
- * `cross-module-state-use-applier-pattern` memory): a generation counter bumps
- * when on-disk data changed (new area downloaded / evicted) so the viewer
- * re-decodes, and a note string drives the viewer's "Saving offline map…"
- * spinner.
- */
+/** ⛔ offlineBakeService — bakes/downloads/evicts every feature's blob APP-WIDE the moment it's touched, independent of the /mobile/offlinev4 viewer; the viewer only VIEWS, never bakes. (See OFFLINE_PLAN.md "Reconcile", [[cross-module-state-use-applier-pattern]].) */
 
 import { isDownloadGuardTripped } from "../store/downloadGuard";
 
@@ -76,46 +48,27 @@ import { FIRE_RADIUS_KM } from "../../shared/fireContract";
 import { purgeDeadRoadRasters } from "../store/tombstones/purgeRoadRasters";
 import { beginWork, noteQueued, noteSkip , noteCircuit } from "../../shared/workMeter.svelte";
 
-/**
- * BLOB_VERSION — the signature of "what a complete offline blob looks like right
- * now": the ring geometry (radii + zooms), the pack wire format, the satellite
- * radius, and the satellite bake version, all joined. DERIVED, not hand-bumped —
- * change any input (grow the detail ring, bump the pack format, widen the
- * satellite) and this string changes automatically. The reconcile stamps it on
- * every area it builds and refuses to skip an area whose stored stamp ≠ this one,
- * so old pins re-download under the new shape instead of being pinned by a bare
- * hasLines:true.
- */
+/** BLOB_VERSION — signature of a complete blob (ring geometry + pack format + satellite radius/bake version); derived, not hand-bumped, so any input change forces old pins to re-download under the new shape. */
 export const BLOB_VERSION = [
 	`pf${PACK_FORMAT_VERSION}`,
-	// THE SHAPE. Was `rings…`, a list of radius@zoom pairs. The unit is now a
-	// square grid CELL — which IS the z10 slippy tile — so the stamp names the
-	// zoom (from which the cell size follows) and the guaranteed radius.
-	// Deliberately NOT a km cell size: a slippy tile narrows with latitude, so a
-	// single number would be a lie everywhere but one parallel.
+	// Deliberately NOT a km cell size — a slippy tile narrows with latitude, so a fixed number would lie everywhere but one parallel.
 	`cell@${BLOB_TILE_Z}r${GRID_RADIUS_KM}km`,
 	`sat${BAKE_RADIUS_KM}km`,
 	`bake${BAKE_VERSION}`,
 ].join("|");
 
-// ── subscriber bridge (applier pattern) ────────────────────────────────────
 export interface OfflineBakeStatus {
 	/** The active-map spinner note ("Saving offline map…" / ""). */
 	note: string;
-	/** Bumps whenever on-disk data changed (area downloaded or evicted) — the
-	 *  viewer re-decodes its wall map + re-mounts cached photos on each bump. */
+	/** Bumps whenever on-disk data changed (download/evict) — the viewer re-decodes + re-mounts photos on each bump. */
 	generation: number;
 	/** TRUE while a pass is actively fetching missing blobs (not just idling). */
 	downloading: boolean;
 	/** How many areas the CURRENT pass still has to download (counts down live). */
 	pending: number;
-	/** How many areas' photo bakes are in backoff (the source is throttling them).
-	 *  A non-zero idle value = "sitting there with broken features, waiting to retry". */
+	/** How many areas' photo bakes are in backoff (source throttling); non-zero at idle = broken features waiting to retry. */
 	failing: number;
-	/** WHERE the current download is, [lng, lat], or null when idle.
-	 *  The waiting animation anchors to THIS, not to the map centre — the user
-	 *  asked three times for it to sit above the pin being fetched instead of
-	 *  floating mid-screen where it lands under the popover. */
+	/** WHERE the current download is ([lng,lat] or null when idle) — the waiting animation anchors here, not the map centre. */
 	at: [number, number] | null;
 }
 let status: OfflineBakeStatus = {
@@ -128,8 +81,7 @@ let status: OfflineBakeStatus = {
 };
 const listeners = new Set<(s: OfflineBakeStatus) => void>();
 
-/** Subscribe to bake status. Fires immediately with the current status, then on
- *  every change. Returns an unsubscribe fn. */
+/** Subscribe to bake status — fires immediately with current status, then on every change; returns an unsubscribe fn. */
 export function subscribeOfflineBake(
 	fn: (s: OfflineBakeStatus) => void,
 ): () => void {
@@ -174,84 +126,27 @@ function bumpGeneration(): void {
 	emit();
 }
 
-// ── reconcile (DATA only — no map) ──────────────────────────────────────────
-/**
- * THE HOST PORT — the engine's entire view of the app around it (see
- * getCache_OfflineMap/lib/shared/hostPorts.ts). Set by `startOfflineBakeService`, which every runtime
- * calls once from the mobile layout.
- *
- * Null until then, and the passes below read that as "no places yet" rather than
- * throwing: a bake can be kicked by a timer that outlives teardown, and an
- * offline map with nothing to bake is a valid state, not an error.
- */
+/** THE HOST PORT — the engine's entire view of the app (see hostPorts.ts); null until startOfflineBakeService runs, read as "no places yet" rather than thrown. */
 let ports: HostPorts | null = null;
 
 let reconciling = false;
 let rerun = false;
 let backfilled = false;
 
-// Reconcile-pass scratch: coverage keyed by areaKey (so ensureAreaData can tell
-// if a pin's tiles are already on disk), and areaKey → newest feature touch time.
+// Reconcile-pass scratch: coverage keyed by areaKey (so ensureAreaData can probe disk), and areaKey → newest feature touch time.
 let covByKey = new Map<string, CoverageRecord>();
 let touchByKey = new Map<string, number>();
 
-// SATELLITE BACKOFF — when a photo bake FAILS (the EOX source throttled, e.g. a bulk
-// import fired hundreds of bakes at once), retrying it every 20 s just keeps the
-// source rate-limited so it NEVER recovers. After each failure we set a cooldown
-// (exponential, capped at 15 min) and skip that area's photo until it lapses. Success
-// clears it. This is what lets the 🟠 "no photo" pins heal back to 🟢 instead of
-// hammering the source forever. It does NOT gate the roads — only the photo bake.
+// SATELLITE BACKOFF — a failed photo bake gets an exponential cooldown (cap 15min) so retries don't keep hammering a throttled source; does NOT gate roads, only the photo.
 const satCooldown = new Map<string, { until: number; fails: number }>();
-// FIRE BACKOFF — same shape, same reason, separate map: a throttled photo source
-// must not suppress fire refreshes, and a NASA outage must not stall photo bakes.
+// FIRE BACKOFF — same shape, separate map: a throttled photo source must not suppress fires, and a fire-source outage must not stall photo bakes.
 const fireCooldown = new Map<string, { until: number; fails: number }>();
-// THIS PASS's live position (null = unknown / not permitted). Read once at the
-// top of bakeAll and reused by the fire pass, so one geolocation read serves the
-// whole pass instead of every area asking independently.
+// THIS PASS's live position (null = unknown/not permitted) — read once at the top of bakeAll and reused by the fire pass.
 let liveFix: [number, number] | null = null;
-// Did THIS pass change anything on disk (download / fresh bake / eviction)?
-// Drives the generation bump that tells the viewer to re-decode.
+// Did THIS pass change anything on disk (download/bake/eviction)? Drives the generation bump that tells the viewer to re-decode.
 let passChanged = false;
 
-/**
- * ONE LINE PER *RUN* — not per pass. A run is "the conveyor drained".
- *
- * ── WHY A TALLY, AND WHY IT SPANS PASSES ──────────────────────────────────
- *
- * A pass walks every area on every map and downloads the ones missing. It
- * used to log three lines per area (`downloading…`, `ARRIVED:`, `server:`),
- * so a normal pass wrote sixty lines that differed only in coordinates.
- * Summing them into one line per pass was the obvious fix — and it was still
- * a wall. MEASURED 2026-08-19: ~30 consecutive
- *
- *     [roads] pass: 1 area(s), 1 tiles, 0.1 MB in 7.9s · v22-cell-frame
- *
- * lines, and the stack under each one read `bakeAll ← bakeAll ← setTimeout ←
- * bakeAll`, nested six deep.
- *
- * ⛔ THE UNIT OF WORK IS NOT A PASS. A pass is a TIME SLICE — `BAKE_PASS_BUDGET_MS`
- * stops it after one area so the main thread can serve taps, then `budgetPaused`
- * schedules the next slice. Thirty passes was ONE body of work, chopped up on
- * purpose, and reporting per slice reported the chopping, not the work.
- *
- * So the tally is CUMULATIVE, spanning every slice of one run.
- *
- * ⛔ AND IT DOES NOT PRINT. Three rewrites tried to make this line less
- * redundant — per-area, then per-pass, then per-run, then gated on bytes — and
- * every one of them still filled the console, because the redundancy was never
- * in the format. The bake fires every 20 s for as long as the app is open, so
- * ANY line it prints unconditionally is a clock: same shape, same numbers,
- * three times a minute, forever. A recurring event has nothing new to say.
- *
- * The data is good, so it is kept — behind the flag:
- *
- *     localStorage.rtVerbose = 'wall'   → the run tally + every area + slice
- *
- * The steady state of this route is SILENCE. Exactly one condition still speaks
- * unprompted (see reportRun): every area came back empty, which means the
- * Worker is answering wrong — a real failure that renders and throws nothing,
- * and that stops the moment it is fixed.
- */
+/** ⛔ Tally is CUMULATIVE across an entire run (not per pass/slice) and prints nothing unconditionally — a recurring 20s tick has nothing new to say each time; see reportRun. Opt-in detail: localStorage.rtVerbose = 'wall'. */
 const pass = {
 	slices: 0,
 	areas: 0,
@@ -262,8 +157,7 @@ const pass = {
 	cacheHits: 0,
 	builds: new Set<string>(),
 };
-/** True while the next bakeAll is a CONTINUATION of the current run, not a new
- *  one — set wherever a slice schedules its own resume. */
+/** True while the next bakeAll is a CONTINUATION of the current run, not a new one. */
 let resumingRun = false;
 function resetPassTally(): void {
 	pass.slices = 0;
@@ -275,19 +169,12 @@ function resetPassTally(): void {
 	pass.cacheHits = 0;
 	pass.builds.clear();
 }
-/**
- * Print the RUN report — only when the conveyor drained AND it did something.
- *
- * `more` is true while another slice is already scheduled (`budgetPaused`) or
- * queued (`rerun`). Reporting then would report the time-slicing, which is the
- * bug this exists to kill.
- */
+/** Print the RUN report — only once the conveyor drained AND did something; `more` means another slice is queued, so reporting then would just report the time-slicing. */
 function reportRun(more: boolean): void {
 	if (more) return; // mid-run: the next slice keeps accumulating into `pass`
 	if (pass.areas === 0) return; // fully baked: silence is the correct report
 	const mb = (pass.bytes / 1e6).toFixed(1);
-	// `empty` areas are NORMAL (ocean, wilderness — a real answer of "no roads
-	// here"), but ALL-empty is the tell that the Worker is answering wrong.
+	// `empty` areas are NORMAL (ocean/wilderness); ALL-empty is the tell that the Worker is answering wrong.
 	const allEmpty = pass.empty === pass.areas;
 	const emptyNote =
 		pass.empty > 0 ? ` · ${pass.empty} empty` : "";
@@ -296,45 +183,13 @@ function reportRun(more: boolean): void {
 	const slices = pass.slices > 1 ? ` · ${pass.slices} slices` : "";
 	const line = `${pass.areas} area(s), ${pass.tiles} tiles, ${mb} MB in ${(pass.ms / 1000).toFixed(1)}s${cache}${build}${slices}${emptyNote}`;
 
-	// ⛔ A HEARTBEAT IS NOT A REPORT — THIS LINE IS OPT-IN NOW.
-	//
-	// The bake runs every 20 s, forever, for as long as the app is open. Any
-	// line it prints unconditionally is therefore a CLOCK, not news: the same
-	// shape, the same numbers, three times a minute, saying "still fine". It
-	// was rewritten three times to be less redundant — per-area → per-pass →
-	// per-run, then gated on bytes — and each version still printed, because
-	// the redundancy was never in the FORMAT. A recurring event has nothing new
-	// to say, so the fix is not to say it better but to not say it.
-	//
-	// It is real diagnostic data, so it is kept, behind the flag that already
-	// exists for exactly this:  localStorage.rtVerbose = 'wall'
+	// ⛔ A heartbeat is not a report — this line is opt-in only (localStorage.rtVerbose = 'wall'); a recurring 20s tick has nothing new to say by printing unconditionally.
 	vlog("wall", line);
 
-	// ⛔ ONE LINE PER PASS AT warn LEVEL, ALWAYS. NOT OPT-IN.
-	//
-	// MEASURED 27 Aug 2026. Chris, for hours: "there's not one single piece of
-	// data coming from the cloud." There was. His own console held
-	//     ✅ GOT 204176 bytes in 8320 ms
-	// and neither of us saw it, because DevTools was on "Custom levels" —
-	// 3,397 info messages hidden — and EVERY line this service prints about
-	// what it actually fetched goes through vlog(), which is console.log,
-	// which is exactly the level being hidden.
-	//
-	// So the app downloaded 204 KB per area, 39 areas a pass, ~8.3 s each —
-	// five and a half minutes of real work — and said nothing at a level
-	// anyone could see. Silence read as failure for an entire day.
-	//
-	// A pass is ~5 minutes. One line at its end is not noise; it is the only
-	// evidence the thing is alive. warn, because that is what survives the
-	// default filter. [[no-silent-fallbacks]]
+	// ⛔ ONE line per pass at console.warn, ALWAYS (not opt-in) — vlog()/console.log is hidden by DevTools "Custom levels" filters, which cost a full day of silent-looking real work going unseen. [[no-silent-fallbacks]]
 	console.warn(`[roads] pass done — ${line}`);
 
-	// The ONE exception, and the only thing here that is genuinely news: EVERY
-	// area came back empty. That is not a status tick, it is the Worker
-	// answering wrong — the failure this route cannot show you any other way,
-	// because a missing tile renders nothing and throws nothing. It is also
-	// self-limiting: it stops the moment the deploy is fixed, so it can never
-	// become the wallpaper the line above became.
+	// The one exception that's genuinely news: EVERY area came back empty — the Worker is answering wrong (a missing tile renders and throws nothing otherwise).
 	if (allEmpty) {
 		console.warn(
 			`[roads] ⚠️ ALL ${pass.areas} area(s) came back EMPTY — the Worker returned no tiles (${build.trim() || "unknown build"})`,
@@ -342,24 +197,11 @@ function reportRun(more: boolean): void {
 	}
 }
 
-// LIE-FI GUARDS (July-6 field failure): on weak signal the bake's fetches used
-// to hang 30–75 s and starve the map's own requests. Two gates, both enforced
-// in kickBake so EVERY trigger path (register-fire, interval, visibilitychange,
-// map change) respects them:
-//   • BOOT DELAY — the first pass waits 20 s after service start so boot + the
-//     map's own style/tile fetches get the pipe first.
-//   • TIMEOUT BACKOFF — a pass that hit a fetch timeout/abort skips kicks for an
-//     escalating window (60 s, doubling, cap 5 min); any timeout-free pass resets.
+// LIE-FI GUARDS (regression, July-6 field failure): weak-signal fetches used to hang 30–75s and starve the map — enforced in kickBake via BOOT DELAY (20s) and TIMEOUT BACKOFF (60s doubling, cap 5min).
 const BOOT_BAKE_DELAY_MS = 20_000;
-/** How long ONE pass may spend downloading before it stops cleanly and lets the
- *  next tick continue. Measured: an unbounded pass ran 81 s on a map with many
- *  pins, with the next pass already queued — 87% of the tab's allocation was
- *  that loop's decode-and-clone, and the heap never got a quiet moment.
- *  5 s is long enough to land 1–3 areas per pass and short enough that the app
- *  is idle far more often than it is busy. */
+/** How long ONE pass may spend downloading before stopping cleanly — measured 81s unbounded (87% of tab allocation, heap never idle); 5s lands 1–3 areas per pass. */
 const BAKE_PASS_BUDGET_MS = 5_000;
-/** A budget-paused pass has work LEFT, so it must not wait the full 20 s. Long
- *  enough that the main thread and GC actually get their breath back. */
+/** A budget-paused pass has work LEFT, so it must not wait the full 20s — long enough for the main thread and GC to breathe. */
 const BUDGET_RESUME_MS = 1_500;
 const TIMEOUT_BACKOFF_START_MS = 60_000;
 const TIMEOUT_BACKOFF_CAP_MS = 300_000;
@@ -367,8 +209,7 @@ let bootBakeAt = 0; // no kicks before this timestamp
 let timeoutBackoffUntil = 0;
 let nextTimeoutBackoffMs = TIMEOUT_BACKOFF_START_MS;
 let passSawTimeout = false; // did THIS pass hit a TimeoutError/AbortError?
-// The download circuit breaker latches for the session; announce that once
-// rather than re-logging an identical stack on every 20 s tick.
+// The download circuit breaker latches for the session — announce it once, not on every 20s tick.
 let guardTripAnnounced = false;
 
 /** AbortSignal.timeout → "TimeoutError"; a manual abort → "AbortError". */
@@ -377,13 +218,7 @@ function isTimeoutErr(err: unknown): boolean {
 	return name === "TimeoutError" || name === "AbortError";
 }
 
-/**
- * Ensure ONE area's blob is on disk (photo + wall-map tiles) and RECORDED in the
- * registry — the data half of the old page `ensureArea`, with all map-mounting
- * stripped out. Bakes only what's missing (bakes are idempotent — cached if
- * present, re-fetched if a prior bake failed). Storage is keyed by AREA, not map,
- * so an area shared by pins on different maps is baked ONCE and reused.
- */
+/** Ensure ONE area's blob (photo + tiles) is on disk and recorded — idempotent (cached if present), keyed by AREA not map, so pins sharing an area bake once. */
 async function ensureAreaData(
 	center: [number, number],
 	corridor: boolean,
@@ -397,19 +232,12 @@ async function ensureAreaData(
 	let hasLines = false;
 	const prevCov = covByKey.get(key);
 
-	// The satellite photo (EOX) and the wall-map tiles (R2 /pack) are two
-	// INDEPENDENT fetches — overlap them instead of paying photo-then-tiles
-	// serially (the photo alone is ~10 s). Each task writes only its OWN outer
-	// vars, so there's no race; we join with Promise.all before recording.
+	// Photo and tiles are two INDEPENDENT fetches, overlapped via Promise.all instead of serial (photo alone is ~10s); each task writes only its own outer vars, so no race.
 	//
-	// CORRIDOR (line features): skip the satellite entirely — a route wants the
-	// roads ribbon, not a photo at every sample point. The tiles come down as a
-	// thin roads-only corridor (downloadV4Area's `corridor` flag → the Worker's
-	// CORRIDOR_RINGS), so a corridor area is "complete" with NO photo.
+	// CORRIDOR (line features): skip the satellite entirely — roads-only ribbon via downloadV4Area's `corridor` flag; a corridor area is "complete" with NO photo.
 	const satTask = (async (): Promise<void> => {
 		if (corridor) return;
-		// BACKOFF: if this area's photo bake recently failed, leave it alone until the
-		// cooldown lapses (don't re-hammer the throttled source). Roads still download.
+		// BACKOFF: if this area's photo bake recently failed, leave it alone until the cooldown lapses — roads still download.
 		const cd = satCooldown.get(key);
 		if (cd && cd.until > Date.now()) return;
 		const hadPhoto = prevCov?.hasPhoto === true;
@@ -428,8 +256,7 @@ async function ensureAreaData(
 			satCooldown.delete(key); // success → clear any backoff
 			if (!hadPhoto) passChanged = true; // a photo that wasn't there before
 		} else {
-			// Bake FAILED (source throttled / came back mostly empty). Exponential
-			// backoff: 30 s, 1 m, 2 m, … capped at 15 m, so the source can recover.
+			// Bake FAILED (throttled/empty) — exponential backoff 30s→15m cap so the source can recover.
 			noteCircuit("sat", "err", "photo bake returned nothing (throttled / empty)", key);
 			const fails = (cd?.fails ?? 0) + 1;
 			satCooldown.set(key, {
@@ -441,30 +268,17 @@ async function ensureAreaData(
 	})();
 
 	const tilesTask = (async (): Promise<void> => {
-		// CONSTRAINT VALIDATION — do NOT trust the registry flag. Verify the tiles
-		// are really on disk; a DB bump or eviction deletes them while hasLines
-		// lingers. Re-download whenever the blob is gone, so every feature's wall
-		// map self-heals on the next pass.
+		// Do NOT trust the registry flag — verify tiles are really on disk (a DB bump/eviction can delete them while hasLines lingers); re-download whenever gone (self-heal).
 		let tilesValid = false;
 		const versionCurrent = prevCov?.blobVersion === BLOB_VERSION;
 		if (prevCov?.hasLines && versionCurrent) {
-			// SURVIVAL — current version, loose probe (any disc key present). The
-			// strict centre probe thrashes on an edge-sparse area (data only far
-			// from the pin): centre empty → re-download every pass = a data runaway.
+			// Loose probe (any disc key) — a strict centre probe thrashes on edge-sparse areas (data far from pin) causing re-download every pass.
 			//
-			// `lineCount === 0` means the SERVER told us this area holds no vector
-			// data, so there is nothing on disk to probe for and the area is done.
-			// That must be an EXPLICIT zero: a MISSING count (undefined) means
-			// "unknown", and collapsing unknown→0 would mark a never-verified area
-			// as complete forever, killing the re-download self-heal after an
-			// eviction. Unknown falls through to the probe, which is the safe side.
+			// lineCount===0 must be EXPLICIT — undefined means "unknown" and must fall through to the probe; collapsing unknown→0 would mark a never-verified area complete forever.
 			tilesValid =
 				prevCov.lineCount === 0 || (await areaTilesPresent(lng, lat));
 		} else {
-			// NO RECORD or a STALE-version record → STRICT centre probe so the area
-			// "gets the memo": adopt only if a CURRENT neighbour already covers the
-			// centre (dedup — clustered stale areas reuse the first one's fresh tiles
-			// instead of each re-downloading), else re-download under the new shape.
+			// NO RECORD or STALE version → STRICT centre probe; adopt only if a CURRENT neighbour already covers it (dedup for clustered stale areas), else re-download.
 			tilesValid = await areaCentreCovered(lng, lat);
 		}
 		if (tilesValid) {
@@ -472,32 +286,16 @@ async function ensureAreaData(
 			lineBytes = prevCov?.lineBytes ?? 0;
 			lineCount = prevCov?.lineCount ?? 0;
 		} else if (typeof navigator !== "undefined" && navigator.onLine === false) {
-			// OFFLINE — the download can't succeed; skip it quietly (the area stays
-			// un-recorded so the next ONLINE pass fetches it). Throwing here would
-			// abort the whole pass and starve the rest.
+			// OFFLINE — skip quietly (area stays un-recorded for the next ONLINE pass); throwing here would abort the whole pass and starve the rest.
 		} else {
-			// ROADS ARRIVING. Every failure on this route is SILENT (a missing tile
-			// renders nothing and throws nothing), so "20 seconds passed and no
-			// roads came" must stay distinguishable from "the download never
-			// started" — but that is ONE fact per pass, not three lines per area.
-			//
-			// ⛔ This used to print `downloading…`, `ARRIVED:` and `server:` for
-			// EVERY area, and a pass walks dozens. Nine tenths of it was identical
-			// every time (same radius, same build, same shape of diag), so the one
-			// number that actually varied — did anything come down? — was buried in
-			// its own repetition. The pass tally below prints those same facts once,
-			// with the per-area detail available via `localStorage.rtVerbose='wall'`.
+			// ⛔ Per-area logging used to print 3 lines × dozens of areas (mostly identical) — now summarized once in the pass tally; per-area detail via localStorage.rtVerbose='wall'.
 			vlog(
 				"wall",
 				`downloading 30 km blob @ ${lng.toFixed(4)},${lat.toFixed(4)}…`,
 			);
 			setAt([lng, lat]);
 			const t0 = Date.now();
-			// TIMED IN THE DEBUGGER — the user asked to see "how long it took the
-			// blobs to arrive... that way we could see all of them compared".
-			// `beginWork` already gives runs / last / worst per named slot and the
-			// meter already renders it, so a blob arrival is just another slot
-			// rather than a second timing mechanism to keep in sync.
+			// Timed via beginWork (runs/last/worst per named slot, already rendered by the meter) — a blob arrival is just another slot, not a second timing mechanism.
 			const doneRoads = beginWork("roads");
 			let dl: Awaited<ReturnType<typeof downloadV4Area>>;
 			try {
@@ -523,10 +321,7 @@ async function ensureAreaData(
 			pass.ms += ms;
 			if (dl.downloaded === 0) pass.empty++;
 			if (dl.cache === "HIT") pass.cacheHits++;
-			// WHICH WORKER BUILD ANSWERED — the user could not tell whether a deploy
-			// had landed, so every result was ambiguous ("I can never tell when you
-			// deploy"). One build per pass is the norm; the Set only grows if a
-			// deploy lands mid-pass, which is itself worth seeing.
+			// WHICH WORKER BUILD answered — one build per pass is the norm; the Set only grows if a deploy lands mid-pass (itself worth seeing).
 			if (dl.build) pass.builds.add(dl.build);
 			hasLines = true; // covered (even if empty) so the record persists
 			lineBytes = dl.bytes;
@@ -534,10 +329,7 @@ async function ensureAreaData(
 			noteDownloadedBytes(dl.bytes); // tally toward the soft +100 MB cellular gate
 			if (dl.downloaded > 0) {
 				passChanged = true;
-				// Nothing to invalidate here any more. Fresh tiles used to make the
-				// cached road-raster stale (it drew OLDER data), so it had to be
-				// dropped; the raster is deleted and the vectors ARE the tiles, so
-				// they cannot disagree with themselves.
+				// Nothing to invalidate any more — the road-raster (which used to go stale here) is gone; vectors ARE the tiles now, so they can't disagree with themselves.
 			}
 		}
 	})();
@@ -572,43 +364,18 @@ async function pruneArea(key: string): Promise<void> {
 	passChanged = true;
 }
 
-/**
- * THE FIRE PASS — perishable data, on its own schedule.
- *
- * ⛔ WHY THIS IS NOT INSIDE `ensureAreaData` (it used to be, and that was a bug):
- * `ensureAreaData` is COMPLETION-GATED — the reconcile loop skips it entirely
- * once an area's photo and tiles are on disk ("if (satOnDisk && tilesOnDisk)
- * continue"). That is exactly right for tiles and photos, which are IMMUTABLE:
- * downloaded once, nothing left to do, forever. It is catastrophic for fires,
- * which go stale hourly — a crew settled at one camp would have hit that
- * `continue` on every pass and been shown yesterday's hotspots indefinitely,
- * with an age stamp quietly counting up. Perishable data cannot live inside a
- * function whose contract is "runs until the data exists, then never again".
- * Pinned by "offline tripwire 7"; it fails on the pre-fix code.
- *
- * Runs for CORRIDOR areas too (unlike the satellite): a planter driving a route
- * wants to know what is alight along it, and the payload is a few KB.
- *
- * FIRES ARE NEVER ALLOWED TO BREAK THE MAP. Every centre is wrapped
- * individually, so one poisoned record cannot starve the rest, and the caller
- * wraps the whole thing again — the map is the primary tool, fires are an
- * overlay, and the overlay must fail alone.
- */
+/** ⛔ THE FIRE PASS runs OUTSIDE ensureAreaData's completion gate — fires are perishable (go stale hourly) unlike immutable tiles/photos, so they must not live inside a "runs until done, then never again" function (see tripwire 7). Runs for CORRIDOR areas too. Fires must fail alone, never break the map. */
 async function refreshFires(
 	centres: ReadonlyArray<[number, number]>,
 ): Promise<void> {
-	// NO FIRE PORT → NO FIRE PASS. A host that omits `fires` (the rapper demo) gets
-	// a working offline map that never reaches for hotspots. Checked before the
-	// online test so a portless host does no work at all.
+	// NO FIRE PORT → NO FIRE PASS — a host that omits `fires` (the rapper demo) gets a working map that never reaches for hotspots.
 	const fires = ports?.fires;
 	if (!fires) return;
 
-	// OFFLINE — keep whatever we have. Never clear on failure: stale dots with an
-	// honest age stamp beat an empty map that reads as "no fires near you".
+	// OFFLINE — keep whatever we have; never clear on failure — stale dots beat an empty map that reads as "no fires near you".
 	if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
-	// ARRIVAL — this pass ignores the TTL once. Consumed (not just read) so a
-	// failed or skipped pass can't leave it armed and re-fetch every 20 s.
+	// ARRIVAL — ignores the TTL once; consumed (not just read) so a failed/skipped pass can't leave it armed and re-fetch every 20s.
 	const onDemand = fires.takeArrival();
 
 	for (const [lng, lat] of centres) {
@@ -617,35 +384,11 @@ async function refreshFires(
 		if (cd && cd.until > Date.now()) continue;
 		try {
 			const prev = await fires.read(key);
-			// The TTL answers "has this gone stale on its own?". It cannot answer
-			// "has the user just arrived and asked?" — and that is the one moment
-			// freshness matters most: they have driven into signal and opened the
-			// app SPECIFICALLY to check the fire. A 59-minute-old record passed
-			// `fireIsFresh` and we fetched nothing, handing them an hour-old answer
-			// without ever asking NASA. `onDemand` is that ask.
+			// TTL answers "gone stale?" not "did the user just arrive and ask?" — a 59-min-old record passing fireIsFresh silently handed an hour-old answer; `onDemand` covers that moment.
 			if (prev && fires.isFresh(prev) && !onDemand) continue;
-			// GEOGRAPHIC CONTAINMENT — is another area's disc already covering us?
+			// GEOGRAPHIC CONTAINMENT — a fire disc is 500km vs a 40km map area, so a neighbouring FRESH disc covering this centre (FIRE_TRIGGER_KM) is reused; only FRESH discs count, or a stale one could "cover" an area with nothing forever.
 			//
-			// A fire disc is 500 km; a map area is 40 km. So a dozen pins on one
-			// block sit inside ONE smoke shed, yet each is its own area key and
-			// would otherwise pull its own near-identical 500 km disc every hour.
-			// If a neighbouring FRESH disc already covers this centre with room to
-			// spare (FIRE_TRIGGER_KM), reuse it and fetch nothing.
-			//
-			// Deliberately checked AFTER the freshness test above: this is the SPACE
-			// axis, that one is the TIME axis. A user parked at one camp all season
-			// never moves but must still get fresh dots hourly, and this gate must
-			// never suppress that. Only FRESH discs count as cover — a stale
-			// neighbour would otherwise keep this area permanently empty by
-			// "covering" it with nothing.
-			//
-			// ⚠️ An ARRIVAL refresh must pierce this gate too. Both gates ask "do we
-			// already have an acceptable answer?", and on arrival the answer to that
-			// is "yes, and I still want a newer one" — so skipping here would quietly
-			// undo the TTL bypass above and the user would get the same old dots.
-			// COVERAGE ONLY — this gate reads centres, never hotspots. Pulling full
-			// records here held tens of thousands of detections live in the bake
-			// service's heap purely to compare circle centres.
+			// ⚠️ An ARRIVAL refresh must pierce this gate too, or it would quietly undo the TTL bypass above. COVERAGE ONLY — reads centres, never full hotspot records (avoids holding tens of thousands of detections in heap).
 			const coveringCentres = (await fires.coverage())
 				.filter((c) => fires.isCoverageFresh(c))
 				.map((e) => e.center);
@@ -657,10 +400,7 @@ async function refreshFires(
 				center: [lng, lat],
 				radiusKm: FIRE_RADIUS_KM,
 				sourcesOk: r.sourcesOk,
-				// COPIED, not aliased. The port hands back a readonly view; the cache
-				// entry owns a mutable array. Sharing one array would let a later cache
-				// mutation reach back into the fetch result and vice versa — the
-				// lossy-copy trap. [[quality704-autosave-lossy-copy-trap]]
+				// COPIED, not aliased — sharing the port's array with the cache entry would let a later mutation on either reach back into the other (the lossy-copy trap). [[quality704-autosave-lossy-copy-trap]]
 				hotspots: [...r.hotspots],
 			});
 			fireCooldown.delete(key);
@@ -673,14 +413,11 @@ async function refreshFires(
 			);
 		} catch (err) {
 			noteCircuit("fires", "err", err instanceof Error ? err.message : String(err));
-			// Same exponential backoff as the satellite bake: 30 s → 15 m. The
-			// PREVIOUS record is deliberately left in place (see above).
+			// Same exponential backoff as the satellite bake (30s → 15m cap); the PREVIOUS record is deliberately left in place.
 			const fails = (cd?.fails ?? 0) + 1;
 			const backoff = Math.min(900_000, 30_000 * 2 ** Math.min(fails - 1, 5));
 			fireCooldown.set(key, { fails, until: Date.now() + backoff });
-			// codestyle-allow-swallow: not a swallow — this catch drives the retry
-			// backoff and warns by default (not dev-gated). The layer keeps its last
-			// good hotspots and retries; there is nothing for the user to act on.
+			// codestyle-allow-swallow: not a swallow — this catch drives the retry backoff and warns by default; the layer keeps its last good hotspots.
 			console.warn(
 				`[v4 fire] fetch failed for ${key} (attempt ${fails}, retrying in ${Math.round(backoff / 1000)}s) — keeping cached hotspots`,
 				err,
@@ -689,37 +426,13 @@ async function refreshFires(
 	}
 }
 
-/**
- * THE FORMULA — the entire offline-blob rule, in ONE function:
- *
- *   for EVERY feature on EVERY map (+ the demo), newest-touched first:
- *       ensure its blob is on disk (download if missing)
- *       — until the 1 GB budget is full.
- *   anything past that line (the OLDEST, over budget) is evicted.
- *
- * That is the whole thing. NOT "the active map" — EVERY feature, always. The ONE
- * and only reason a blob does not exist: it is over the budget AND it is the
- * oldest-touched. Newest-first ordering means a just-dropped pin is FIRST in the
- * list, so it downloads immediately no matter how many features exist.
- * `ensureAreaData` is a no-op when the blob is already on disk (it probes the
- * disk), so a pass where nothing is missing is cheap. This also heals desyncs for
- * free: a "registry says photo, none stored" area is either re-baked (within
- * budget) or evicted (over budget) — no separate sweep needed.
- * (Coalesced: a change mid-pass re-runs once when the pass finishes.)
- */
+/** THE FORMULA — every feature on every map, newest-touched first, gets its blob until the 1GB budget is full; anything past that (oldest, over budget) is evicted. NOT "the active map" — EVERY feature, always. */
 async function bakeAll(): Promise<void> {
-	// LATCHED BREAKER = DONE FOR THIS SESSION. Every guard call would rethrow the
-	// same DownloadBudgetError, so a pass can only re-walk the grid and re-log.
-	// Bail at the door instead of entering and failing per-area; only a reload
-	// resets the guard (downloadGuard.ts, by design).
+	// LATCHED BREAKER = DONE FOR THIS SESSION — bail at the door rather than fail per-area; only a reload resets the guard (downloadGuard.ts, by design).
 	if (isDownloadGuardTripped()) {
-		// A latched breaker is TERMINAL, so this returns on EVERY subsequent
-		// tick forever. Without recording it, the panel reads "nothing tracked"
-		// indefinitely and looks broken rather than latched.
+		// Terminal — returns on EVERY subsequent tick; recorded via noteSkip so the panel reads "latched" rather than looking broken.
 		noteSkip("bake", "download guard latched");
-		// The breaker can latch mid-run, between slices — flush whatever the run
-		// had already fetched rather than losing it, and stop the run cleanly.
-		// (Terminal, so this only ever prints once: the tally is now empty.)
+		// The breaker can latch mid-run — flush whatever was already fetched rather than losing it, and stop cleanly (prints once; tally is now empty).
 		resumingRun = false;
 		reportRun(false);
 		resetPassTally();
@@ -734,23 +447,18 @@ async function bakeAll(): Promise<void> {
 	reconciling = true;
 	noteQueued("bake", false);
 	const bakeDone = beginWork("bake");
-	// Declared out here because the `finally` schedules the resume — see the
-	// TIME BUDGET note in the conveyor loop below.
+	// Declared out here because the `finally` schedules the resume — see the TIME BUDGET note in the conveyor loop below.
 	let budgetPaused = false;
 	passChanged = false;
 	passSawTimeout = false;
-	// A RESUMED slice keeps accumulating into the SAME tally — see reportRun.
-	// Only a genuinely fresh run starts the counters over.
+	// A RESUMED slice keeps accumulating into the SAME tally (see reportRun); only a genuinely fresh run resets counters.
 	if (!resumingRun) resetPassTally();
 	resumingRun = false;
 	pass.slices++;
 	liveFix = null; // stale fix from a previous pass must never leak into this one
 	try {
 		setNote("Saving offline map\u2026");
-		// 1) EVERY area referenced by EVERY feature on EVERY map (deduped), carrying
-		//    its newest touch time + whether EVERY referencing feature is a line
-		//    (corridor = roads-only, no satellite; one point sharing the area forces
-		//    the full photo).
+		// 1) EVERY area referenced by EVERY feature (deduped), with newest touch time; corridor=true only if EVERY referencing feature is a line (one point forces the full photo).
 		const areas = new Map<
 			string,
 			{ c: [number, number]; corridor: boolean; t: number }
@@ -764,59 +472,23 @@ async function bakeAll(): Promise<void> {
 				t: Math.max(t, prev?.t ?? 0),
 			});
 		};
-		// EVERY place seeds a blob, plots included. A planting block of wall-to-wall
-		// plots doesn't blow the budget: each plot is ONE point anchor, and note()
-		// dedups by satImageKey (the disc cell), so a whole block collapses into the
-		// one disc it sits in. WHICH rows are places, and how a geometry becomes
-		// anchors, is the HOST's business — see hostPorts.ts.
+		// EVERY place seeds a blob, plots included — a wall-to-wall planting block collapses into one disc via note()'s satImageKey dedup. WHICH rows are places is the HOST's business (hostPorts.ts).
 		for (const p of ports?.places() ?? []) {
 			const t = Date.parse(p.lastTouched) || 0;
 			for (const c of p.anchors) note(c, p.corridor, t);
 		}
-		// The permanent demo blob \u2014 always present, treated as newest so it is
-		// never evicted.
+		// The permanent demo blob — always present, treated as newest so it is never evicted.
 		note(MAP_HOME_CENTER, false, Number.POSITIVE_INFINITY);
 
-		// 1b) THE LIVE ANCHOR \u2014 where the user actually IS.
+		// 1b) THE LIVE ANCHOR — a user with no features yet still gets covered at their live position (no prompt, see liveFix.ts); added LAST and gated on containment since note()'s ~11m key assumes anchors don't move.
 		//
-		// Everything above comes from features, and a user who has just installed
-		// the app and walked onto a block has none. They'd get nothing: no photo,
-		// no roads, no fires, on the one screen that has to work without signal.
-		// So an active user with location already granted gets covered for simply
-		// being somewhere \u2014 no feature required, no prompt (see liveFix.ts).
-		//
-		// It is added LAST and gated on containment, which is what makes a MOVING
-		// anchor safe here: `note()` keys by satImageKey, a ~11 m coordinate round
-		// that assumes anchors never move. Pacing a block would otherwise mint a
-		// new area every few steps.
-		//
-		// \u26a0\ufe0f CONTAINMENT IS MEASURED AGAINST WHAT IS ON DISK (covByKey), not just
-		// against this pass's feature anchors. The live anchor is the only
-		// TRANSIENT one \u2014 every other area is re-derived from a durable feature
-		// each pass, but this one exists only while a fix is present, so it is
-		// never re-noted on the next pass. Measuring against feature anchors alone
-		// therefore reported "outside coverage" forever: the blob it had already
-		// baked was invisible to the very check that decided whether to bake it.
+		// ⚠️ Containment is measured against WHAT IS ON DISK (covByKey), not just this pass's feature anchors — the live anchor is TRANSIENT (never re-noted), so measuring against features alone would report "outside coverage" forever.
 		try {
-			// Through the PORT: knowing where the user IS means permissions and
-			// platform geolocation — the host's business, not the engine's. A host
-			// that omits `gps` simply gets no live anchor; feature anchors alone are
-			// a valid map, not a degraded one.
+			// Through the PORT — geolocation/permissions are the host's business; a host that omits `gps` gets no live anchor, and feature anchors alone are still a valid map.
 			const fix = (await ports?.gps?.()) ?? null;
 			if (fix) {
 				liveFix = fix; // the fire pass reads this too (different radius)
-				// Read the registry HERE rather than using covByKey: that snapshot is
-				// taken later in this pass (step 3), so at this point it still holds
-				// the PREVIOUS pass's data. One extra read, and the check is measured
-				// against present truth instead of a stale-by-one-pass copy.
-				// Read the registry HERE rather than using covByKey: that snapshot is
-				// taken later in this pass (step 3), so at this point it still holds
-				// the PREVIOUS pass's data. One extra read, and the check is measured
-				// against present truth instead of a stale-by-one-pass copy.
-				// Read the registry HERE rather than using covByKey: that snapshot is
-				// taken later in this pass (step 3), so at this point it still holds
-				// the PREVIOUS pass's data. One extra read, and the check is measured
-				// against present truth instead of a stale-by-one-pass copy.
+				// Read the registry HERE rather than covByKey (that snapshot is taken later, step 3, and still holds the PREVIOUS pass's data) — one extra read measures against present truth.
 				const stored = await allCoverage();
 				const centres = [
 					...[...areas.values()].map((a) => a.c),
@@ -824,10 +496,7 @@ async function bakeAll(): Promise<void> {
 					...stored.map((r) => [r.lng, r.lat] as [number, number]),
 				];
 				if (needsMapBlob(fix, centres)) {
-					// Snapped, never raw: belt and braces behind containment so a raw
-					// fix can never reach the 11 m key space. `corridor:false` \u2014 the
-					// user is a point, and a point earns the full photo. Newest-touched
-					// so it downloads before older feature areas.
+					// Snapped, never raw — belt and braces behind containment; corridor:false since a point earns the full photo, newest-touched so it downloads first.
 					note(snapLiveAnchor(fix), false, Date.now());
 					vlog(
 						"map",
@@ -840,9 +509,7 @@ async function bakeAll(): Promise<void> {
 				}
 			}
 		} catch (err) {
-			// codestyle-allow-swallow: the live anchor is a BONUS on top of feature
-			// anchors. A geolocation hiccup must never abort the pass and starve the
-			// features the user explicitly created.
+			// codestyle-allow-swallow: the live anchor is a BONUS — a geolocation hiccup must never abort the pass and starve the user's actual features.
 			console.warn("[v4 live] position unavailable this pass", err);
 		}
 
@@ -850,19 +517,10 @@ async function bakeAll(): Promise<void> {
 		const ordered = [...areas.entries()].sort((a, b) => b[1].t - a[1].t);
 		touchByKey = new Map(ordered.map(([k, v]) => [k, v.t]));
 
-		// 3) DISK TRUTH \u2014 what is ACTUALLY stored + its REAL size. We do NOT trust the
-		//    registry here: it can lie ("registry says photo, none stored"), and when
-		//    the budget counted those phantom bytes it "filled up" on ghosts and
-		//    stopped baking real features (the 6%-coverage bug). The blob store IS the
-		//    truth. One getSatKeys + one satImageMeta, then O(1) lookups.
-		//    METADATA ONLY — this pass runs every ~20 s, and the version that read
-		//    whole blobs here to get `blob.size` allocated 613 MB (97.3% of the entire
-		//    allocation profile) and OOM-crashed the tab. Never load pixels on a timer.
+		// 3) DISK TRUTH — do NOT trust the registry (it can lie: "photo" with nothing stored); budget counting phantom bytes caused the 6%-coverage bug. The blob store IS the truth.
+		//    METADATA ONLY — a version that read whole blobs for `blob.size` allocated 613 MB (97.3% of the profile) and OOM-crashed the tab. Never load pixels on a timer.
 		const satKeys = new Set(await getSatKeys()); // ALL present photos (eviction truth)
-		// FRESH = present AND baked by the CURRENT BAKE_VERSION. A photo baked by older
-		// code (e.g. the lossless-PNG era) is treated as a MISS so it RE-BAKES into the
-		// current format (WebP) — that's the whole point of BAKE_VERSION. Eviction still
-		// uses the full satKeys set above, so a stale photo is never silently dropped.
+		// FRESH = present AND baked by CURRENT BAKE_VERSION — an older-format photo is treated as a MISS so it re-bakes; eviction still uses the full satKeys set, so a stale photo is never silently dropped.
 		const freshSat = new Set<string>();
 		const photoBytes = new Map<string, number>();
 		for (const { key, bytes, bakeVersion } of await satImageMeta()) {
@@ -871,78 +529,34 @@ async function bakeAll(): Promise<void> {
 		}
 		// covByKey only HINTS ensureAreaData's tile probe; it never gates a decision.
 		covByKey = new Map((await allCoverage()).map((r) => [r.areaKey, r]));
-		// EVERY stored wall-map tile key, loaded ONCE for the whole pass. We probe each
-		// area's tiles in memory (areaTilesPresentIn) instead of opening IndexedDB per
-		// area — at hundreds of areas every 20 s, per-area DB opens were a real I/O storm.
+		// EVERY stored tile key loaded ONCE per pass — probed in memory (areaTilesPresentIn) instead of per-area IndexedDB opens, which were a real I/O storm at hundreds of areas every 20s.
 		const tileKeys = await getAllTileKeys();
 
-		// 4) Keep newest-first until ACTUAL bytes fill the budget; download whatever
-		//    is genuinely missing from disk. A present blob = zero work (no probe, no
-		//    network). The budget is measured in REAL stored bytes, so it can never
-		//    fill on ghosts again.
-		// Total bytes ACTUALLY on disk now (disk truth) \u2014 INCLUDING blobs the live
-		// map's own satellite cache shares this store with, so the 1 GB budget is
-		// honest and can never be silently overrun.
-		// THE CONVEYOR. Walk areas NEWEST-touched first, accumulating the bytes we
-		// intend to KEEP. Each area within the running budget line is a keeper → make
-		// sure BOTH its halves are on disk (photo + roads). Past the line it is older
-		// than the budget allows → skip it here; the eviction step drops it. Because a
-		// just-touched pin is FIRST, keptBytes is still ~0 when we reach it, so it
-		// ALWAYS fits and DISPLACES the oldest — that is how a brand-new pin gets its
-		// satellite even when the disk was already at the 1 GB cap.
+		// 4) Keep newest-first until ACTUAL bytes fill the budget — measured in REAL stored bytes so it can never fill on ghosts again; a present blob is zero work.
+		// Total bytes ACTUALLY on disk (disk truth) — includes blobs the live map's own satellite cache shares this store with, so the 1GB budget can never be silently overrun.
+		// THE CONVEYOR — walk newest-touched first, accumulating kept bytes; within budget = ensure both halves on disk, past it = skip (eviction drops it). A just-touched pin is always first, so it always fits and displaces the oldest.
 		//
-		// THE BUG THIS REPLACES: the old gate measured TOTAL bytes already on disk, so
-		// once the disk was full of OLD photos it blocked EVERY new pin's photo and
-		// nothing was ever displaced — "stuck at 1 GB, new pins get roads but no
-		// satellite, ~nothing ejected." A new pin must out-rank an old one by touch.
+		// Regression this replaces: the old gate measured TOTAL disk bytes, so a disk full of old photos blocked every new pin's photo and nothing displaced ("stuck at 1GB").
 		let keptBytes = 0;
 		let gatePaused = false;
 		let downloaded = 0; // areas actually fetched this pass (drives the live status)
-		// ── THE TIME BUDGET ──
-		//
-		// This loop used to run until every incomplete area was downloaded. With a
-		// lot of pins that is MINUTES of continuous decode-and-clone: measured at
-		// 81 s for ONE pass, with the next pass already queued behind it, so the
-		// app never got an idle moment and the heap never got a quiet GC. From the
-		// user's chair that is "it works unbelievably hard just sitting there".
-		//
-		// So: work for a slice, then STOP CLEANLY and let the 20 s timer resume.
-		// Progress is durable (each finished area is on disk and the next pass skips
-		// it via freshSat/tileKeys), so stopping early costs nothing but latency —
-		// and the ordering is newest-first, so the areas you care about most are
-		// always the ones that got done.
-		//
-		// STOP ONLY BETWEEN AREAS, never mid-`ensureAreaData`: a half-written area
-		// is exactly the corrupt state the self-heal pass exists to prevent.
+		// THE TIME BUDGET — work one slice then STOP CLEANLY (never mid-ensureAreaData, which would leave a half-written area); measured 81s unbounded with the heap never idling. Progress is durable, so stopping costs only latency.
 		const passDeadline = Date.now() + BAKE_PASS_BUDGET_MS;
 		for (const [k, { c, corridor }] of ordered) {
-			// Checked at the TOP so the area about to start gets a full slice, and
-			// only after at least one area landed (a pass must always make progress,
-			// however slow the device).
+			// Checked at the TOP (full slice for the area about to start) and only after ≥1 area landed — a pass must always make progress.
 			if (downloaded > 0 && Date.now() > passDeadline) {
 				budgetPaused = true;
 				break;
 			}
-			// Newest-first budget line: is THIS area (and everything newer) within
-			// budget? Corridors carry no photo, so they cost ~0 against the photo budget.
+			// Newest-first budget line — corridors carry no photo, so they cost ~0 against the photo budget.
 			const sizeGuess = corridor ? 0 : (photoBytes.get(k) ?? EST_AREA_BYTES);
 			if (keptBytes + sizeGuess > OFFLINE_BUDGET_BYTES) continue; // older than the line → evicted below
 			keptBytes += sizeGuess;
 			// COMPLETE = both halves on disk (a corridor needs only tiles).
 			const satOnDisk = corridor || freshSat.has(k);
-			// ⛔ AN EMPTY AREA IS COMPLETE, NOT MISSING. `areaTilesPresentIn` asks
-			// "are there tile keys on disk for this disc?", and for an area the
-			// server holds NO vector data for the honest answer is "no" — forever.
-			// So the conveyor handed it to `ensureAreaData` on every pass; that
-			// function knows better (`lineCount === 0` short-circuits its probe),
-			// did nothing, and returned in under a millisecond. Zero bytes moved,
-			// but the area was counted and the run reported — which is why the
-			// console showed runs of "N area(s) … 0.0s · 3 empty" every 20 s, in
-			// perpetuity. The work was real; it was just work on nothing.
+			// ⛔ AN EMPTY AREA IS COMPLETE, NOT MISSING — areaTilesPresentIn honestly answers "no" forever for a server-empty area; without the lineCount===0 short-circuit below, the conveyor re-counted it as work every pass, forever.
 			//
-			// The gate now asks the SAME question ensureAreaData asks. `lineCount`
-			// must be an EXPLICIT 0: undefined means "never verified", and treating
-			// unknown as empty would mark a never-fetched area complete forever.
+			// The gate asks the SAME question ensureAreaData asks — lineCount must be an EXPLICIT 0 (undefined = "never verified"), or an unknown area would be marked complete forever.
 			const cov = covByKey.get(k);
 			const serverHasNothing =
 				cov?.blobVersion === BLOB_VERSION &&
@@ -970,16 +584,7 @@ async function bakeAll(): Promise<void> {
 				}
 			} catch (err) {
 				if (isTimeoutErr(err)) passSawTimeout = true;
-				// TERMINAL vs TRANSIENT. The download circuit breaker LATCHES for the
-				// whole session (downloadGuard.ts) — once tripped, every later guard
-				// call rethrows the same error without attempting anything. Treating
-				// that as "retry next pass" meant each 20 s tick re-walked the grid and
-				// logged an identical stack, hundreds of times, each one retaining an
-				// Error + context object. That is the console flood, and it is why the
-				// tab's memory climbed over a long session.
-				//
-				// A latched breaker is TERMINAL: stop this pass and say so ONCE. Only a
-				// reload clears it, which is the guard's deliberate design.
+				// TERMINAL vs TRANSIENT — the circuit breaker LATCHES for the session; treating it as "retry next pass" caused a console flood (identical stack every 20s, climbing memory). A latched breaker stops this pass and says so ONCE; only reload clears it.
 				if (isDownloadGuardTripped()) {
 					if (!guardTripAnnounced) {
 						guardTripAnnounced = true;
@@ -995,36 +600,15 @@ async function bakeAll(): Promise<void> {
 			}
 		}
 
-		// 5) EVICT \u2014 ONLY when the jar OVERFLOWS. Under the 1 GB budget NOTHING is
-		//    ever removed; every blob persists forever. Past 1 GB the OLDEST-touched
-		//    blobs fall off the back (the milk-shelf conveyor) until back under. That
-		//    is the WHOLE eviction law: a blob disappears <=> over budget AND oldest.
-		//    Orphans (no live feature \u2014 the live map's shared satellite cache, or a
-		//    deleted pin's leftover) are KEPT while under budget; deleting them on
-		//    sight was the bug that made the stored total swing wildly (578->206 in
-		//    minutes). Skipped on a cellular pause (never drop what you have).
+		// 5) EVICT — only when the jar overflows. Under 1GB nothing is ever removed; past it the OLDEST-touched fall off (milk-shelf conveyor) until back under.
+		// Orphans (shared satellite cache, deleted pin leftovers) are KEPT while under budget — deleting on sight caused the 578→206 swing bug. Skipped on a cellular pause.
 		const kept = new Set<string>();
-		// SAFETY GUARD against the "1 GB → 70 MB" collapse: NEVER evict before the
-		// host has HYDRATED. On a cold reload its place list is briefly empty;
-		// if we evicted then, every stored blob would look unreferenced (touch 0) and
-		// the conveyor would nuke nearly everything. With zero maps there is also nothing
-		// legitimate to make room for, so skipping eviction is always safe — it resumes
-		// the instant the host hydrates (onPlacesChanged re-fires). A genuinely
-		// map-less new user has ~nothing stored anyway.
+		// ⚠️ SAFETY GUARD against the "1GB → 70MB" collapse — NEVER evict before the host has HYDRATED, or a briefly-empty place list on cold reload makes every blob look unreferenced and the conveyor nukes nearly everything.
 		//
-		// ⚠️ `ready()`, NOT "places().length > 0". They differ in exactly the case
-		// that matters: a hydrated host whose pins were all DELETED has zero places
-		// but must still evict. Conflating them silently disabled the conveyor.
-		// `budgetPaused` joins `gatePaused` here for the SAME reason: both mean the
-		// conveyor walk stopped early, so `keptBytes` is a PARTIAL total. Evicting
-		// against a partial keep-set would drop areas that are genuinely keepers —
-		// the walk simply hadn't reached them yet. Eviction resumes on the next
-		// pass that runs the walk to completion.
+		// ⚠️ ready(), NOT "places().length > 0" — a hydrated host with all pins deleted has zero places but must still evict; conflating them silently disabled the conveyor. budgetPaused/gatePaused also block eviction, since a stopped-early walk leaves keptBytes PARTIAL.
 		if (!gatePaused && !budgetPaused && (ports?.ready() ?? false)) {
 			const demoKey = satImageKey(MAP_HOME_CENTER);
-			// Touch time of any stored blob: referenced areas use their feature touch
-			// time, orphans their registry lastTouched (0 if none \u2014 the live-map cache,
-			// the most disposable, so it ages out first under pressure). Demo never dies.
+			// Touch time: referenced areas use feature touch time, orphans use registry lastTouched (0 if none — the most disposable, ages out first). Demo never dies.
 			const touchOf = (k: string): number => {
 				if (k === demoKey) return Number.POSITIVE_INFINITY;
 				const t = touchByKey.get(k);
@@ -1050,24 +634,10 @@ async function bakeAll(): Promise<void> {
 				}
 			}
 
-			// 6) MIRROR — force the ledger to match the disk EXACTLY so "desync" noise
-			//    cannot exist: every kept blob that's really stored gets a current
-			//    record (heals "photo stored, not in registry" orphans); non-kept were
-			//    pruned above (heals "registry says photo, none stored"). Only writes
-			//    when a record is missing/stale, so it's free at steady state.
+			// 6) MIRROR — force the ledger to match disk exactly (heals both "stored but unregistered" and "registered but not stored"); only writes when missing/stale, so free at steady state.
 			const liveSat = new Set(await getSatKeys());
-			// LINES LIVE IN THE V4 TILE PILE — ask `rt-tiles-v3`, NOT `rt-vectors`.
-			// `getVectorKeys()` reads the LEGACY v3 store, which nothing has written
-			// to since the Overpass bake was removed (legacyVectorCleanup.ts is a
-			// tombstone kept only so the evictor can reclaim old installs' bytes). On
-			// any modern install it is EMPTY, so this mirror computed hasLines:false
-			// for every area and overwrote each freshly-downloaded record — even one
-			// holding 188 real tiles. The download loop then saw hasLines:false, failed
-			// its skip check, and re-downloaded the identical area on EVERY 20 s pass,
-			// forever, until the session pack budget tripped the circuit breaker.
-			// That was the "downloading the same blobs over and over".
-			// Same in-memory key set the download loop uses (line ~639), so the mirror
-			// and the skip check can no longer disagree about what is on disk.
+			// ⛔ LINES LIVE IN THE V4 TILE PILE — ask rt-tiles-v3, NOT the legacy rt-vectors (getVectorKeys, empty on any modern install). Using it here caused the "downloading the same blobs over and over" regression.
+			// Same in-memory key set the download loop uses, so the mirror and skip check can no longer disagree about what's on disk.
 			const liveTileKeys = await getAllTileKeys();
 			for (const [k, { c }] of ordered) {
 				if (!kept.has(k)) continue;
@@ -1081,17 +651,9 @@ async function bakeAll(): Promise<void> {
 					rec.hasLines === hasLines &&
 					rec.blobVersion === BLOB_VERSION;
 				if (current) continue;
-				// CARRY the existing line accounting forward. This mirror only knows
-				// PRESENCE (is it on disk?), never the byte/count detail the download
-				// recorded, so it must not invent either.
+				// CARRY the existing line accounting forward — this mirror only knows PRESENCE, never byte/count detail, so it must not invent either.
 				//
-				// `lineCount` is load-bearing: the skip check treats `lineCount === 0`
-				// as "the server said this area is genuinely EMPTY, don't probe disk
-				// for it". `?? 0` on a MISSING count would silently claim that, and an
-				// area whose tiles were really evicted would never re-download — the
-				// self-heal, gone. So when lines are absent, drop the count entirely
-				// (undefined = "unknown", which forces the disk probe) rather than
-				// asserting zero.
+				// lineCount is load-bearing — the skip check treats ===0 as "server confirmed empty"; `?? 0` on a missing count would silently claim that and kill the re-download self-heal, so absent lines leave it undefined ("unknown").
 				const lineBytes = hasLines ? (rec?.lineBytes ?? 0) : 0;
 				const lineCount = hasLines ? rec?.lineCount : undefined;
 				await noteCoverage(
@@ -1105,23 +667,7 @@ async function bakeAll(): Promise<void> {
 						lineBytes,
 						lineCount,
 						bytes: (photoBytes.get(k) ?? 0) + lineBytes,
-						// ⚠️ CARRY THE EXISTING STAMP — NEVER WRITE `BLOB_VERSION` HERE.
-						//
-						// This mirror only knows PRESENCE ("are there tiles on disk?"),
-						// which is a BOOLEAN and therefore cannot say WHICH RINGS are
-						// present. Stamping the current version from a presence check
-						// claims "this area matches the current ring set" on evidence
-						// that cannot support it — and the stamp is the ONLY staleness
-						// signal, so writing it wrongly means no cloud-side ring change
-						// can ever reach this device again.
-						//
-						// That is not hypothetical: it shipped, and every one of the
-						// device's 232 areas ended up stamped `pf22|…40@9` while holding
-						// zero z9 tiles. The whole z9 ring was invisible for an evening.
-						//
-						// Only a REAL DOWNLOAD may write the version (see ensureAreaData).
-						// `undefined` here leaves a never-downloaded area unstamped, which
-						// is exactly right: unknown must fall through to the probe.
+						// ⚠️ CARRY THE EXISTING STAMP — NEVER write BLOB_VERSION here. This mirror only knows PRESENCE (boolean), not WHICH RINGS — it shipped once and stamped 232 areas as current while holding zero z9 tiles, hiding the whole z9 ring for an evening. Only a REAL DOWNLOAD may write the version.
 						blobVersion: rec?.blobVersion,
 					},
 					false,
@@ -1130,25 +676,14 @@ async function bakeAll(): Promise<void> {
 			}
 		}
 
-		// 6) FIRES — LAST, and outside the completion gate above on purpose.
+		// 6) FIRES — LAST, deliberately outside the completion gate above; the download loop `continue`s past complete areas, so anything perishable placed inside it would silently stop refreshing (see refreshFires' header).
 		//
-		// The download loop `continue`s past any area whose photo and tiles are
-		// already on disk, so anything perishable placed inside it silently stops
-		// refreshing the moment an area is complete (see refreshFires' header).
-		// Running here means every KEPT area gets its hotspots re-checked on every
-		// pass, whether or not its map data needed work.
-		//
-		// The live position is included even when it earned no map blob: a user
-		// inside their existing 40 km coverage still wants to know what is burning
-		// in the 500 km around them.
+		// The live position is included even when it earned no map blob: a user inside their existing 40 km coverage still wants to know what is burning in the 500 km around them.
 		try {
 			const fireCentres = [...areas.entries()]
 				.filter(([k]) => kept.has(k))
 				.map(([, v]) => v.c);
-			// SNAPPED, never raw. refreshFires keys the cache by satImageKey — the
-			// same ~11 m round that makes a moving anchor dangerous everywhere else.
-			// A raw fix here would mint a new fire record every few paces even though
-			// the containment check spared the map blob.
+			// SNAPPED, never raw — refreshFires keys by satImageKey (same ~11m round); a raw fix would mint a new fire record every few paces even though containment spared the map blob.
 			const liveCentre = liveFix ? snapLiveAnchor(liveFix) : null;
 			if (
 				liveCentre &&
@@ -1158,18 +693,7 @@ async function bakeAll(): Promise<void> {
 			) {
 				fireCentres.unshift(liveCentre); // where the user IS comes first
 			}
-			// ═══════════════════════════════════════════════════════════════
-			// 🔬 TEMPORARY BISECT — 2026-08-10. NOT A FIX. DELETE THIS.
-			// Pairs with FIRE_LAYER_ENABLED_ONLINE in
-			// src/routes/(getcache)/map/MobMapPage.svelte. (Until 2026-08-23 this
-			// named FIRE_LAYER_ENABLED in routes/mobile/offlinev4/+page.svelte —
-			// both that flag and that path are gone.)
-			// The fire system has TWO halves — the RENDER (that page) and this
-			// FETCH/STORE pass, which runs app-wide every 20 s regardless of
-			// which route is open. Disabling only the render would leave this
-			// half running and the bisect would prove nothing.
-			// TO RESTORE: set FIRE_REFRESH_ENABLED back to true.
-			// ═══════════════════════════════════════════════════════════════
+			// TEMPORARY BISECT flag (pairs with FIRE_LAYER_ENABLED_ONLINE in MobMapPage.svelte). ⚠️ Fire has TWO halves (render + this fetch/store pass, which runs regardless of route) — disabling only one leaves the other running and invalidates any bisect.
 			if (FIRE_REFRESH_ENABLED) await refreshFires(fireCentres);
 		} catch (err) {
 			// The overlay must fail alone — never let it mark the whole pass failed.
@@ -1181,14 +705,10 @@ async function bakeAll(): Promise<void> {
 	} finally {
 		bakeDone();
 		setNote("");
-		// IDLE now — report how many areas are still in photo-bake backoff (the source
-		// is throttling them). A non-zero value at idle = "sitting there with broken
-		// features, waiting to retry"; zero = all caught up.
+		// IDLE now — report how many areas are still in photo-bake backoff; non-zero at idle means broken features waiting to retry.
 		setActivity(false, 0, satCooldown.size);
 		if (passChanged) bumpGeneration();
-		// TIMEOUT BACKOFF: a timed-out fetch means the pipe is lie-fi — kicking
-		// again in 20 s just re-saturates it. Skip kicks for an escalating window;
-		// any timeout-free pass (even a no-op one) resets to normal cadence.
+		// TIMEOUT BACKOFF — a timed-out fetch means lie-fi; kicking again in 20s just re-saturates it, so skip kicks for an escalating window until a timeout-free pass resets it.
 		if (passSawTimeout) {
 			timeoutBackoffUntil = Date.now() + nextTimeoutBackoffMs;
 			console.warn(
@@ -1203,8 +723,7 @@ async function bakeAll(): Promise<void> {
 			nextTimeoutBackoffMs = TIMEOUT_BACKOFF_START_MS;
 		}
 		reconciling = false;
-		// THE DRAIN TEST. Anything queued behind this slice means the run is still
-		// going, so the tally keeps filling and nothing is printed yet.
+		// THE DRAIN TEST — anything queued behind this slice means the run is still going, so the tally keeps filling and nothing prints yet.
 		const moreComing = rerun || budgetPaused;
 		resumingRun = moreComing;
 		reportRun(moreComing);
@@ -1212,20 +731,13 @@ async function bakeAll(): Promise<void> {
 			rerun = false;
 			kickBake(); // via kickBake so the coalesced re-run also honours backoff
 		} else if (budgetPaused) {
-			// Work remains, but we deliberately stopped. Resume SOON — yet not
-			// immediately: an instant re-kick would rebuild the back-to-back chain
-			// this budget exists to break. The gap is what lets the main thread
-			// serve taps and lets GC reclaim the decode payloads.
+			// Resume SOON but not immediately — an instant re-kick would rebuild the back-to-back chain this budget exists to break; the gap lets the main thread and GC breathe.
 			setTimeout(kickBake, BUDGET_RESUME_MS);
 		}
 	}
 }
 
-/**
- * ONE-TIME migration: areas baked before the registry tracked per-area photo/line
- * bytes have no split fields, so the size panel reads them as 0 B. Backfill ONCE,
- * reading line payloads ONE AREA AT A TIME (peak heap = a single area).
- */
+/** ONE-TIME migration — backfills split photo/line byte fields for pre-existing areas (size panel read 0B without it); reads line payloads ONE AREA AT A TIME to bound peak heap. */
 async function backfillCoverageSizes(): Promise<void> {
 	if (backfilled) return;
 	backfilled = true;
@@ -1261,10 +773,7 @@ async function backfillCoverageSizes(): Promise<void> {
 	}
 }
 
-// ── public control surface ──────────────────────────────────────────────────
-/** Run THE formula now: every feature on every map gets its blob (newest-first,
- *  to budget, measured in REAL stored bytes), oldest-over-budget evicted, disk =
- *  truth. A present blob is zero work, so this is cheap to call on every change. */
+/** Run THE formula now (newest-first, budget in REAL stored bytes, oldest-over-budget evicted) — cheap to call on every change since a present blob is zero work. */
 export function kickBake(): void {
 	const now = Date.now();
 	if (now < bootBakeAt) return; // boot delay — the start-scheduled timer runs the first pass
@@ -1272,15 +781,7 @@ export function kickBake(): void {
 	void bakeAll();
 }
 
-/**
- * FIX NOW — the user's "re-initialise and heal everything" button. The 20 s pass
- * already heals failed photos on its own, but each failure carries an exponential
- * cooldown (up to 15 min) so a throttled source can recover; a feature can sit 🟠
- * "no photo" for a while before its cooldown lapses. This wipes ALL those cooldowns
- * so EVERY failed area is eligible to re-bake on the very next pass, then kicks one
- * immediately. It does NOT bypass the coverage guard or the budget — it just stops
- * the waiting. Returns how many areas were released from backoff.
- */
+/** FIX NOW — the user's "heal everything" button; wipes all satellite cooldowns so every failed area is eligible to re-bake immediately. Does NOT bypass the coverage guard or budget. Returns count released. */
 export function retryFailedBakes(): number {
 	const n = satCooldown.size;
 	satCooldown.clear();
@@ -1293,9 +794,7 @@ export function retryFailedBakes(): number {
 export async function reconcileOnceForTest(
 	hostPorts?: HostPorts,
 ): Promise<void> {
-	// Tests inject through the SAME door production uses. Passing ports here
-	// rather than reaching past them is the point: were the seam fake, these
-	// passes would bake nothing and every tripwire would go red.
+	// Tests inject through the SAME door production uses — were this seam fake, every tripwire would bake nothing and go red.
 	if (hostPorts) ports = hostPorts;
 	await bakeAll();
 }
@@ -1303,22 +802,7 @@ export async function reconcileOnceForTest(
 let started = false;
 let teardown: Array<() => void> = [];
 
-/**
- * Start the app-wide bake service. Call ONCE from the mobile layout's onMount so
- * it runs in every runtime context (dt-web / mob-web / native) regardless of
- * route. Idempotent — a second call (HMR / remount) is a no-op. Returns a stop fn.
- *
- * THE TRIGGER IS A PUSH, NOT A REACTIVE READ. `ports.onPlacesChanged` must fire
- * on EVERY place change (a pin dropped/moved/deleted, an import, a cloud
- * restore) and once on register. It is deliberately an imperative channel and
- * not an `$effect` reading the host's state: that cross-module reactive read is
- * unreliable (it silently failed to fire on a fresh pin drop — the exact bug).
- * The blob bakes the instant the feature lands, under every circumstance.
- * ([[cross-module-state-use-applier-pattern]])
- *
- * @param hostPorts the app around the engine — see getCache_OfflineMap/lib/shared/hostPorts.ts.
- *   ReTreever passes `retreeverPorts()`; the rapper demo passes literals.
- */
+/** ⚠️ Start ONCE from mobile layout onMount (idempotent). THE TRIGGER IS A PUSH — ports.onPlacesChanged, not a reactive $effect read, which silently failed to fire on a fresh pin drop. [[cross-module-state-use-applier-pattern]] */
 export function startOfflineBakeService(hostPorts: HostPorts): () => void {
 	if (started)
 		return () => {
@@ -1327,49 +811,31 @@ export function startOfflineBakeService(hostPorts: HostPorts): () => void {
 	started = true;
 	ports = hostPorts;
 
-	// ONE-TIME: sweep the 0-byte tiles the pre-guard pack Worker wrote (~19% of the
-	// pile on devices baked before the fix). Runs BEFORE the first bake pass so the
-	// probes below see the honest picture: an area whose disc was all-empty stops
-	// reading as "covered" and gets re-downloaded from the fixed Worker. Self-flagging,
-	// so this is a no-op on every subsequent boot.
+	// ONE-TIME: sweep 0-byte tiles from the pre-guard pack Worker (~19% of the pile on old devices) — runs BEFORE the first pass so all-empty discs re-download rather than reading as "covered". No-op on subsequent boots.
 	void purgeEmptyTilesOnce();
 
-	// ONE-TIME: reclaim the ~70 MB of PNGs left behind by the deleted road
-	// raster. Deleting the code does not delete the bytes — see
-	// purgeRoadRasters.ts for what it was and why it is gone.
+	// ONE-TIME: reclaim the ~70MB of PNGs left behind by the deleted road raster — deleting the code does not delete the bytes (see purgeRoadRasters.ts).
 	purgeDeadRoadRasters();
 
 	void backfillCoverageSizes();
-	// Seed the TinyBase cloud-mirror with every PRE-EXISTING baked area (new writes
-	// mirror themselves; this catches areas baked before the mirror existed).
+	// Seed the TinyBase cloud-mirror with every PRE-EXISTING baked area — new writes mirror themselves, this catches ones baked before the mirror existed.
 	void backfillCoverageMirror();
 
-	// BOOT DELAY — kickBake absorbs every kick for the first 20 s (including the
-	// onActiveMapChange register-fire below), so boot + the map's own style/tile
-	// fetches get the pipe first on lie-fi. This timer runs the first pass.
+	// BOOT DELAY — kickBake absorbs every kick for the first 20s, so boot + the map's own style/tile fetches get the pipe first on lie-fi; this timer runs the first pass.
 	bootBakeAt = Date.now() + BOOT_BAKE_DELAY_MS;
-	// ARRIVAL #1 — app open. Opening the app IS the ask; the first pass fetches
-	// fires even if the cached record is 5 minutes old.
+	// ARRIVAL #1 — app open IS the ask; the first pass fetches fires even if the cached record is 5 minutes old.
 	ports.fires?.arrival();
 	const bootTimer = setTimeout(kickBake, BOOT_BAKE_DELAY_MS);
 	teardown.push(() => clearTimeout(bootTimer));
 
-	// EVERY map/feature change → SHALLOW pass (download only what the registry says
-	// is missing; fires once on register too → boot features bake right away). A
-	// just-dropped pin is newest → downloads first, and already-baked areas are
-	// skipped cheaply instead of furiously re-probed.
+	// EVERY map/feature change → SHALLOW pass (download only what's missing) — a just-dropped pin is newest so it downloads first; already-baked areas are skipped cheaply.
 	teardown.push(ports.onPlacesChanged(kickBake));
 
-	// Every 20 s → re-run the formula: re-checks every blob against the actual disk
-	// (disk = truth) so a wiped/failed one self-heals. This is the "constantly
-	// making sure it's all there" guarantee; it touches the network only for
-	// genuinely-missing blobs (a present blob is an O(1) Set lookup).
+	// Every 20s → re-run the formula, re-checking every blob against actual disk so a wiped/failed one self-heals — network is touched only for genuinely-missing blobs.
 	const timer = setInterval(kickBake, 20000);
 	teardown.push(() => clearInterval(timer));
 
-	// ARRIVAL #2 — the tab/app regains focus (phone woke from sleep, or they
-	// switched back from the camera). Coming back to the app is the same ask as
-	// opening it, so the TTL is bypassed here too.
+	// ARRIVAL #2 — the app regaining focus (wake/return) is the same ask as opening it, so the TTL is bypassed here too.
 	if (typeof document !== "undefined") {
 		const onVisible = () => {
 			if (document.visibilityState === "visible") {
@@ -1383,12 +849,7 @@ export function startOfflineBakeService(hostPorts: HostPorts): () => void {
 		);
 	}
 
-	// ARRIVAL #3 — connectivity returns. THE field moment: they have driven out
-	// of the block and back into signal, and whatever is cached was fetched
-	// before they lost it. `refreshFires` bails immediately while offline, so
-	// without this the first chance to catch up is the next 20 s tick — which
-	// then finds a "fresh" record and skips. This is the arrival that the TTL
-	// alone gets most wrong.
+	// ARRIVAL #3 — connectivity returns (the field moment). refreshFires bails while offline, so without this the next 20s tick finds a "fresh" record and skips — the arrival TTL alone gets most wrong.
 	if (typeof window !== "undefined") {
 		const onOnline = () => {
 			hostPorts.fires?.arrival();
@@ -1398,22 +859,7 @@ export function startOfflineBakeService(hostPorts: HostPorts): () => void {
 		teardown.push(() => window.removeEventListener("online", onOnline));
 	}
 
-	// ⛔ TELL THE WIPE HOW TO STOP US. THIS IS WHY THE WIPE BUTTON DID NOTHING.
-	//
-	// MEASURED 27 Aug 2026, the user's console:
-	//   wipe blocked: {"gc-offlineTiles":"blocked","gc-offlineSatellite":
-	//   "blocked","rt-vectors":"blocked","rt-mapRegistry":"blocked"}
-	// All FOUR databases, while the panel read "baking… 23 areas to go".
-	//
-	// wipe.ts step 1 loops over `stoppers` to shut the app off the store before
-	// deleting, and its comment says exactly what happens otherwise: "a running
-	// service will re-open (and re-download into) the database the instant it is
-	// gone". But `registerWipeStopper` had ZERO callers repo-wide — the set was
-	// always empty, so step 1 iterated over nothing, waited 400 ms, and tried to
-	// delete four databases this service was actively writing to.
-	//
-	// The mechanism was written, exported and documented, and never connected.
-	// Same shape as setRawWallBlindHandler, found the same day.
+	// ⛔ Must call registerWipeStopper — the wipe button did nothing because it had ZERO callers repo-wide, so wipe.ts deleted databases this service was actively re-writing into (regression, 27 Aug 2026).
 	teardown.push(registerWipeStopper(stopOfflineBakeService));
 
 	return stopOfflineBakeService;

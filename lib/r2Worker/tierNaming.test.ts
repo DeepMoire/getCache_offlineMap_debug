@@ -3,23 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { LOCAL_DEV_HOST } from "./local_dev/tilesHost";
 
-/**
- * THE THREE TIERS HAVE THREE NAMES. Not seven.
- *
- * Chris, 27 Aug 2026, after a day lost to hostnames: "All week we've been
- * working on it. Okay, dev, prod, and local."
- *
- *     prod   tiles-prod.getcache.org
- *     dev    tiles-dev.getcache.org
- *     local  tiles-local.getcache.org   (→ 127.0.0.1 until the record exists)
- *
- * WHY A TEST AND NOT A DOC. There were SEVEN spellings live at once — the
- * config said one thing, the panel hint said another, a comment said a third,
- * and every one of them read as authoritative. Documentation cannot lose an
- * argument with code; a test can. [[no-silent-fallbacks]]
- *
- * A fourth spelling now reddens this file instead of blanking a map.
- */
+/** ⛔ the three tiers have three names — prod (tiles-prod.getcache.org), dev (tiles-dev.getcache.org), local (tiles-local.getcache.org, → 127.0.0.1 until the record exists). A test enforces it, not a doc: seven spellings were live at once and every one read as authoritative. [[no-silent-fallbacks]] */
 
 const ALLOWED = [
 	"tiles-prod.getcache.org",
@@ -62,11 +46,7 @@ describe("tile hostnames — dev, prod, local and nothing else", () => {
 	});
 
 	it("the child bakes in NO production hostname at all", () => {
-		// The strongest form of this rule. The child cannot name our
-		// infrastructure — prod arrives via VITE_TILES_HOST at boot, so a
-		// stranger who installs this package bills nobody. Discovered while
-		// writing this file: there is no PRODUCTION_HOST export to assert on,
-		// and that absence IS the guarantee. [[child-names-no-parent]]
+		// ⛔ the child cannot name our infrastructure — prod arrives via VITE_TILES_HOST at boot; there's no PRODUCTION_HOST export to assert on, and that absence IS the guarantee. [[child-names-no-parent]]
 		const src = readFileSync(join(__dirname, "local_dev", "tilesHost.ts"), "utf8");
 		const code = src
 			.split("\n")
@@ -76,9 +56,7 @@ describe("tile hostnames — dev, prod, local and nothing else", () => {
 	});
 
 	it("the local tier is loopback or the local NAME — never a cloud host", () => {
-		// Loopback while the DNS record is missing; tiles-local.getcache.org
-		// the day it exists. Anything else means local silently became remote,
-		// which bills someone for a tier advertised as free.
+		// loopback while the DNS record is missing, tiles-local.getcache.org once it exists — anything else means local silently became remote and bills someone for a "free" tier
 		expect(LOCAL_DEV_HOST).toMatch(
 			/^https?:\/\/(127\.0\.0\.1|localhost|tiles-local\.getcache\.org):8787$/,
 		);

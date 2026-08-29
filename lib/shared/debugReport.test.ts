@@ -1,9 +1,4 @@
-/**
- * The report's job is to make "correct bytes in the WRONG BOX" visible. These
- * tests exist to prove it actually does — OFFLINE_MAP_SPEC.md §8: "Prove every
- * test red-on-bug. Break the thing, watch the test fail, restore it. Multiple
- * tests in the previous attempt passed on broken code."
- */
+/** Proves the report surfaces "correct bytes in the WRONG BOX" — OFFLINE_MAP_SPEC.md §8: every test here must be red-on-bug. */
 import { describe, expect, it } from "vitest";
 import { BLOB_TILE_Z, cellBox, cellOf } from "../contract/grid";
 import { geometryFor } from "./debugReport";
@@ -38,9 +33,7 @@ describe("geometryFor — the rule-4 readout", () => {
 	});
 
 	it("uses the cell's OWN zoom, never the bare constant", () => {
-		// Cell.z can be PROMOTED for an edge pin. Whatever z comes back, the box
-		// must be the box for THAT z — reading BLOB_TILE_Z instead is the
-		// "address and geometry disagree" bug.
+		// Cell.z can be PROMOTED for an edge pin — box must match THAT z; reading BLOB_TILE_Z instead is the "address and geometry disagree" bug.
 		const r = rec(-116.8297, 47.6533);
 		const g = geometryFor(r);
 		const c = cellOf(r.lng, r.lat);
@@ -50,10 +43,7 @@ describe("geometryFor — the rule-4 readout", () => {
 	});
 
 	it("RED-ON-BUG: a pin served from a NEIGHBOURING cell reads tens of km off", () => {
-		// This is the 45 km / 27.9 km / 50 km class. Build a record whose stored
-		// pin sits in one cell, then ask what a neighbouring cell's centre would
-		// mean for it. If offsetKm cannot go large here, the readout is not
-		// measuring what rule 4 requires and the whole report is decorative.
+		// RED-ON-BUG class (45/27.9/50 km) — if offsetKm can't go large here, the readout isn't measuring rule 4 and the report is decorative.
 		const good = geometryFor(rec(-116.8297, 47.6533));
 		expect(good.offsetKm).toBeLessThan(60); // inside its own z8 cell
 
@@ -77,8 +67,7 @@ describe("geometryFor — the rule-4 readout", () => {
 	});
 
 	it("never lets one pin's data stand in for another's", () => {
-		// Two real pins that share ONE z8 cell (the pinCentred.test.ts case).
-		// Same cell, but they must stay two distinct reports with their own pins.
+		// Two real pins sharing ONE z8 cell (pinCentred.test.ts case) — must stay two distinct reports with their own pins.
 		const a = geometryFor(rec(-116.8297, 47.6533));
 		const b = geometryFor(rec(-116.3674, 48.0005));
 		expect(a.areaKey).not.toBe(b.areaKey);
@@ -95,9 +84,7 @@ describe("geometryFor — the rule-4 readout", () => {
 			expect(Number.isFinite(v)).toBe(true);
 			expect(v).toBeGreaterThan(0);
 		}
-		// At z8 / lat 47 a cell half-span is far past the promised 30 km radius.
-		// This is the BLOB_TILE_Z bug, and the report must show it rather than
-		// smooth it over. If this ever flips, the grid changed — read the spec.
+		// BLOB_TILE_Z bug: z8/lat47 half-span exceeds the promised 30km radius — must surface, not smooth over. If this ever flips, the grid changed.
 		expect(BLOB_TILE_Z).toBe(8);
 		expect(Math.max(...Object.values(g.reachKm))).toBeGreaterThan(30);
 	});

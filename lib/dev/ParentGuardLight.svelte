@@ -1,20 +1,4 @@
-<!--
-  THE PARENT-GUARD LIGHT — one dot per child, pinned to the dev card's corner.
-
-  Green: `lib/noParentNames.test.ts` passes in that child. Red: it fails, and
-  the dot opens to the offending file:line — each a zed:// link, so a red
-  light is one click from the line. Yellow: unknown — the guard is running,
-  could not run, or this page is served by something with no /api/parentGuard
-  (a solo clone, a production build).
-
-  Dev-only by data: the endpoint 404s outside dev, so this renders yellow and
-  says so rather than pretending. Runs once on mount and on click; the guard
-  takes a few seconds per child, so it is not polled.
-
-  Placement: EphemeralCard forces its direct children `position: static`, so
-  the outer span is the static child and the INNER one is the thing pinned
-  absolute — relative to the card, which is `position: fixed`.
--->
+<!-- Placement: EphemeralCard forces its direct children position:static, so the outer span must stay static and only the inner one is position:absolute, relative to the card (position:fixed). -->
 <script lang="ts">
 import { onMount } from "svelte";
 

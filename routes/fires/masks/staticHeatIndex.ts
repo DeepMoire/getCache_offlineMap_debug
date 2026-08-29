@@ -1,24 +1,8 @@
 /**
- * staticHeatIndex.ts — loads the persistent-heat-source mask.
- *
- * The asset (`/mobileAssets/static-heat-sources.json`) is a flat array of
- * ~375 m cell keys, derived from a YEAR of FIRMS archive history. See
- * `staticHeatSources.ts` for the rule and why it beats an urban-polygon filter.
- *
- * ── Loading rules (same shape as placeIndex) ──
- *   • LAZY — nothing loads until a fire layer attaches.
- *   • ONCE — concurrent callers share one in-flight promise.
- *   • NEVER FATAL, and it fails toward SHOWING FIRES. A missing mask means an
- *     empty set, which means nothing is flagged industrial, which means every
- *     detection renders as a wildfire. That is the correct direction to fail:
- *     a refinery briefly mislabelled as a fire is an annoyance, whereas a real
- *     fire suppressed because the mask half-loaded is the failure this whole
- *     layer exists to prevent.
- *
- * ── Rebuilding ──
- * `scripts/buildStaticHeatMask.py` pulls the archive and writes the asset.
- * Rerun it yearly — industry changes, and the rule re-derives rather than
- * needing a hand-maintained list.
+ * Loads the persistent-heat-source mask (see staticHeatSources.ts for the rule).
+ * LAZY (loads on first fire-layer attach), ONCE (concurrent callers share one in-flight promise).
+ * ⚠️ NEVER FATAL — fails toward SHOWING FIRES: a missing mask flags nothing as industrial rather than risk suppressing a real fire.
+ * Rebuild yearly via scripts/buildStaticHeatMask.py as industry changes.
  */
 
 const ASSET_URL = "/mobileAssets/static-heat-sources.json";
@@ -38,9 +22,7 @@ export async function loadStaticMask(): Promise<Set<string>> {
 			cache = new Set(keys);
 			return cache;
 		} catch (err) {
-			// codestyle-allow-swallow: not a swallow — the console.warn below is the
-			// visible signal. An empty mask fails OPEN (shows every detection), which is
-			// the safe direction for a wildfire layer.
+			// codestyle-allow-swallow: not a swallow — console.warn below is the visible signal; empty mask fails OPEN (safe for a wildfire layer).
 			console.warn(
 				"[fire] industrial-source mask unavailable — showing all detections",
 				err,
@@ -54,8 +36,7 @@ export async function loadStaticMask(): Promise<Set<string>> {
 	return inFlight;
 }
 
-/** Already-loaded mask, or an empty set. Lets a synchronous render use the mask
- *  when warm without forcing an await — and fail toward showing fires when not. */
+/** Already-loaded mask, or empty set — lets a synchronous render use it when warm without an await, and fail toward showing fires when not. */
 export function peekStaticMask(): Set<string> {
 	return cache ?? new Set();
 }

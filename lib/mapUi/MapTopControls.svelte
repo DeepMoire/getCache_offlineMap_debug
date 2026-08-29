@@ -1,17 +1,6 @@
-<!--
-    MapTopControls — the top-right control stack shared by BOTH map routes
-    (/mobile/map and /mobile/offlinev4): the eye (map-only toggle) on top, the
-    crow (online/offline switch) directly below it.
-
-    Single source of truth so the two routes can never diverge. The eye owns
-    map-only mode (hides the top/bottom nav via body.map-only). The crow's
-    destination is the caller's — pass crowMode + onCrowToggle.
--->
+<!-- MapTopControls — top-right stack shared by /mobile/map and /mobile/offlinev4: map-only eye toggle above the online/offline crow switch. -->
 <script lang="ts">
-// Now comes from the host through mapHostPorts (28 Aug 2026).
-// CrowSwitch renders as ports.ui.CrowSwitch; the scene registry's
-// assetFacts/framePath are ports.scenes (OPTIONAL — a host without frame
-// animation gets a plain, static eye and no timers, never a throw).
+// ports.scenes is OPTIONAL — no scene registry means a plain, static eye and no timers, never a throw.
 import type { MapHostPorts } from "../shared/mapHostPorts";
 
 let {
@@ -26,12 +15,8 @@ let {
     onCrowToggle: () => void;
 } = $props();
 
-// Eye animation: two frame sequences at 20fps.
-//   eye_OPEN  plays when toggling on  (closed → open, ends on open)
-//   eye_CLOSE plays when toggling off (open → closed, ends on closed)
-// Frame counts + rate come from THE REGISTRY — eyeBlink.svelte.ts plays the
-// same two folders (faster) and must not carry a second copy of these numbers.
-// No `scenes` port → 1 frame each, and the timer ends on its first tick.
+// eye_OPEN plays closed→open on toggle on; eye_CLOSE plays open→closed on toggle off.
+// Frame counts/rate come from THE REGISTRY (eyeBlink.svelte.ts) — must not duplicate these numbers here.
 const scenes = ports.scenes;
 const EYE_OPEN_FRAMES = scenes ? scenes.assetFacts("eye_OPEN_20fps").frameCount : 1;
 const EYE_CLOSE_FRAMES = scenes ? scenes.assetFacts("eye_CLOSE_20fps").frameCount : 1;
@@ -62,7 +47,6 @@ function toggleEye() {
     const next = !mapOnly;
     mapOnly = next;
     playEye(next ? "open" : "close");
-    // Choreograph the nav bar slide with the eye frame sequence.
     if (navTimer) clearTimeout(navTimer);
     const delay = next ? 150 : 200;
     navTimer = setTimeout(() => {
@@ -80,8 +64,7 @@ const eyeSrc = $derived.by(() => {
         : scenes.framePath("eye_CLOSE_20fps", EYE_CLOSE_FRAMES);
 });
 
-// Measure the top bar at runtime → --top-bar-h so the stack anchors to its
-// actual bottom edge regardless of nav height.
+// Measures the top bar at runtime → --top-bar-h, so the stack anchors to its actual bottom edge.
 $effect(() => {
     if (typeof document === "undefined") return;
     const topBar = document.querySelector<HTMLElement>(".mobile-nav");
@@ -127,16 +110,14 @@ $effect(() => {
         {/if}
     </button>
 
-    <!-- Crow stacked directly below the eye, same box so the centered art
-         lines up on the eye's axis. -->
+    <!-- Crow stacked directly below the eye, same box, so the centred art lines up on the eye's axis. -->
     <div class="crow-slot">
         <ports.ui.CrowSwitch mode={crowMode} onToggle={onCrowToggle} />
     </div>
 </div>
 
 <style>
-/* Layer that starts BELOW the top bar (--top-bar-h is measured at runtime),
-   so children use plain top/right offsets like any normal element. */
+/* Layer starts BELOW the top bar (--top-bar-h, measured at runtime) — children use plain top/right offsets. */
 .below-top-bar {
     position: absolute;
     top: var(--top-bar-h, 4rem);
@@ -177,9 +158,7 @@ $effect(() => {
     pointer-events: none;
 }
 
-/* Crow: same 74px box as the eye, right-aligned beneath it. The square crow
-   art is centered by object-fit, so it lands on the eye's vertical axis and
-   gets ~6px breathing room from the right edge. */
+/* Crow: same 74px box as the eye, right-aligned; object-fit centres it on the eye's vertical axis. */
 .crow-slot {
     position: absolute;
     top: 80px;
@@ -187,8 +166,7 @@ $effect(() => {
     pointer-events: none;
 }
 
-/* Map-only mode: slide the nav bars off-screen. Global so it works on every
-   route that mounts these controls (online + offline maps). */
+/* Map-only mode: slides the nav bars off-screen. Global so it works on every route mounting these controls. */
 :global(.mobile-nav),
 :global(.bottom-nav) {
     transition: transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease;

@@ -1,23 +1,4 @@
 <script lang="ts">
-/**
- * THE PIN LIBRARY — the app's own control, as a reusable component.
- *
- * This is the strip inside the feature popover: FOUR glyph pins plus a "More"
- * tile, and the "More" tile opens the full library (every glyph, then the
- * RAINBOW section). Same markup, same class names and same CSS as
- * FeatureDetail.svelte, so it looks identical wherever it is mounted.
- *
- * WHY IT LIVES IN rapper: the pin library is part of the MAP. Choosing which
- * artwork a feature wears needs no database, no auth and no inbox types — so
- * it travels with the map to a contractor.
- *
- * THE TABLE IS NOT RESTATED HERE. GLYPH_PINS / RAINBOW_PINS come from
- * getCache_OfflineMap/lib/shared/icons.ts, the one definition, which ReTreever re-exports from
- * $lib/mobile/utils/icons. Adding a pin in one place adds it everywhere.
- *
- * NOT INCLUDED, deliberately: the emoji slot. It opens EmojiPicker, which is
- * ReTreever's. `emojiSlot` leaves room for a host that has one.
- */
 import {
 	GLYPH_PINS,
 	RAINBOW_PINS,
@@ -32,19 +13,13 @@ let {
 	label = "PIN LIBRARY",
 	emojiSlot,
 }: {
-	/** The chosen pin key. Bindable, so a host can read it without a callback. */
 	selected?: string;
 	/** Fires on every pick, including from inside the full library. */
 	onChange?: (key: PinKey) => void;
 	label?: string;
-	/** Optional extra tile in the full library — ReTreever puts its emoji
-	 *  doorway here. Omitted, the library simply has no emoji slot. */
 	emojiSlot?: Snippet;
 } = $props();
 
-// Four pins + the "More" tile = five placards across. The swatch width is
-// sized (in CSS) to fit exactly five per row, so the collapsed strip fills
-// the popover edge-to-edge instead of leaving a gap after three.
 const COLLAPSED_COUNT = 4;
 const collapsedPins = GLYPH_PINS.slice(0, COLLAPSED_COUNT);
 
@@ -89,10 +64,6 @@ function pick(key: PinKey) {
 </div>
 
 {#if libraryOpen}
-	<!-- THE FULL LIBRARY. In the app this portals out to <body>, because the
-	     feature popover carries a CSS transform that would clip it. Here it is
-	     inline: the host decides where the component sits, and a debug rail has
-	     nothing to escape from. -->
 	<div class="rt-fd__lib" role="dialog" aria-label="Pin library" tabindex="-1">
 		<div class="rt-fd__lib-hdr">
 			<div class="rt-fd__sect-label">PIN LIBRARY</div>
@@ -118,8 +89,7 @@ function pick(key: PinKey) {
 {/if}
 
 <style>
-/* Lifted from FeatureDetail.svelte so the control is pixel-identical. The
-   var() fallbacks matter: rapper may be mounted somewhere app.css is absent. */
+/* var() fallbacks matter — rapper may be mounted somewhere app.css is absent. */
 .rt-fd__sect-label {
 	color: var(--color-accent-terracotta, var(--rt-fg-dim, #c4713f));
 	font-size: 0.7rem;
@@ -136,9 +106,6 @@ function pick(key: PinKey) {
 }
 
 .rt-fd__swatch {
-	/* Exactly five placards per row: each tile is a fifth of the width minus
-	   the four 3px gaps. Height stays fixed at 48px — NOT square — so the row
-	   stays short and the taller pin art lets its tail poke below the box. */
 	flex: 0 0 calc((100% - 15px) / 5);
 	max-width: calc((100% - 15px) / 5);
 	height: 48px;
@@ -181,7 +148,6 @@ function pick(key: PinKey) {
 	color: var(--rt-yellow, #ffd24a);
 }
 
-/* The full library. In the app this is a portalled popover; inline here. */
 .rt-fd__lib {
 	margin-top: 6px;
 	padding: 6px 8px 8px;

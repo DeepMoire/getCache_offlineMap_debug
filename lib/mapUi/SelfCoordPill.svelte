@@ -1,28 +1,7 @@
-<!--
-  SelfCoordPill — THE "you are here, and here's the number" readout.
-
-  A small gold pill that sits just above the blue dot showing your GPS
-  coordinate, with a share button that opens the SAME format menu the pin
-  popover uses (text / gps copy / .getcache / .kmz). Readable by eye on the
-  phone AND shareable five ways — that's the whole point of it.
-
-  ONE ACTION, TWO DOORS. Both the LOCATE tile and the hospital popup's "Your
-  GPS loc." button run the same host action (pan to self → show this pill).
-  Before this existed, the hospital popup hand-rolled its OWN
-  navigator.geolocation.getCurrentPosition inside mapInit.ts — a second,
-  ungated location path that refetched a fix the app already had in
-  userLocator.getUserCoord(), and on denial showed its own dead-end
-  "Check Settings > Location" string instead of routing through THE LOCATION
-  GATE. That block is deleted; this component replaces it.
-
-  Positioning follows PlotLayer's pending-popover pattern: the coordinate is
-  projected to screen pixels and RE-projected on every camera `move`, so the
-  pill glides with the dot instead of detaching from it.
--->
+<!-- SelfCoordPill — gold "you are here" GPS readout above the blue dot, with a share button (text/gps copy/.getcache/.kmz). -->
 <script lang="ts">
 import type { Map as MapboxMap } from "mapbox-gl";
-// Now comes from the host through mapHostPorts (28 Aug 2026). Icon and SharePicker render as ports.ui.*;
-// ShareFormat is the contract's MapShareRow (SharePicker's row shape).
+// Icon and SharePicker render as ports.ui.*; ShareFormat is the contract's MapShareRow (SharePicker's row shape).
 import type { MapHostPorts, MapShareRow as ShareFormat } from "../shared/mapHostPorts";
 
 type Props = {
@@ -32,12 +11,9 @@ type Props = {
     map: MapboxMap | null;
     /** The coordinate to show, or null to hide the pill entirely. */
     coord: { lng: number; lat: number } | null;
-    /** Share/copy rows for the pill's share button, built by the host so the
-     *  pill stays presentational (no file building, no clipboard, in here). */
+    /** Share/copy rows for the pill's share button, built by the host — keeps the pill presentational (no file building, no clipboard here). */
     formats: ShareFormat[];
-    /** Dismiss. There is no ✕ on the chip — it stays as clean as the ruler's
-     *  readout — so the map itself is the dismiss surface: tap anywhere and
-     *  the pill goes away. */
+    /** Dismiss — no ✕ on the chip; the map itself is the dismiss surface (tap anywhere). */
     onClose?: () => void;
 };
 
@@ -51,15 +27,12 @@ function computePos(): void {
         pos = null;
         return;
     }
-    // NaN defence at the Mapbox boundary: a degenerate camera transform makes
-    // project() return non-finite pixels, which would place the pill at
-    // translate(NaN,NaN) and vanish it silently.
+    // NaN defence: a degenerate camera transform can make project() return non-finite pixels, silently vanishing the pill at translate(NaN,NaN).
     const p = map.project([coord.lng, coord.lat]);
     pos = Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : null;
 }
 
-// Re-project on every camera move so the pill rides the dot. A tap on the map
-// dismisses it (the chip carries no ✕ of its own).
+// Re-projects on every camera move so the pill rides the dot; a map tap dismisses it (no ✕ on the chip).
 $effect(() => {
     if (!map || !coord) {
         pos = null;
@@ -76,23 +49,14 @@ $effect(() => {
     };
 });
 
-// The eye-readable text. 3 dp is ~110 m — plenty to read aloud over a radio
-// or a phone call, and it keeps the pill narrow. The SHARE rows carry full
-// precision (the host builds those), same split as the snake ruler's
-// readout-vs-copy.
+// 3 dp ≈ 110 m — plenty to read aloud, keeps the pill narrow. SHARE rows carry full precision (host-built), same split as the snake ruler.
 const readout = $derived(
     coord ? `${coord.lat.toFixed(3)}°, ${coord.lng.toFixed(3)}°` : "",
 );
 </script>
 
 {#if coord && pos}
-    <!-- THE SAME PILL THE SNAKE RULER USES. `rt-line-label
-         rt-line-label-total` are the shared globals in styles/mobile.css — the
-         gold fill, the rounded 14px/800 face, the radius and shadow all come
-         from there, NOT from this file. Deliberately not restyled: this is the
-         app's established "here is a coordinate" chip, and a second look-alike
-         would be one more thing to keep in sync. The share button is the only
-         addition, sitting at the end. -->
+    <!-- Uses the shared .rt-line-label.rt-line-label-total globals (styles/mobile.css) — deliberately not restyled here, so it never drifts from the ruler's chip. -->
     <div
         class="rt-line-label rt-line-label-total rt-selfcoord"
         style="--x:{pos.x}px; --y:{pos.y}px"
@@ -117,13 +81,7 @@ const readout = $derived(
 {/if}
 
 <style>
-/* POSITIONING ONLY. Every visual property — gold fill, font, size, weight,
-   radius, shadow, padding — is inherited from the global
-   `.rt-line-label.rt-line-label-total` pair in styles/mobile.css, so this pill
-   and the snake ruler's readout can never drift apart. Do not re-declare them
-   here; change mobile.css if the chip's look should change everywhere.
-   The base class sets pointer-events:none (it's a passive map label); we turn
-   it back on because this one has a button in it. */
+/* POSITIONING ONLY — do not re-declare the shared visual properties here; edit mobile.css's .rt-line-label.rt-line-label-total instead. Base class sets pointer-events:none; re-enabled here for the button. */
 .rt-selfcoord {
     position: absolute;
     left: 0;
@@ -137,14 +95,7 @@ const readout = $derived(
     z-index: 5;
 }
 
-/* The one addition to the ruler chip: a share affordance at the end.
-   DELIBERATELY TALLER THAN THE PILL. The coordinate chip is a short, skinny
-   14px-line stick, so a button sized to fit inside it reads as a speck and gets
-   missed. This one is 28px — bigger than the chip's own height — so it stands
-   proud above and below the gold, with its own border making it unmistakably a
-   BUTTON rather than part of the readout. Unorthodox on purpose: the overhang IS
-   the affordance. Negative block margins let it overflow without stretching the
-   pill (the chip keeps its own height; the button breaks out of it). */
+/* Deliberately taller than the pill (28px vs the 14px chip) so the share button isn't missed as a speck — negative block margins let it overflow without stretching the pill. */
 .rt-selfcoord__btn {
     display: grid;
     place-items: center;

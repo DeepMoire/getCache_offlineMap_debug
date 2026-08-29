@@ -1,32 +1,11 @@
-/**
- * legacyVectorCleanup.ts — access + cleanup for the legacy v3 baked-line store
- * (`retreever-v3-vectors`, IndexedDB). Nothing writes new lines here anymore:
- * the wall map's roads/water come from the v4 tile pile (`v4CloudflareTiles.ts`,
- * one guarded /pack request per area) — the old per-area Overpass bake is gone,
- * deliberately: it was the one offline-map network path with NO downloadGuard
- * on it. This module only lets the v4 reconcile read stored line sizes
- * (coverage backfill) and delete areas (orphan sweep / prune).
- *
- * ⚰️ THIS IS A TOMBSTONE WITH A JOB — do not "clean it up" as dead code.
- * The writer is gone; the EVICTOR is not. Devices upgraded from an older build
- * still hold baked lines in `rt-vectors`, and `getVectorKeys()` /
- * `deleteVectorAt()` are the only way the conveyor reclaims that space. Delete
- * this module and those bytes become unreachable orphans that still count
- * against the 1 GB budget — a slow leak on exactly the longest-lived installs,
- * and invisible on a fresh install. Retire it only once no shipped device can
- * still be holding `rt-vectors` data (tracked in docs/TODO.md).
- */
+/** ⚰️ TOMBSTONE WITH A JOB — do not delete: the writer is gone but old devices still hold baked lines in rt-vectors, and getVectorKeys()/deleteVectorAt() are the only way to reclaim that space (retire only once no device still holds rt-vectors data — tracked in docs/TODO.md). */
 
 import { migrateIdbDatabase } from "../idbRename";
 import { makeKeyedIdbStore } from "../keyedIdbStore";
 
-// Renamed from "retreever-v3-vectors-v9" → "rt-vectors" (clean rt- prefix; rt =
-// ReTreever). The roads/water/coast line art is carried forward ONCE by
-// migrateIdbDatabase below. The old v9 name is NOT added to STALE_DBS — it's
-// left in place as the migration's fallback source (a later release can sweep it).
+// rt-vectors renamed from retreever-v3-vectors-v9 — v9 stays OUT of STALE_DBS since migrateIdbDatabase still reads it as the fallback source.
 const DB_NAME = "rt-vectors";
-/** The LIVE vectors DB name — exported so the v4 /blobs inspector can PROTECT
- *  it from the legacy-wipe (existing baked lines are still pruned through here). */
+/** LIVE vectors DB name — exported so the v4 /blobs inspector can protect it from the legacy-wipe. */
 export const LEGACY_VECTORS_DB_NAME = DB_NAME;
 const STALE_DBS = [
 	"retreever-v3-vectors",
@@ -37,14 +16,6 @@ const STALE_DBS = [
 	"retreever-v3-vectors-v6",
 	"retreever-v3-vectors-v7",
 	"retreever-v3-vectors-v8",
-	// The Mapbox-era wall-tile store. Its ONLY reason to exist was that Mapbox
-	// ran the vector tile provider in a Web Worker, which cannot read
-	// main-thread memory — so cut tiles had to go through IndexedDB, keyed by a
-	// generation epoch. MapLibre's `addProtocol` handler runs on the main
-	// thread and reads the tile pile straight out of a `Map` (wallProtocol.ts),
-	// so nothing opens this database again. Devices that ran a Mapbox build
-	// still hold a full generation of MVT bytes here — unreachable orphans that
-	// would keep counting against the 1 GB budget forever. Sweep them.
 	"rt-wall-tiles",
 ];
 const STORE = "lines";
@@ -73,7 +44,4 @@ export async function getVectorFeaturesAt(key: string): Promise<GeoJSON.Feature[
 	return (await idb.get(key)) ?? [];
 }
 
-// NOTE: the size readout reads aggregate line bytes/counts from the tiny
-// coverage registry (`coverageSizes` in coverageRegistry.ts), NOT from the stored
-// GeoJSON. Do NOT add a `getAllVectorFeatures()`/`vectorStats()` that loads every
-// baked feature into JS on a timer — that pinned the main-thread heap at 1 GB+.
+// NOTE: size readout comes from coverageRegistry's coverageSizes, NOT stored GeoJSON — never add a getAllVectorFeatures()/vectorStats() that loads every feature on a timer; that pinned the main-thread heap at 1 GB+.

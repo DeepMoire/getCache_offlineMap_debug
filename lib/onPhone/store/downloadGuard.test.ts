@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock Sentry so we can assert the breaker alerts exactly once.
 const captureMessage = vi.fn();
 vi.mock("@sentry/sveltekit", () => ({ captureMessage }));
 
-// Re-import fresh each test so the module-level breaker state resets (the breaker
-// is intentionally one-shot per session / module instance).
+// freshGuard re-imports so module-level breaker state resets — the breaker is intentionally one-shot per module instance.
 async function freshGuard() {
 	vi.resetModules();
 	captureMessage.mockClear();
@@ -56,10 +54,7 @@ describe("downloadGuard circuit breaker", () => {
 
 	it("TRIPS on too many pack downloads in a session", async () => {
 		const g = await freshGuard();
-		// ⛔ READ THE CAP FROM THE SOURCE, NEVER HARD-CODE IT. This assertion said
-		// `60` while the constant was 500 and then 5000 — it passed only because
-		// the loop stopped short, so it silently stopped testing anything. The
-		// cap has now changed twice under it (grid cells, then per-pin keys).
+		// ⛔ READ THE CAP FROM THE SOURCE, NEVER HARD-CODE IT — a hard-coded assertion silently stopped testing anything when the constant changed twice under it.
 		const { readFileSync } = await import("node:fs");
 		const { fileURLToPath } = await import("node:url");
 		const src = readFileSync(
@@ -86,24 +81,12 @@ describe("downloadGuard circuit breaker", () => {
 	});
 });
 
-// THE TERMINAL-vs-TRANSIENT CONTRACT.
-//
-// The breaker LATCHES: once tripped, every guard rethrows without attempting
-// anything, and only a reload clears it. Callers must therefore treat a tripped
-// breaker as TERMINAL, not as a retryable failure.
-//
-// The offline bake service originally caught the throw and logged
-// "area failed (retry next pass)", so every 20 s tick re-walked the whole grid
-// and emitted an identical stack — hundreds of retained Error objects and a
-// flooded console. `bakeAll()` now returns early on `isDownloadGuardTripped()`.
-// These lock the property that makes that early return correct.
+// ⚠️ Once tripped the breaker is TERMINAL, never retryable — callers must stop, not retry (a caught-and-retried throw once flooded the console with retained errors).
 describe("downloadGuard — a tripped breaker is TERMINAL, never retryable", () => {
 	it("stays tripped forever once tripped (retrying can never succeed)", async () => {
 		const g = await freshGuard();
 		expect(() => g.guardBakeGrid(5000, { center: [0, 0] })).toThrow();
 		expect(g.isDownloadGuardTripped()).toBe(true);
-		// Simulate many "next pass" retries: every one must still refuse, so a
-		// retry loop is pure waste — the caller has to stop instead.
 		for (let pass = 0; pass < 50; pass++) {
 			expect(() => g.guardBakeGrid(1, { center: [0, 0] })).toThrow(
 				g.DownloadBudgetError,

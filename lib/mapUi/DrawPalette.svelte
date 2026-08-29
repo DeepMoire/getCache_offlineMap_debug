@@ -1,12 +1,5 @@
-<!--
-  DrawPalette.svelte — the LINE / POLY / PIN tool strip.
-
-  Presentational only. Picking a tool ARMS the Snake Ruler (see MapDrawControls,
-  via `armKind`); the ruler then owns ALL geometry, the readout, and finishing
-  (its own Save / ✕). This component is just the five buttons + active highlight.
--->
+<!-- DrawPalette — the LINE/POLY/PIN tool strip; presentational only. Picking a tool arms the Snake Ruler (armKind), which then owns all geometry, the readout, and finishing. -->
 <script lang="ts">
-// Now comes from the host through mapHostPorts (28 Aug 2026).
 import type { MapHostPorts } from "../shared/mapHostPorts";
 
 let {
