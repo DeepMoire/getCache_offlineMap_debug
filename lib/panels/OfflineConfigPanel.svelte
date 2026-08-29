@@ -1,5 +1,5 @@
 <script lang="ts">
-import "$parent/retreeved/sharedComponents/effemeralCard/devCard.css";
+import "$rig/dev/devCard.css";
 /** CONFIG — the right-hand rail's Workers/layers switches (only things that change what the map talks to or draws; the pin picker is not config, see PinLibrary.svelte). ⚠️ DEV-ONLY BY CONSTRUCTION — the worker override lives behind `import.meta.env.DEV` in tilesHost.ts (compile-time), so a shipped build cannot switch it; that's what makes this panel safe to publish at a public URL. */
 import { onMount } from "svelte";
 import {

@@ -1,5 +1,5 @@
 <script lang="ts">
-import "$parent/retreeved/sharedComponents/effemeralCard/devCard.css";
+import "$rig/dev/devCard.css";
 /** OfflineBlobPanel — what's actually on disk, per area, alongside the work meter's "is it working now". ⚠️ IndexedDB is partitioned per origin — an empty table here means this origin has no blobs, not that they were lost. */
 import { onMount } from "svelte";
 import {

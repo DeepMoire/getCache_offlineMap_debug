@@ -34,7 +34,7 @@ import type * as maplibreType from "maplibre-gl";
 import { onMount } from "svelte";
 // The app's OWN grab hand, replacing MapLibre's stock white glove on the map
 // canvas. Same seam and same reason as the phone hand above: it is the parent's
-// art, so it lives in `retreeved/sharedAssets` (ReTreever owns that folder and
+// art, so it lives in `$gc/assets` (Get Cache owns that folder and
 // syncRetreeved.sh carries it to rapper) and the child imports it through the
 // alias. ReTreever's SnakeRuler uses the very same file via its own static URL
 // `/mobileAssets/...`, which a child cannot use — that path only exists on the
@@ -44,7 +44,7 @@ import { onMount } from "svelte";
 // ~128px in every browser — no warning, no fallback drawn, you just get the
 // stock arrow. The full-size hand_shovel_cursor.webp (24 KB) is over that
 // line, which is why the shovel silently vanished. Keep the _100 cut here.
-import grabCursorUrl from "$parent/retreeved/sharedAssets/hand_shovel_cursor_100.webp";
+import grabCursorUrl from "$gc/assets/hand_shovel_cursor_100.webp";
 import { initializeOfflineMap } from "./onPhone/render/offlineMapInit";
 import { buildOfflineBaseStyle } from "./onPhone/render/offlineBaseStyle";
 import { v4TransformRequest } from "./r2Worker/local_dev/roads/packDownload";
@@ -70,10 +70,10 @@ import { resetCircuits } from "./shared/workMeter.svelte";
 import type { HostPorts } from "./shared/hostPorts";
 import OfflineWorkMeter from "./shared/OfflineWorkMeter.svelte";
 import OfflineBlobPanel from "./panels/OfflineBlobPanel.svelte";
-import "$parent/retreeved/sharedComponents/effemeralCard/devCard.css";
+import "$rig/dev/devCard.css";
 // The hand-off action for `debugHost` / the rail hosts below. Shared with the
 // online map through the same seam as the card it portals into.
-import { portal } from "$parent/retreeved/sharedComponents/effemeralCard/portal";
+import { portal } from "$rig/dev/portal";
 import OfflineConfigPanel from "./panels/OfflineConfigPanel.svelte";
 import PinLibrary from "./panels/PinLibrary.svelte";
 import {
@@ -194,7 +194,7 @@ let {
 	 * not ship. Their DATA is this component's (layers, blobs, dropped pins,
 	 * wall status), so they stay owned here; but their PLACE is the host's.
 	 * A page hands in an element — the content box of an EphemeralCard from
-	 * `$parent/retreeved/sharedComponents/effemeralCard` — and the nodes are
+	 * `$rig/dev` — and the nodes are
 	 * moved into it, wiring, state and scoped styles intact. Absent, they sit
 	 * on the stage as before, which is what a standalone rapper checkout gets.
 	 */

@@ -1,6 +1,7 @@
 <script lang="ts">
-import TierShell from "$parent/retreeved/sharedComponents/TierShell.svelte";
-import logoUrl from "$parent/retreeved/sharedAssets/GC_fly_logo_transparent.webp";
+import Layout from "$rig/Layout.svelte";
+import PhoneRig from "$gc/PhoneRig.svelte";
+import logoUrl from "$gc/assets/GC_fly_logo_transparent.webp";
 import { configureTilesHost, configureTilesDevHost } from "../lib/r2Worker/local_dev/tilesHost";
 
 const dev = import.meta.env.DEV;
@@ -36,6 +37,6 @@ const CHILD = {
 let { children } = $props();
 </script>
 
-<TierShell child={CHILD} logo={logoUrl}>
-	{@render children()}
-</TierShell>
+<Layout child={CHILD} logo={logoUrl}>
+	<PhoneRig>{@render children()}</PhoneRig>
+</Layout>

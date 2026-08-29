@@ -1,10 +1,10 @@
 <!-- SnakeRuler — Snake Ruler measure tool, fully self-contained; owns ALL its own state (never the draw tool's `drawnVertices`/`drawIntent`) and never touches draw state, so it can't open the draw palette. -->
 <script lang="ts">
 import { iconPath } from "../shared/icons";
-// Cursor art imports from `$parent/retreeved/sharedAssets` (single source of truth) — binds the bytes to the build, not to one host's URL.
-import handShovelCursor from "$parent/retreeved/sharedAssets/hand_shovel_cursor.webp";
-import handShovelCursorRight from "$parent/retreeved/sharedAssets/hand_shovel_cursor_right.webp";
-import handShovelCursor100 from "$parent/retreeved/sharedAssets/hand_shovel_cursor_100.webp";
+// Cursor art imports from `$gc/assets` (single source of truth) — binds the bytes to the build, not to one host's URL.
+import handShovelCursor from "$gc/assets/hand_shovel_cursor.webp";
+import handShovelCursorRight from "$gc/assets/hand_shovel_cursor_right.webp";
+import handShovelCursor100 from "$gc/assets/hand_shovel_cursor_100.webp";
 import type { Feature } from "geojson";
 import mapboxgl from "mapbox-gl";
 import type { Map as MapboxMap } from "mapbox-gl";
