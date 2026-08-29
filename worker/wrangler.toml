@@ -118,11 +118,3 @@ PACK_PMTILES_KEY = "planet.pmtiles"
 # staging` by hand — deleting this config block does not tear down the live
 # Worker. Don't re-add [env.staging] to "restore" it without asking first.
 # ─────────────────────────────────────────────────────────────────────────────
-
-# THE ALIAS, same mechanism as svelte.config.js `$parent/siblings/<child>`.
-# fires.ts moved into the getCache_OfflineMap child (28 Aug 2026) beside its
-# client-side fireFetch.ts; the Worker imports it back through the alias, never
-# a raw `../` climb. LAST in the file on purpose: it is a [table], and any
-# top-level key written below a table header gets nested under it by TOML.
-[alias]
-"$parent/siblings/getCache_OfflineMap/lib/r2Worker/firesWorker" = "../lib/r2Worker/firesWorker.ts"

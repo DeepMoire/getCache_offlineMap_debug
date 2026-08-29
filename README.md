@@ -9,8 +9,14 @@ npm create @retreever/rapper@latest rapper --min-release-age=0 -- --offline
 cd rapper && npm run dev
 ```
 
-That gives you the offline map at `http://localhost:5173/offline` and the same
-map with debug panels at `/offline/debug`.
+That gives you the offline map at `http://localhost:5173/offline` (`/` lands
+there too — see `hooks.ts`). **There is no `/offline/debug` any more:** the
+debug rails are a toggle on the map itself (the `debug` switch in the card at
+the top), not a second URL. One view, one address.
+
+The Cloudflare Worker that serves tiles lives in this repo at `worker/`. To run
+it locally: `cd worker && ./setupLocalTiles.sh && npx wrangler dev`, then pick
+the `local` tier in the map's worker switch (`lib/r2Worker/TIERS.md`).
 
 Repos:
 
@@ -65,7 +71,7 @@ repo.
 | What | Where it is now |
 |---|---|
 | Fires engine (27 files, v1 + v2 + masks) | `routes/fires/` |
-| Fires Worker half | `lib/r2Worker/firesWorker.ts` — `ReTreever/workers/offline-tiles` imports it back through a wrangler `[alias]`, never a `../` climb |
+| Fires Worker half | `lib/r2Worker/firesWorker.ts` — `worker/src/index.ts` imports it relatively; the whole Worker moved into this repo the same day |
 | Offline map docs (plan, spec, history, tree target) | `docs/` — start at `docs/README.md` |
 | Fires docs | `routes/fires/docs/` (`WILDFIRE_LAYER*.md`, `fireAPIs.md`, `FIRES_V2_ROUTE_PREP.md`) |
 | Fire assets | `fire_icon.webp`, `fire_intensity/` — listed in `ASSETS.md`, fetched by `fetchAssets.sh` |
@@ -74,7 +80,7 @@ repo.
 | `mapKeepOut`, `rendererOf`, `pinDrift` | `lib/shared/` |
 | `MapPopoverShell`, `mapPopoverGeom`, `measureFormat` | `lib/panels/` |
 | `mapboxErrorCapture` | `lib/shared/` |
-| `ensureMapboxGuards` | `getCache_OnlineMap/lib/` — it imports OnlineMap's `safeMarker`, and a child may not import another child |
+| `ensureMapboxGuards` | `lib/shared/` — imports OnlineMap's `safeMarker` through the declared pair below |
 
 The parent reaches all of it as `$parent/siblings/getCache_OfflineMap/...`.
 
@@ -105,26 +111,24 @@ safeMap, coord, safeMarker) — stated in ReTreever's `childBoundary.test.ts`
 Read `routes/fires/v2/BISECT_STATE.md` before touching v2; it says why v2 is
 held back. `routes/fires/docs/FIRES_V2_ROUTE_PREP.md` is the wiring plan.
 
-The online map is the harder one — audit and report before moving anything.
-`MapDrawControls.svelte` alone is 1,659 lines and imports the database, so it
-probably cannot cross and needs a different answer.
-
-## Rules for the migration
+## Standing rules
 
 1. **ONE COPY.** Move files, don't copy them. The same thing in both repos is
    the problem this project spent a day removing.
 
-2. **PROPRIETARY STAYS.** Mobile business logic, storage (TinyBase/mapStore),
-   API calls and auth stay in `ReTreever/src/`. `childBoundary.test.ts` fails
-   the build if a child imports `$lib`. Host data comes in as a PROP —
-   `hostPorts` is the existing seam and is type-checked at the boundary.
+2. **THE HOST COMES IN AS A PROP.** This repo never imports `$lib`, never
+   names a parent (`lib/noParentNames.test.ts`), never climbs out of itself.
+   Two doors: `lib/shared/hostPorts.ts` (data for the engine) and
+   `lib/shared/mapHostPorts.ts` (store, icons, share sheet, GPS, q704 for the
+   map UI). Add a member the day a file needs it; the host's assignment to the
+   type is the check.
 
 3. **THE ALIAS IS THE MECHANISM.** Never a raw `../` climb (the guard throws
    during build), never a symlink.
 
 ## Known broken — pick any of these up
 
-1. **LOCAL WORKER SERVES ITALY.** `workers/offline-tiles/setupLocalTiles.sh`
+1. **LOCAL WORKER SERVES ITALY.** `worker/setupLocalTiles.sh`
    seeds the local R2 with a Florence sample archive, so the `local_dev` tier
    returns empty 200s for every North American pin. Replace with a Canadian
    extract.
@@ -141,26 +145,43 @@ probably cannot cross and needs a different answer.
    session showed 392 areas across the continent while the map was over Ontario.
 
 5. **DEAD EXPORTS.** Written, exported, documented, never called:
-   `retryFailedBakes` (the documented "heal everything" button — no UI calls
-   it), `setCoverageMirror`, `parseCellKey`, `tileHoldsRadius`, `idbDeleteMany`,
+   `setCoverageMirror`, `parseCellKey`, `tileHoldsRadius`, `idbDeleteMany`,
    `offlineDownloadGateStats`, `wallLabelLayers` (~300 lines). Wire or delete.
+   (`retryFailedBakes` was on this list; ReTreever's BlobInspector calls it now.)
 
-6. **LABELS LOOK SWAPPED.** In `lib/onPhone/render/wallLegend.ts` the row
-   labelled "Places" toggles `v4-poi-hospital` and the row labelled "Hospitals"
-   toggles `v4-poi-camp`. Confirm with Chris before changing.
+6. **FIRES IS A NO-OP.** The Fires switch renders and clicks but its `ids`
+   array is empty (`lib/onPhone/render/wallLegend.ts`) — no `v4-fire*` layer is
+   mounted. All the fires code is in `routes/fires/` now; what is missing is
+   `attachFireLayer()` connecting it to the map. Real work, not a config change.
+   Done = that switch turns real fire features on and off.
 
-7. **FIRES IS A NO-OP.** The Fires switch renders and clicks but its `ids`
-   array is empty — no `v4-fire*` layer is mounted on this route. Wiring
-   `attachFireLayer()` is real work, not a config change. This is also what
-   "done" looks like for the fires migration: the code lives here AND that
-   switch turns real fire features on and off.
+7. **THE MAP UI HAS NO HOST HERE.** `lib/mapUi/` and `lib/mapState/` (legend,
+   ruler, pins, overlays, tracking…) arrived 28 Aug 2026 behind
+   `mapHostPorts.ts`, and nothing in this repo mounts them — only ReTreever
+   does, through `retreeverMapPorts.ts`. Unverified in a browser since the
+   move. Five of them also import `getCache_OnlineMap` (a declared pair), so
+   they need that sibling checked out beside this one.
+
+## Test baseline — what red is NORMAL
+
+`npm test` here: 10 failures are known and predate the handoff. Anything else
+is yours.
+
+- `routes/fires/fireCache.test.ts` ×2 — perf assertions (trig-call counts)
+- `routes/fires/v2/fireCostV2.test.ts` ×4 — v2 render layer not landed
+- `lib/noParentNames.test.ts` — 5 old hits: `grid.lockstep.test.ts`,
+  `v4CloudflareTiles.test.ts` ×2, `routes/+layout.svelte` ×2
+- `lastMapRoute`, `overlayRenderCacheKey`, `bakeService`, `debugReport` —
+  `$state is not defined`: this repo's bare vitest has no Svelte plugin, so
+  rune files only run under a parent's suite
+- `urbanExclusion` SKIPS until `./fetchAssets.sh` has run (needs `worldBase/`)
 
 ## How to verify anything
 
 **Load it in a browser and look.** Not the terminal, not a test — the screen.
 A test passing while the page rendered nothing happened repeatedly here.
 
-`?at=58.7986,-122.6761&z=11` on either route jumps the camera to a coordinate
+`?at=58.7986,-122.6761&z=11` on `/offline` jumps the camera to a coordinate
 (lat first, the order a human reads one off a screen).
 
 If the console looks empty, check DevTools' **"Custom levels"** filter — it

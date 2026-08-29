@@ -11,10 +11,7 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "paths": {
-      "$parent/siblings/getCache_OfflineMap/*": ["../*"]
-    }
+    "verbatimModuleSyntax": true
   },
   "include": ["src/**/*.ts", "../lib/r2Worker/firesWorker.ts"]
 }

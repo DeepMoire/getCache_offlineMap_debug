@@ -413,16 +413,16 @@ async function ensureAreaData(
 		const cd = satCooldown.get(key);
 		if (cd && cd.until > Date.now()) return;
 		const hadPhoto = prevCov?.hasPhoto === true;
-		noteCircuit("sat", "transit");
+		noteCircuit("sat", "transit", "", key);
 		let sat: Awaited<ReturnType<typeof bakeSatelliteImage>>;
 		try {
 			sat = await bakeSatelliteImage(center);
 		} catch (err) {
-			noteCircuit("sat", "err", err instanceof Error ? err.message : String(err));
+			noteCircuit("sat", "err", err instanceof Error ? err.message : String(err), key);
 			throw err;
 		}
 		if (sat) {
-			noteCircuit("sat", "ok", `${(sat.blob.size / 1024).toFixed(0)} KB`);
+			noteCircuit("sat", "ok", `${(sat.blob.size / 1024).toFixed(0)} KB`, key);
 			hasPhoto = true;
 			photoBytes = sat.blob.size;
 			satCooldown.delete(key); // success → clear any backoff
@@ -430,7 +430,7 @@ async function ensureAreaData(
 		} else {
 			// Bake FAILED (source throttled / came back mostly empty). Exponential
 			// backoff: 30 s, 1 m, 2 m, … capped at 15 m, so the source can recover.
-			noteCircuit("sat", "err", "photo bake returned nothing (throttled / empty)");
+			noteCircuit("sat", "err", "photo bake returned nothing (throttled / empty)", key);
 			const fails = (cd?.fails ?? 0) + 1;
 			satCooldown.set(key, {
 				fails,

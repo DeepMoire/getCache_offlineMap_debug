@@ -43,6 +43,7 @@ import { keysForAddress } from "../../../onPhone/roads/pinTileLookup";
 import { cellTileKey, cellsFor } from "../../../contract/grid";
 import { getWorkerTarget, packUrl } from "../tilesHost";
 import { noteCircuit } from "../../../shared/workMeter.svelte";
+import { satImageKey } from "../../../onPhone/satellite/satelliteImage";
 
 /** The `offline-tiles` Worker's pack endpoint — ONE request returns both rings of
  *  tiles, packed, instead of the phone range-reading each tile itself. The Worker
@@ -728,10 +729,13 @@ export async function downloadV4Area(
 	// CIRCUITS (see workMeter.svelte.ts): this one request is the Worker's
 	// circle AND the pack circle — yellow now, green when bytes land, red if
 	// anything between here and idbPutMany breaks.
+	// Tagged with the area so a background re-bake of an OLD pin cannot repaint
+	// the lights of the pin the user just dropped (focusCircuits in workMeter).
 	const wk = `worker:${getWorkerTarget()}`;
+	const area = satImageKey([lng, lat]);
 	const lit = (state: "transit" | "ok" | "err", note = "") => {
-		noteCircuit(wk, state, note);
-		noteCircuit("pack", state, note);
+		noteCircuit(wk, state, note, area);
+		noteCircuit("pack", state, note, area);
 	};
 	lit("transit");
 	let res: Response;

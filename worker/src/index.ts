@@ -52,7 +52,7 @@ import {
   DEFAULT_RADIUS_KM,
   fetchFires,
   MAX_RADIUS_KM,
-} from "$parent/siblings/getCache_OfflineMap/lib/r2Worker/firesWorker";
+} from "../../lib/r2Worker/firesWorker"; // beside fireFetch.ts, same repo
 import { buildPack, PIN_KEYED_FROM_PV } from "./packBuilder";
 
 /** Bump whenever the PACK CONTENTS change. Part of the edge cache key, so a

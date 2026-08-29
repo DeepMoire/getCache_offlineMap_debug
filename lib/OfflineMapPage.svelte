@@ -305,7 +305,7 @@ function readPanels(): boolean {
 	} catch {
 		// codestyle-allow-swallow: no storage (SSR / private mode) → default.
 	}
-	return cards ?? rails ?? true;
+	return cards ?? true; // unstored → OPEN; `rails` defaults false so it must not sit in this chain
 }
 let showPanels = $state(readPanels());
 $effect(() => {
@@ -637,7 +637,7 @@ onMount(() => {
 						// the host keeps the place → onPlacesChanged → the bake requests
 						// it → yellow → green/red. A host with no addPlace gets told,
 						// because a silent no-op here is the exact bug this replaces.
-						resetCircuits();
+						resetCircuits(satImageKey([lng, lat]));
 						if (ports.addPlace) {
 							ports.addPlace(
 								[lng, lat],

@@ -140,7 +140,28 @@ const TRANSIT_HOLD_MS = 1000;
 const transitSince = new Map<string, number>();
 const pendingSettle = new Map<string, ReturnType<typeof setTimeout>>();
 
-export function noteCircuit(key: string, state: CircuitState, note = ""): void {
+/**
+ * THE FOCUS. Set by the tap that drops a pin (its area key), cleared by
+ * resetCircuits(). While set, a note tagged with a DIFFERENT area is ignored:
+ * the reconcile bakes every pin on every map in the background (400 of them on
+ * 28 Aug 2026), and without this the green of some three-week-old BC pin
+ * overwrote the yellow of the pin you had just dropped — the lights answered
+ * a question nobody asked. Untagged notes (fires, probes) always land.
+ */
+let focusArea: string | null = null;
+export function focusCircuits(areaKey: string | null): void {
+	focusArea = areaKey;
+}
+export function circuitFocus(): string | null {
+	return focusArea;
+}
+export function noteCircuit(
+	key: string,
+	state: CircuitState,
+	note = "",
+	areaKey?: string,
+): void {
+	if (focusArea && areaKey && areaKey !== focusArea) return;
 	const write = () => circuits.set(key, { key, state, at: Date.now(), note });
 	const pend = pendingSettle.get(key);
 	if (pend) {
@@ -187,7 +208,8 @@ export function allCircuits(): CircuitStat[] {
  * which is the reading "it is not even asking" — the fact that took an hour
  * to establish by hand on 28 Aug 2026.
  */
-export function resetCircuits(): void {
+export function resetCircuits(areaKey: string | null = null): void {
+	focusArea = areaKey;
 	for (const t of pendingSettle.values()) clearTimeout(t);
 	pendingSettle.clear();
 	transitSince.clear();
@@ -214,6 +236,7 @@ export function meterSnapshot() {
 		at: new Date().toISOString(),
 		work: workStats().map((s) => ({ ...s })),
 		payloads: payloadStats().map((p) => ({ ...p })),
+		focus: focusArea,
 		circuits: allCircuits().map((c) => ({ ...c })),
 		probes: Object.fromEntries(probes),
 	};
