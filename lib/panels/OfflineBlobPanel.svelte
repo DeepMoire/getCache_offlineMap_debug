@@ -1,21 +1,6 @@
 <script lang="ts">
 import "../shared/devCard.css";
-/**
- * OfflineBlobPanel — what the device actually holds, per area.
- *
- * The work meter answers "is it working right now"; this answers "what is on
- * disk". Together they are the offline debugger. ReTreever has a much larger
- * inspector (BlobInspector.svelte, ~3,600 lines: geocoding, corner/reach
- * measurement, cross-DB sweeps, .retreever export); this is the portable core
- * of it — the coverage registry, grouped and sized — with no host dependencies
- * at all beyond the places port.
- *
- * ⚠️ INDEXEDDB IS PARTITIONED PER ORIGIN. This reads whatever the CURRENT origin
- * has baked. On a fresh rapper dev server that is legitimately nothing until the
- * engine runs a pass — an empty table here means "this origin has no blobs",
- * never "the blobs were lost". The same confusion cost an hour on the admin
- * host once, so the empty state says so out loud rather than showing 0 B.
- */
+/** OfflineBlobPanel — what's actually on disk, per area, alongside the work meter's "is it working now". ⚠️ IndexedDB is partitioned per origin — an empty table here means this origin has no blobs, not that they were lost. */
 import { onMount } from "svelte";
 import {
 	allCoverage,
@@ -31,12 +16,7 @@ interface Props {
 	places?: HostPlace[];
 	/** Map an anchor to its areaKey — the engine's own satImageKey. */
 	areaKeyOf?: (c: [number, number]) => string;
-	/**
-	 * Fired whenever the focused row's name changes — the newest-touched area,
-	 * same row `rows[0]` renders as FOCUSED below. debugReport.ts already scopes
-	 * its `latest` field to this same newest-first row, so this is just naming
-	 * what export already exports, for the export button's sub-label.
-	 */
+	/** Fired when the focused row's name changes (rows[0], the newest-touched area) — mirrors debugReport.ts's `latest` field for the export button's sub-label. */
 	onFocusedName?: (name: string | null) => void;
 }
 let { places = [], areaKeyOf, onFocusedName }: Props = $props();
@@ -48,18 +28,7 @@ let pending = $state(0);
 
 const totalBytes = $derived(rows.reduce((n, r) => n + (r.bytes || 0), 0));
 
-/**
- * THE LIST, per Chris 28 Aug 2026: "the last successful import is hoisted.
- * the rest are descending last touched, even empty pins endure there."
- *
- * So the list is PINS, not blobs: every place the host has, whether or not
- * a blob ever arrived for it. A pin with nothing on disk stays in the list
- * with empty chips — that row IS the reading "never arrived", which a
- * blobs-only list could not show (the pin was simply absent, and absent
- * looks like "fine"). Coverage rows no place owns any more (the fixture
- * home centre, an evicted pin's leftovers) are kept too, so bytes on disk
- * are never hidden.
- */
+/** The list holds pins, not blobs — every host place appears whether or not a blob arrived (empty-chip rows ARE the "never arrived" signal), and orphaned coverage rows with no owning place are kept too. */
 interface Entry {
 	areaKey: string;
 	name: string;
@@ -131,38 +100,18 @@ function kb(n: number): string {
 		: `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/**
- * A ticking NOW, so the "3m ago" labels below age by themselves.
- *
- * This is a clock, NOT a poll: it touches no storage. The table itself still
- * refreshes only on an engine generation bump (see onMount) — re-reading
- * IndexedDB every second to re-render a string that changes once a minute is
- * exactly the 1 GB heap sink the byte-split above was added to kill. The
- * interval is the cheapest thing that can be correct: without it a row baked
- * "2s ago" keeps claiming 2s an hour later, which is worse than no timestamp
- * because it reads as fresh.
- *
- * 10s, not 1s: the coarsest tick that still lets the seconds bucket look live.
- */
+/** Ticking clock only (NOT a poll — touches no storage); re-reading IndexedDB every second here is the 1 GB heap sink this was built to avoid. 10s tick is the coarsest that still looks live. */
 let now = $state(Date.now());
 onMount(() => {
 	const id = setInterval(() => (now = Date.now()), 10_000);
 	return () => clearInterval(id);
 });
 
-/**
- * Epoch ms -> "just now" / "45s ago" / "12m ago" / "3h ago" / "2d ago".
- *
- * Deliberately one unit, never "1h 3m": this sits in a dense read-out row
- * where the QUESTION is "is this stale?", and a single coarse figure answers
- * it at a glance. `ago` reads off `now` above, so every returned string is
- * re-derived whenever the clock ticks.
- */
+/** Epoch ms → "just now" / "45s ago" / "12m ago" / "3h ago" / "2d ago" — deliberately one unit, never "1h 3m". */
 function ago(ts: number | undefined, at: number): string {
 	if (!ts) return "—";
 	const secs = Math.floor((at - ts) / 1000);
-	// Clock skew (or a record written a tick into the future) must not render
-	// as a negative age; "just now" is the honest reading of "not yet past".
+	// Clock skew (or a future-written record) must not render as a negative age — "just now" covers "not yet past".
 	if (secs < 5) return "just now";
 	if (secs < 60) return `${secs}s ago`;
 	const mins = Math.floor(secs / 60);
@@ -172,8 +121,7 @@ function ago(ts: number | undefined, at: number): string {
 	return `${Math.floor(hrs / 24)}d ago`;
 }
 
-/** Absolute time for the `title` tooltip — the relative label is for scanning,
- *  this is for when you actually need to correlate against a log. */
+/** Absolute time for the `title` tooltip — relative label is for scanning, this is for correlating against a log. */
 function stamp(ts: number | undefined): string {
 	return ts ? new Date(ts).toLocaleString() : "unknown";
 }
@@ -185,8 +133,7 @@ async function refresh(): Promise<void> {
 			(a, b) => (b.lastTouched ?? 0) - (a.lastTouched ?? 0),
 		);
 	} catch {
-		// codestyle-allow-swallow: no IndexedDB (SSR, private mode) is an
-		// ordinary state — the empty table below already says the right thing.
+		// codestyle-allow-swallow: no IndexedDB (SSR, private mode) is ordinary — the empty table below already says so.
 		rows = [];
 	}
 	loading = false;
@@ -195,9 +142,7 @@ async function refresh(): Promise<void> {
 
 onMount(() => {
 	void refresh();
-	// Re-read on every generation bump: that is the engine saying the disk
-	// changed (an area downloaded or was evicted), which is exactly and only
-	// when this table is stale. Polling would re-open the DB for nothing.
+	// Re-read on every generation bump — that's the engine saying the disk changed, and the only time this table is stale. Polling would reopen the DB for nothing.
 	return subscribeOfflineBake((s) => {
 		baking = s.downloading;
 		pending = s.pending;
@@ -221,8 +166,7 @@ onMount(() => {
 	</div>
 
 	{#if baking}
-		<!-- The bake takes 20-60 s for a cold area. Without this line, "still
-		     downloading" and "broken" look identical — a black map either way. -->
+		<!-- Bake takes 20-60s for a cold area — without this line, "still downloading" and "broken" look identical. -->
 		<div class="baking">
 			baking… {pending} area{pending === 1 ? "" : "s"} to go
 		</div>
@@ -246,10 +190,7 @@ onMount(() => {
 					{#if isFocused}
 						<span class="focustag">● FOCUSED — LAST IMPORT · EXPORTS AS JSON</span>
 					{/if}
-					<!-- ONE line for the pin: coordinates once (they ARE the name),
-					     the age, and the total. Then one line per LAYER, ledger style:
-					     what · how much · size at the right edge — the same shape as the
-					     blob inspector's in/out rows. -->
+					<!-- One line for the pin (name/age/total), then one line per layer, ledger style — same shape as the blob inspector's in/out rows. -->
 					<div class="row-top">
 						<span class="pin">📍</span>
 						<span class="name">{e.name}</span>
@@ -271,8 +212,7 @@ onMount(() => {
 							<span class="ldetail">{c?.hasPhoto ? "image/webp" : "—"}</span>
 							<span class="lbytes">{c?.hasPhoto ? kb(c.photoBytes ?? 0) : "—"}</span>
 						</div>
-						<!-- lineCount is dl.downloaded — TILES, not features. It read
-						     "1 feat" while the tile held 2,394 roads (28 Aug 2026). -->
+						<!-- ⚠️ lineCount is dl.downloaded — TILES, not features; showing "feat" here undercounts badly (was "1 feat" for 2,394 roads). -->
 						<div class="layer" class:on={c?.hasLines}>
 							<span class="dir">out</span>
 							<span class="ico">🛣️</span>
@@ -296,12 +236,10 @@ onMount(() => {
 </div>
 
 <style>
-	/* Shell (bg, border, radius, padding, type) comes from devCard.css — see
-	   .dev-card. Only the rail-specific bits stay here. */
+	/* Shell (bg, border, radius, padding, type) comes from devCard.css (.dev-card); only rail-specific bits stay here. */
 	.panel {
 		overflow: hidden;
-		/* Fills its dock (the right rail runs top-to-bottom); the list below
-		   takes the slack and scrolls, so the head and the WIPE stay put. */
+		/* Fills its dock (right rail, top-to-bottom); the list takes the slack and scrolls so the head and WIPE stay put. */
 		display: flex;
 		flex-direction: column;
 		max-height: 100%;
@@ -354,8 +292,7 @@ onMount(() => {
 	.row:first-child {
 		border-top: none;
 	}
-	/* FOCUSED — the only row export json actually exports. Gold border + tint
-	   pulls it out of the list so scope is unambiguous before you tap export. */
+	/* FOCUSED — the only row export json exports; gold border + tint makes scope unambiguous before you tap export. */
 	.row.focused {
 		margin: 0.6rem 0.7rem;
 		padding: 0.8rem 0.85rem;
@@ -379,8 +316,7 @@ onMount(() => {
 		margin-bottom: 7px;
 	}
 	/* NOT exported — secondary at a glance, so the eye lands on FOCUSED first. */
-	/* A pin with nothing on disk. Dimmer still — the row's job is to SAY
-	   "never arrived", not to look like a blob. */
+	/* A pin with nothing on disk — dimmer still, the row's job is to SAY "never arrived", not to look like a blob. */
 	.row.empty {
 		opacity: 0.55;
 	}
@@ -419,9 +355,7 @@ onMount(() => {
 		font-weight: 700;
 		font-variant-numeric: tabular-nums;
 	}
-	/* THE LEDGER — one line per layer, columns aligned down the card:
-	   in/out · icon · name · detail · size-at-the-right. Alternate fills so
-	   the eye can follow a line across, like the blob inspector's rows. */
+	/* THE LEDGER — one line per layer, columns aligned (in/out · icon · name · detail · size); alternate fills so the eye can follow a row across. */
 	.layers {
 		display: grid;
 		grid-template-columns: 2.2em 1.4em 5.5em 1fr auto;

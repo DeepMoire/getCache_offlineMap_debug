@@ -1,12 +1,3 @@
-/**
- * fireOutline.test.ts — the thin red line around a group of fires.
- *
- * What it is: a reading aid so thirty scattered flames read as ONE fire, and —
- * the half that actually matters — so it is visibly NOT anywhere else.
- * What it is NOT: a surveyed perimeter. These tests pin that distinction,
- * because the moment the shape is treated as authoritative it starts making
- * claims the data cannot support.
- */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
@@ -69,16 +60,13 @@ describe("fireOutlines — one line per fire", () => {
 	});
 
 	it("draws SEPARATE outlines for fires far apart", () => {
-		// Two blobs ~100 km apart must never be joined into one shape — that
-		// would claim fire across ground that is not burning, which is the
-		// "area between the dots" error this layer explicitly rejects.
+		// must never join fires ~100km apart — false "area between the dots" claim
 		const fc = fireOutlines([...blob(4), ...blob(4, -120, 50)]);
 		expect(fc.features).toHaveLength(2);
 	});
 
 	it("JOINS detections a few hundred metres apart — one fire, one line", () => {
-		// The same fire seen by different satellites lands on slightly offset
-		// grids; a pixel wanders between passes. Those must not become two fires.
+		// different satellites' offset pixels must not become two fires
 		const a = blob(3);
 		const b = blob(3, -121 + 2 * CELL, 50);
 		expect(fireOutlines([...a, ...b]).features).toHaveLength(1);
@@ -99,8 +87,7 @@ describe("fireOutlines — one line per fire", () => {
 	});
 
 	it("carries NO properties — it is not tappable and makes no claims", () => {
-		// A card on the shape would present a hull as a surveyed perimeter, and
-		// an area readout would be the 22,328 ha hillside error.
+		// no properties — a card/area readout would misrepresent the hull as surveyed (22,328 ha error)
 		const fc = fireOutlines(blob(5));
 		expect(fc.features[0].properties).toEqual({});
 	});
@@ -121,9 +108,7 @@ describe("fireOutlines — one line per fire", () => {
 	});
 
 	it("stays cheap at province scale", () => {
-		// Measured on live FIRMS: 36,489 detections → 12,197 cells → 142 outlines
-		// in ~52 ms. This is a floor-check, not a benchmark — it fails if someone
-		// reintroduces an O(n²) distance matrix.
+		// floor-check: fails if an O(n²) distance matrix creeps back in (measured ~52ms/142 outlines)
 		const many: { coordinates: [number, number] }[] = [];
 		for (let i = 0; i < 20_000; i++) {
 			many.push({
@@ -137,8 +122,7 @@ describe("fireOutlines — one line per fire", () => {
 	});
 
 	it("the hull ENCLOSES every detection it was built from", () => {
-		// The promise the line makes: the fire is inside it. A point outside its
-		// own outline would break exactly that.
+		// promise: the fire is inside the hull — a point outside would break it
 		const pts = blob(6);
 		const ring = (fireOutlines(pts).features[0].geometry as GeoJSON.Polygon)
 			.coordinates[0];
@@ -153,14 +137,7 @@ describe("fireOutlines — one line per fire", () => {
 	});
 });
 
-/**
- * ⛔ THE LINE CLEARS THE FLAMES — it must not bisect them.
- *
- * The raw hull runs through the CENTRES of the outermost detections, so every
- * border flame straddles the line and half of each icon hangs outside. On
- * screen that reads as "the outline missed some of them", which undoes the one
- * thing the line is for: showing that the fire is inside it and not outside.
- */
+// ⛔ the line must not bisect flames — raw hull runs through detection centres, leaving border flames straddling it
 describe("the margin — the outline sits OUTSIDE every detection", () => {
 	it("pushes the ring outward from the centre", () => {
 		const square: [number, number][] = [
@@ -188,9 +165,7 @@ describe("the margin — the outline sits OUTSIDE every detection", () => {
 	});
 
 	it("scales longitude by latitude so the gap is even on the GROUND", () => {
-		// At 50°N a degree of longitude is ~64% of a degree of latitude. Without
-		// the cos(lat) correction the line hugs the fire tighter east-west the
-		// further north you go.
+		// without cos(lat) correction, line hugs tighter east-west further north (~64% at 50°N)
 		const at = (lat: number) => {
 			const r: [number, number][] = [
 				[0, lat],
@@ -205,7 +180,7 @@ describe("the margin — the outline sits OUTSIDE every detection", () => {
 	});
 
 	it("EVERY detection ends up strictly inside its own outline", () => {
-		// The promise, as a test: no flame may sit on or outside the line.
+		// no flame may sit on or outside the line
 		const pts = blob(6);
 		const ring = (fireOutlines(pts).features[0].geometry as GeoJSON.Polygon)
 			.coordinates[0];
@@ -220,10 +195,7 @@ describe("the margin — the outline sits OUTSIDE every detection", () => {
 	});
 
 	it("the gap is ONE FLAME WIDE — a few hundred metres, never kilometres", () => {
-		// The regression this exists to stop: the first margin was 4 cells
-		// (~1.7 km), which left a huge empty swath between the outermost flames
-		// and the line. An outline standing that far out silently claims ground
-		// that is not burning — worse than having no margin at all.
+		// regression guard: first margin (4 cells/~1.7km) left an empty swath that silently claimed unburnt ground
 		const pts = blob(6, -121, 49);
 		const ring = (fireOutlines(pts).features[0].geometry as GeoJSON.Polygon)
 			.coordinates[0];
@@ -236,8 +208,7 @@ describe("the margin — the outline sits OUTSIDE every detection", () => {
 	});
 
 	it("the gap does NOT grow with the size of the fire", () => {
-		// A fixed offset, not a percentage: a province-sized blob must get the
-		// same few-hundred-metre gap a small one does.
+		// fixed offset, not a percentage — province-sized blob gets the same gap as a small one
 		const gapOf = (n: number) => {
 			const pts = blob(n, -121, 49);
 			const ring = (fireOutlines(pts).features[0].geometry as GeoJSON.Polygon)
@@ -267,31 +238,10 @@ describe("the margin — the outline sits OUTSIDE every detection", () => {
 	});
 });
 
-/**
- * ⛔ NOT A FIRE APP — the outlines disappear when zoomed out.
- *
- * Clusters already collapse a province into a few counted blobs. The outlines
- * do not collapse, so at regional zoom they become dozens of red specks — noise
- * that prompts "why is there no fire pin there?". They belong only at the zoom
- * where the dots they enclose are actually visible.
- */
-// ⚠️ ONLINE MAP MOVED TO THE CHILD, 28 Aug 2026. This block read
-// src/routes/(getcache)/map/fireLayer.ts as TEXT. That whole folder — 32 files,
-// 10,873 lines — was a SECOND online map beside getCache_OnlineMap's, and it was
-// deleted; /map is now a two-line address rendering the child's component, the
-// same operation /offline had on 27 Aug.
-//
-// The law this asserts (ONE fire layer, no per-route re-implementation) is now
-// enforced STRUCTURALLY: a route that is an import and a tag has nowhere to put
-// a second copy. That is the deeper wall this grep was standing in for.
-//
-// ⛔ DO NOT DELETE. The fire RENDER layer has no home yet — it is in neither
-// child (verified 28 Aug: no ids.outline / attachFireLayer outside the deleted
-// folder). When it lands in getCache_OnlineMap, RE-POINT AT IT AND UNSKIP.
+// ⛔ outlines disappear when zoomed out — undissolved, they'd become dozens of noisy red specks at regional zoom
+// ⛔ DO NOT DELETE — fire render layer has no home yet (moved out of deleted online-map folder 28 Aug); re-point at getCache_OnlineMap and unskip when it lands
 describe.skip("the outline layer is zoom-gated", () => {
-	// Orphaned by the map move — see the note above. "" keeps the skipped
-	// block collectable instead of throwing at import and taking the file's
-	// OTHER ~30 live tests down with it.
+	// orphaned by the map move; "" keeps this block collectable instead of breaking the other ~30 live tests at import
 	const src = "";
 	const block = src.slice(src.indexOf("id: ids.outline,"));
 	const layer = block.slice(0, block.indexOf("\n\t});"));
@@ -301,15 +251,12 @@ describe.skip("the outline layer is zoom-gated", () => {
 	});
 
 	it("waits for BLOCK scale — this is a tree-planting app", () => {
-		// 11 (clusterMaxZoom) was tried and rejected: at that zoom you are still
-		// surveying a region, and scattered red polygons over ground you are not
-		// standing on read as pollution. 13 is "looking at ONE fire".
+		// 11 (clusterMaxZoom) was tried and rejected — reads as pollution while still surveying; 13 means "looking at ONE fire"
 		expect(src).toMatch(/const OUTLINE_MIN_ZOOM = 13;/);
 	});
 
 	it("is gated ABOVE the zoom where clusters hand over", () => {
-		// The outline must never appear while the map is still showing counted
-		// cluster blobs — that is the combination that looks like a fire app.
+		// outline must never appear while clusters still show counted blobs — that combo reads as a fire app
 		const clusterMax = Number(src.match(/clusterMaxZoom: (\d+)/)?.[1]);
 		const outlineMin = Number(src.match(/OUTLINE_MIN_ZOOM = (\d+)/)?.[1]);
 		expect(outlineMin).toBeGreaterThan(clusterMax);
@@ -327,26 +274,13 @@ describe.skip("the outline layer is zoom-gated", () => {
 	});
 });
 
-/**
- * ── THE MEMO IS A PERFORMANCE CONTRACT, AND IT MUST NOT LIE ──
- *
- * `fireOutlines` is called from `paint()`, and `paint()` is the PAN path
- * (moveend → ensure → paint). Without a memo the ~52 ms hull rebuild lands on
- * every pan gesture — the module header and the call site both claimed this
- * already happened "once per data change"; neither was true of the code.
- *
- * These tests pin BOTH directions, because a memo that never misses is worse
- * than no memo at all: it would freeze the outlines while the fires underneath
- * them moved, and this layer's whole job is not lying about where fire is.
- */
+// ⚠️ memo must not lie: a memo that never misses is worse than none — it would freeze outlines while fires move
 describe("fireOutlines — the per-pan memo", () => {
 	it("returns the SAME object for unchanged data (a pan must not recompute)", () => {
 		__resetOutlineMemoForTest();
 		const spots = blob(4);
 		const first = fireOutlines(spots);
-		// A pan hands over a freshly-built array with identical contents — that is
-		// exactly what `shown` is, rebuilt by a filter on every paint. Identity
-		// memoing would miss here, which is why the key is the CELL SET.
+		// pan rebuilds an array with identical contents — identity memoing would miss, so the key is the CELL SET
 		const second = fireOutlines([...spots]);
 		expect(second).toBe(first);
 	});
@@ -369,8 +303,7 @@ describe("fireOutlines — the per-pan memo", () => {
 	});
 
 	it("distinguishes a group SPLITTING from one that merely moved", () => {
-		// Same cell COUNT, different arrangement — the case a naive length-only
-		// key would wave through, leaving one outline drawn over two fires.
+		// same cell count, different arrangement — a length-only key would miss this, drawing one outline over two fires
 		__resetOutlineMemoForTest();
 		const together = fireOutlines(blob(4));
 		const apart = fireOutlines([...blob(2), ...blob(2, -119, 48)]);
@@ -378,18 +311,7 @@ describe("fireOutlines — the per-pan memo", () => {
 	});
 });
 
-/**
- * ── THE `stableKey` PARAMETER, AND WHY IT IS NOT OPTIONAL IN PRACTICE ──
- *
- * `paint()` builds `shown` with `.filter()`, so it is a NEW array on every pan
- * even when not one detection changed. Keying the memo on it meant the fast
- * path never hit, and every pan re-bucketed 36,000 detections into 12,000 cells
- * (~20 ms) before the second-tier memo could save the hulls. Measured: 52 ms
- * per pan → 0.5 ms once the caller passes the stable upstream array.
- *
- * The danger of a key that is not the data is a STALE HIT — outlines frozen
- * while the fires under them move. The last test here is the one that matters.
- */
+// ⚠️ stableKey is not optional in practice — a wrong key risks a STALE HIT: outlines frozen while fires move (measured 52ms → 0.5ms with the right key)
 describe("fireOutlines — stableKey", () => {
 	it("hits across rebuilt `shown` arrays when given a stable key", () => {
 		__resetOutlineMemoForTest();
@@ -401,10 +323,7 @@ describe("fireOutlines — stableKey", () => {
 	});
 
 	it("⛔ does NOT serve a stale outline when `shown` shrinks under a stable key", () => {
-		// The refineUrban path: `all` is unchanged (same cache), but newly-learned
-		// urban verdicts drop hotspots from `shown`. A memo keyed only on `all`
-		// would hand back outlines around fires that are no longer drawn — the
-		// layer claiming fire where it is showing none.
+		// refineUrban path: `all` stays same but `shown` shrinks — a memo keyed only on `all` would show outlines for fires no longer drawn
 		__resetOutlineMemoForTest();
 		const all = [...blob(4), ...blob(4, -119, 48)];
 		const both = fireOutlines([...all], all);

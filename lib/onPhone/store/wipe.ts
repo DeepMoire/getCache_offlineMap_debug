@@ -1,37 +1,4 @@
-/**
- * THE WIPE — delete every byte of offline map data on this device.
- *
- * ── WHY THIS IS A REAL FILE AND NOT A CONSOLE SNIPPET ─────────────────────
- *
- * `/offline` is a PREVIEW of what the device actually holds. The user's trust
- * rests on that: whatever they see at any level, they have. ONE flash of
- * anything else breaks the promise — from then on they cannot tell what is
- * really downloaded.
- *
- * Old blobs accumulate in IndexedDB across sessions. A real session showed roads
- * around Juticalpa, Honduras while the anchor under test was in Ontario, with
- * the in-app ruler reading 40 km. In that state nothing can be measured: you
- * cannot tell the new blob from the debris, so every number is contaminated and
- * every test costs hours to produce a wrong answer.
- *
- * So wiping is not a debug convenience — it is the precondition for any
- * measurement being meaningful at all. It gets a tested function, not a snippet
- * pasted by hand and mistyped at midnight.
- *
- * ── WHAT IT DELETES ───────────────────────────────────────────────────────
- *
- * EVERYTHING map-related, not "the ones that look stale". The whole point is to
- * know that what appears on screen came from the code you just wrote.
- *
- *   gc-offlineTiles      vector road/water tiles
- *   gc-offlineSatellite  satellite imagery
- *   rt-vectors           legacy vector store (pre-V4)
- *   rt-mapRegistry       coverage / bake bookkeeping
- *
- * ⛔ It does NOT touch `rt-treeStuff` — that is the user's plots, maps and
- * tallies. Tiles are re-downloadable; a plot is not. Never widen this list to
- * include a data store.
- */
+/** ⚠️ /offline must always show exactly what's on disk — one flash of stale data breaks that promise and the user can no longer trust what they see. */
 
 import {
 	latchOfflineReadsForWipe,
@@ -57,26 +24,12 @@ export interface WipeResult {
 	readonly clean: boolean;
 }
 
-/**
- * Delete one IndexedDB database.
- *
- * `blocked` fires when another tab still holds a connection — the delete is
- * queued, not done, so we report it rather than pretending. A wipe that
- * silently half-worked is worse than no wipe: it produces exactly the dirty map
- * this function exists to prevent.
- */
 function deleteDb(name: string): Promise<"gone" | "blocked"> {
 	return new Promise((resolve) => {
 		const req = indexedDB.deleteDatabase(name);
 		req.onsuccess = () => resolve("gone");
 		req.onerror = () => resolve("blocked");
-		// ⚠️ `onblocked` is NOT a failure — it means "an open connection is
-		// holding this, the delete is QUEUED". It fires and then, once the last
-		// connection closes, `onsuccess` still fires. Resolving "blocked" here
-		// would be a lie in the common case. So we wait, and only give up if
-		// nothing closes. MEASURED: the app's own cached tile-reader connection
-		// blocked all four deletes; the fix is to close connections (see
-		// `wipeOfflineDataAndReload`), not to report a false failure.
+		// ⚠️ onblocked is not a failure — it means the delete is queued behind an open connection; onsuccess still fires once it closes, so wait rather than reporting blocked immediately.
 		req.onblocked = () => {
 			setTimeout(() => resolve("blocked"), BLOCKED_GRACE_MS);
 		};
@@ -86,22 +39,10 @@ function deleteDb(name: string): Promise<"gone" | "blocked"> {
 /** How long to let a queued delete finish before calling it blocked. */
 const BLOCKED_GRACE_MS = 3000;
 
-/** How long to let in-flight IndexedDB transactions drain after stopping the
- *  bake service. They are short (a put batch or a key probe); this is slack. */
+/** How long to let in-flight IndexedDB transactions (short: a put batch or key probe) drain after stopping the bake service. */
 const IN_FLIGHT_GRACE_MS = 400;
 
-/**
- * Wipe every offline map database on this device.
- *
- * Returns what happened per database so a caller can FAIL LOUD rather than
- * assume a clean slate (see `no-silent-fallbacks`). Check `clean` before
- * trusting anything you measure afterwards.
- */
 export async function wipeOfflineData(): Promise<WipeResult> {
-	// LOUD, at warn level. DevTools' default "Custom levels" filter HIDES
-	// console.log (the user's console showed "94 hidden"), so a wipe that
-	// logged at info level was indistinguishable from a button that did
-	// nothing. Every step announces itself.
 	console.warn("[wipe] ── starting ──");
 	const existing = new Set<string>();
 	// `databases()` is not in older Safari; absent means we just try them all.
@@ -121,10 +62,6 @@ export async function wipeOfflineData(): Promise<WipeResult> {
 			deleted[name] = "absent";
 			continue;
 		}
-		// Say what is ON DISK before deleting — "4303 tiles → gone" is the proof
-		// the button worked. Counted only for a database that EXISTS: opening one
-		// CREATES it, and a diagnostic that changes what it measures is worse than
-		// no diagnostic (it turned an "absent" result into "gone" and broke a test).
 		if (name === "gc-offlineTiles") {
 			try {
 				console.warn(`[wipe] tiles on disk before: ${await countTiles()}`);
@@ -147,45 +84,9 @@ export async function wipeOfflineData(): Promise<WipeResult> {
 	return { deleted, clean };
 }
 
-/**
- * THE ONE YOU ACTUALLY CALL — stop the app, wipe, then reload.
- *
- * ── THE RACE THAT MADE THE FIRST VERSION A LIE ────────────────────────────
- *
- * `deleteDatabase` cannot proceed while ANY connection to that database is
- * open. The app holds several on purpose (the tile reader caches one, because
- * reopening per tile is ruinous), so every delete comes back `blocked` — queued,
- * waiting for the connections to close.
- *
- * The first version called `location.reload()` right after. That looks like it
- * should help: the page tears down, connections die, the queued deletes
- * complete. In reality the RELOAD WINS THE RACE — the fresh page boots and
- * REOPENS the databases before the queued deletes get their turn, which
- * CANCELS them. MEASURED on a live page: all four blocked, `tiles on disk: 0`
- * for one frame, then `4303` again. Nothing was ever deleted.
- *
- * ⚠️ It was "verified" only because the test called `page.close()` — killing the
- * tab, which no real user does. A verification that relies on a condition the
- * product never has is not a verification.
- *
- * ── THE FIX: CLOSE FIRST, CONFIRM, THEN RELOAD ────────────────────────────
- *
- * 1. Tell every module holding a cached handle to drop it (`closers`).
- * 2. Delete, and WAIT for each delete to actually report success.
- * 3. Only then reload — into storage that is provably empty.
- *
- * The order is the whole fix. Reloading before the deletes confirm is what
- * silently re-creates the dirty map this function exists to prevent.
- */
+/** ⚠️ Close connections and CONFIRM every delete before reloading — reloading first re-opens the DBs and cancels the queued deletes (reload wins the race). */
 
-/**
- * Things to STOP before wiping — pollers, services, anything that touches the
- * store on a timer.
- *
- * ⛔ Registered by the CALLER, never imported here. Importing the bake service
- * pulled the whole app (Supabase, $env) into a wipe utility and broke its unit
- * test; a module that deletes databases must depend on nothing.
- */
+/** ⛔ Fns to stop before wiping (pollers/services on a timer) — registered by the CALLER, never imported here; importing pulls in the whole app and breaks this module's tests. */
 const stoppers = new Set<() => void>();
 
 /** Register something to stop before the wipe (e.g. the bake service). */
@@ -194,33 +95,10 @@ export function registerWipeStopper(fn: () => void): () => void {
 	return () => stoppers.delete(fn);
 }
 
-/**
- * Modules register a fn that closes their cached IDBDatabase handle.
- *
- * ⚠️ We reuse the app's EXISTING registry (`registerOfflineDbReset` /
- * `resetOfflineDbHandles`, built for sandbox toggling) rather than adding a
- * second one. Two registries means a module can register with one and not the
- * other, and the wipe then blocks on a handle nobody knew about — the exact
- * class of bug this file keeps hitting. One registry, one list.
- */
+/** ⚠️ Reuses the existing registry (registerOfflineDbReset/resetOfflineDbHandles) rather than adding a second — two registries means a module can register with one and not the other, and the wipe blocks on an unknown handle. */
 
-/**
- * Wipe for real: close every known connection, delete, confirm, reload.
- *
- * Throws if the store is not provably empty afterwards. FAIL LOUD — a wipe that
- * half-worked is worse than none, because the next hour of measurement is
- * silently garbage.
- */
 export async function wipeOfflineDataAndReload(): Promise<void> {
-	// 1) STOP THE APP FROM TOUCHING THE STORE.
-	//
-	// ⚠️ Closing cached handles is NOT enough. The bake service polls every ~20 s
-	// and opens the tile DB per call; an in-flight transaction blocks the delete
-	// just as hard as a cached handle, and a running service will re-open (and
-	// re-download into) the database the instant it is gone.
-	// MEASURED: with only the handle fix, gc-offlineSatellite / rt-vectors /
-	// rt-mapRegistry all deleted while gc-offlineTiles — the one the bake service
-	// hammers — stayed "blocked".
+	// 1) STOP THE APP. ⚠️ Closing cached handles alone is not enough — the bake service reopens the tile DB every ~20s and blocks the delete just as hard as a cached handle.
 	for (const stop of stoppers) {
 		try {
 			stop();
@@ -231,14 +109,7 @@ export async function wipeOfflineDataAndReload(): Promise<void> {
 	// Let any transaction already in flight finish and release its lock.
 	await new Promise((r) => setTimeout(r, IN_FLIGHT_GRACE_MS));
 
-	// 2) Drop cached handles so the deletes are not blocked from inside our own app.
-	// ⛔ LATCH READS OFF FIRST, THEN DROP HANDLES.
-	//
-	// Closing the handles alone is not enough: the map requests tiles
-	// continuously, so `idbGetTile` reopens the database on demand and the
-	// delete is blocked again microseconds later. MEASURED — satellite and
-	// registry deleted cleanly every time while `gc-offlineTiles` came back
-	// `blocked`, because it is the only one being read from constantly.
+	// 2) ⛔ Latch reads off FIRST, then drop handles — closing handles alone isn't enough since idbGetTile reopens the DB on every tile request and re-blocks the delete.
 	latchOfflineReadsForWipe();
 	resetOfflineDbHandles();
 
@@ -246,14 +117,10 @@ export async function wipeOfflineDataAndReload(): Promise<void> {
 	const res = await wipeOfflineData();
 
 	if (!res.clean) {
-		// The delete failed and we are NOT reloading, so this tab keeps running
-		// with the read latch still on — which would make every tile read a
-		// permanent silent miss ("the roads never came back"). Restore reads
-		// first: the data is still there, so serving it is correct.
+		// Must restore reads here (data's still there) — leaving the latch on through a failed wipe would make every tile read a permanent silent miss.
 		unlatchOfflineReadsAfterFailedWipe();
 
-		// Do NOT reload — reloading now is exactly what re-creates the databases
-		// and hides the failure. Tell the human instead.
+		// Do NOT reload here — that recreates the databases and hides the failure; tell the human instead.
 		console.error(
 			"[wipe] FAILED — databases still held open, nothing was deleted.",
 			res.deleted,

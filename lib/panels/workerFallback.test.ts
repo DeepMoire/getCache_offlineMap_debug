@@ -2,36 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/**
- * THE SELECTED-AND-UNREACHABLE TRAP.
- *
- * MEASURED 27 Aug 2026 on localhost:5174/offline/debug: the CONFIG panel showed
- * r2_prod lit green AND greyed out at the same time, with r2_dev and local_dev
- * also grey. Every row was `disabled`, so no click could move off the dead
- * tier. Nothing downloaded and the panel offered no way out.
- *
- * The cause was one guard. probeAll's fallback read:
- *
- *     if (reachable[target] === false && reachable.production !== false)
- *
- * `production` is the DEFAULT target, so the branch only ever runs when
- * production is the dead one — and in exactly that case the second clause is
- * false. The recovery path could not fire in the only situation it was written
- * for.
- *
- * These are source assertions rather than a mounted-component test because the
- * child ships no Svelte test harness; the failure was a logic guard visible in
- * the text, and a grep-shaped test that fails loudly beats no test at all.
- */
+// ⚠️ don't gate the fallback on `reachable.production !== false` — that clause is only reached when production IS the dead target, so it's always false exactly when the recovery path is needed.
 
 const PANEL = readFileSync(join(__dirname, "OfflineConfigPanel.svelte"), "utf8");
 
 describe("worker tier fallback", () => {
 	it("does not gate the fallback on production being alive", () => {
-		// The exact shape of the bug. Matched as CODE, not prose: the fix's own
-		// comment quotes the old guard to explain it, and a bare substring check
-		// fails on that quotation — which would train the next person to delete
-		// the explanation to get the suite green.
+		// Matched as CODE, not prose — a bare substring check would also match the fix's own comment quoting the old guard, so comment lines are filtered out first.
 		const code = PANEL.split("\n")
 			.filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
 			.join("\n");
@@ -46,25 +23,12 @@ describe("worker tier fallback", () => {
 	});
 
 	it("says something when no tier answers, instead of failing silently", () => {
-		// A dead panel with a silent console is the failure shape this whole
-		// subsystem keeps reproducing. [[no-silent-fallbacks]]
+		// A dead panel with a silent console is a failure shape this subsystem keeps reproducing. [[no-silent-fallbacks]]
 		expect(PANEL).toContain("NO worker is reachable");
 	});
 });
 
-/**
- * r2_dev COULD NEVER BE REACHED UNDER A PLAIN WRAPPER.
- *
- * probeTarget asks hostFor("r2Dev") -> configuredDevHost, which stays null
- * until configureTilesDevHost() is called. MEASURED 27 Aug 2026: the only
- * caller in the workspace was ReTreever/src/hooks.client.ts:45, so the tier
- * worked under ReTreever and was permanently grey under rapper — a control
- * advertising a sandbox the user could never select.
- *
- * The child configures its own tiers (see the long note in routes/+layout.svelte
- * on why this belongs to the child and not the wrapper), so the dev tier has to
- * be configured in the same place as production or it is dead by construction.
- */
+// ⚠️ r2_dev must be configured in the same place as production (configureTilesDevHost) or it's dead by construction — configuredDevHost stays null until called.
 const LAYOUT = readFileSync(join(__dirname, "..", "..", "routes", "+layout.svelte"), "utf8");
 
 describe("r2_dev tier is configurable", () => {
@@ -73,32 +37,16 @@ describe("r2_dev tier is configurable", () => {
 	});
 
 	it("reads it from the environment rather than baking an origin in", () => {
-		// Baking a real origin here would bill whoever owns it — the same rule
-		// that keeps packUrl() answering null until configured.
+		// Baking a real origin here would bill whoever owns it — same rule that keeps packUrl() answering null until configured.
 		expect(LAYOUT).toContain("VITE_TILES_DEV_HOST");
 		expect(LAYOUT).not.toMatch(/configureTilesDevHost\(\s*["'`]https?:/);
 	});
 });
 
-/**
- * A DEAD TIER MUST BE RETRYABLE, NOT PERMANENTLY DISABLED.
- *
- * MEASURED 27 Aug 2026, Chris: "I went from production to local but I couldn't
- * get back on to production again."
- *
- * Every reachable[] flag came from ONE probe at mount. tiles-prod.getcache.org
- * had just been created and the resolver's negative cache had not expired, so
- * that probe failed — and the row was rendered `disabled` from then on. A
- * disabled button fires no click, so the action that would have re-tested the
- * tier was the one action the UI made impossible. The Worker came up; the panel
- * could not find out.
- *
- * A transient network result must never become permanent UI state.
- */
+// ⚠️ a transient network result must never become permanent UI state — a tier probed dead once must stay retryable, never left rendered `disabled` forever.
 describe("a tier that failed once can be retried", () => {
 	it("worker rows are never rendered `disabled`", () => {
-		// Scoped to the Workers loop: the layers loop below it legitimately
-		// disables rows for a compile-time bisect, which is not a network state.
+		// Scoped to the Workers loop — the layers loop below legitimately uses `disabled` for a compile-time bisect, not a network state.
 		const workersBlock = PANEL.slice(
 			PANEL.indexOf("{#each TARGETS as t"),
 			PANEL.indexOf("{#if layers.length"),

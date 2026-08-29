@@ -1,10 +1,4 @@
-// Pure geometry for "See on map" framing — no map, no reactivity. Resolves a
-// feature (shape OR PDF overlay) to a lng/lat bounding box the camera can fit.
-// Extracted from MapDrawControls.svelte; the camera-call functions that
-// consume these (frameBox / frameFeature / frameActiveMap) stay in the
-// component since they touch selection + viewport state.
-// 28 Aug 2026: moved into the child — sibling store + the host-store contract
-// (MapHostFeature stands in for the host's MapSessionFeature) via ../shared/mapHostPorts.
+// pure geometry for "See on map" framing — resolves a feature (shape or PDF overlay) to a lng/lat bounding box the camera can fit.
 import { isNullIsland } from "./mapViewport";
 import type { MapHostFeature } from "../shared/mapHostPorts";
 
@@ -15,8 +9,7 @@ export type LngLatBox = {
     maxLat: number;
 };
 
-// The ONE coordinate-tree walker. Generic recursion collapses Point /
-// LineString / Polygon and every Multi* variant to the same code.
+// the one coordinate-tree walker — generic recursion collapses Point/LineString/Polygon and every Multi* variant into the same code.
 export function geometryBounds(
     geom: GeoJSON.Geometry | null | undefined,
 ): LngLatBox | null {
@@ -31,9 +24,7 @@ export function geometryBounds(
             typeof c[0] === "number" &&
             typeof c[1] === "number"
         ) {
-            // A feature with no known location sits at null island (0,0). Drop it
-            // from the extent so one unknown pin can't drag the camera out into the
-            // Gulf of Guinea — the map frames the REAL features, or nothing.
+            // a feature with no known location sits at null island (0,0) — drop it, or one unknown pin drags the camera into the Gulf of Guinea.
             if (isNullIsland(c[0], c[1])) return;
             if (c[0] < minLng) minLng = c[0];
             if (c[0] > maxLng) maxLng = c[0];
@@ -51,8 +42,7 @@ function boxFromTuple(
     b: [number, number, number, number] | null,
 ): LngLatBox | null {
     if (!b) return null;
-    // Drop a degenerate overlay parked at null island (0,0) — same reason as the
-    // point guard in geometryBounds: never let an unknown-location feature frame.
+    // drop a degenerate overlay parked at null island (0,0) — same reason as the point guard above: never let an unknown-location feature frame.
     if (isNullIsland((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)) return null;
     return { minLng: b[0], minLat: b[1], maxLng: b[2], maxLat: b[3] };
 }
@@ -72,8 +62,7 @@ export function unionBox(boxes: (LngLatBox | null)[]): LngLatBox | null {
     return out;
 }
 
-// Resolve ONE feature's extent. Shapes read geometry; overlay features
-// read the bounds stamped on the feature row at import time.
+// resolves one feature’s extent — shapes read geometry; overlay features read the bounds stamped on the feature row at import time.
 export async function resolveFeatureBounds(
     f: MapHostFeature,
 ): Promise<LngLatBox | null> {
@@ -82,8 +71,6 @@ export async function resolveFeatureBounds(
         return gb;
     }
     if (f.featureType !== "overlay" || !f.overlayStorageKey) return null;
-    // Overlays carry their geographic extent on the feature row at import
-    // time (set by `importPdf` after GDAL returns the bounds). Anything
-    // older — pre-rewrite — has no bounds and won't frame; user re-imports.
+    // overlays carry their extent on the feature row at import time (set by importPdf from GDAL) — anything pre-rewrite has no bounds and won’t frame; user re-imports.
     return f.overlayBounds ? boxFromTuple(f.overlayBounds) : null;
 }

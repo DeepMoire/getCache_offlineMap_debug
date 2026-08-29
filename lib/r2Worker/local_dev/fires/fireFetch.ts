@@ -1,19 +1,5 @@
-/**
- * v4FireFetch — pull one area's hotspots from our Worker.
- *
- * Deliberately thin. The phone asks our own /fires endpoint for a disc and gets
- * back trimmed GeoJSON; every hard part (three-satellite fan-out, CSV parsing,
- * dedupe, the FIRMS key) lives on the Worker. The phone never talks to NASA and
- * never holds the key.
- *
- * ── Two rules this file exists to enforce ──
- * 1. A FAILURE MUST THROW. Returning an empty list on a network error would
- *    render as "no fires near you" — the single most dangerous lie this layer
- *    can tell. The caller catches, backs off, and KEEPS the last good cache.
- * 2. NEVER hang. A field phone on lie-fi (connected, no throughput) will leave
- *    a bare fetch pending forever; an un-timed fetch is a documented cause of
- *    past field failures here. Hence the explicit AbortController timeout.
- */
+// ⚠️ failure MUST throw — an empty list on network error reads as "no fires near you", the most dangerous lie this layer can tell.
+// ⚠️ NEVER let a fetch hang — lie-fi leaves a bare fetch pending forever; hence the AbortController timeout.
 
 import { guardPackDownload } from "../../../onPhone/store/downloadGuard";
 import { firesUrl } from "../tilesHost";
@@ -22,19 +8,12 @@ import {
 	type FireHotspot,
 } from "../../../shared/fireContract";
 
-// firesUrl() (and which Worker it points at) lives in r2Worker/local_dev/tilesHost.
-
-/**
- * Wall-clock cap for one fire fetch. Generous enough for a cold Worker doing
- * three upstream NASA calls on a slow link, short enough that a wedged request
- * can't stall the bake pass behind it.
- */
+// cap for one fire fetch — long enough for a cold Worker's three NASA calls, short enough not to stall the bake pass behind it.
 const FIRE_TIMEOUT_MS = 20_000;
 
 export interface FireFetchResult {
 	hotspots: FireHotspot[];
-	/** Server's fetch time (X-Fetched-At) — the edge may serve a cached slice, so
-	 *  trusting our own clock would overstate freshness by up to the cache TTL. */
+	/** Server's fetch time (X-Fetched-At) — don't trust our own clock, it can overstate freshness by up to the cache TTL. */
 	fetchedAt: number;
 	/** How many of the three satellites reported (X-Sources-Ok). */
 	sourcesOk: number;
@@ -63,12 +42,7 @@ function toConfidence(raw: unknown): FireHotspot["c"] {
 	return raw === "high" ? "high" : raw === "nominal" ? "nominal" : "low";
 }
 
-/**
- * Fetch hotspots for one area. Throws on any failure (see rule 1 above).
- *
- * `guardPackDownload` is the same session circuit-breaker the tile downloader
- * trips against, so a runaway bake loop can't hammer this endpoint either.
- */
+/** Throws on any failure. Shares guardPackDownload's circuit breaker with the tile downloader, so a runaway bake loop can't hammer this either. */
 export async function fetchAreaFires(
 	lng: number,
 	lat: number,
@@ -80,8 +54,7 @@ export async function fetchAreaFires(
 	const timer = setTimeout(() => controller.abort(), FIRE_TIMEOUT_MS);
 	let res: Response;
 	let text: string;
-	// NO HOST, NO REQUEST — see the identical guard in roads/packDownload.ts and
-	// the header of ../tilesHost.ts.
+	// NO HOST, NO REQUEST — see the identical guard in roads/packDownload.ts and tilesHost.ts.
 	const firesEndpoint = firesUrl();
 	if (firesEndpoint === null) {
 		clearTimeout(timer);
@@ -124,10 +97,7 @@ export async function fetchAreaFires(
 			t,
 			c: toConfidence(f.properties?.c),
 			frp: Number.isFinite(f.properties?.frp) ? (f.properties?.frp as number) : 0,
-			// Optional context for the tap popup. Carried through as undefined
-			// when absent — never defaulted to a number, because "we don't know
-			// the footprint" and "the footprint is 0" are different claims and
-			// only one of them is honest.
+			// optional tap-popup context — never default to 0; "unknown" and "0" are different claims.
 			...(Number.isFinite(f.properties?.px)
 				? { px: f.properties?.px as number }
 				: {}),
@@ -137,9 +107,7 @@ export async function fetchAreaFires(
 		});
 	}
 
-	// Prefer the server's stamp; fall back to ours only if the header is missing
-	// (the CORS expose-headers trap makes a custom header read as null when it
-	// isn't explicitly exposed — the route exposes it, but don't crash if not).
+	// prefer the server's X-Fetched-At; falls back to our clock only if the header is missing (CORS expose-headers trap).
 	const headerAt = Number(res.headers.get("X-Fetched-At"));
 	const sourcesOk = Number(res.headers.get("X-Sources-Ok"));
 

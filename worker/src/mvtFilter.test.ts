@@ -7,9 +7,6 @@ import {
   writeVarint,
 } from "./mvtFilter";
 
-// ── tiny MVT encoder (test-only) ──────────────────────────────────────────────
-// Builds a minimal but valid MVT: Tile{ Layer{ name, features[], keys[], values[] } }.
-// The filter is byte-level and ignores geometry, so geometry is a trivial stub.
 // Wire types: 0=varint, 2=length-delimited.
 
 function tag(field: number, wire: number): number {
@@ -396,13 +393,7 @@ describe("roads budget decision — ONE rule: default 40 km, bust → 25 km + dr
   });
 });
 
-// ── the zero-byte tile: where 7k landmines were born ─────────────────────────
-// A tile the ARCHIVE HAS can filter down to NOTHING — every layer it carried gets
-// stripped (not in `keep`, or kind-filtered away). `filterMvtToLayers` builds its
-// output from scratch, so that yields a 0-BYTE buffer. The old readDisc pushed it
-// as a real PackedTile, serializePack wrote `n:0`, and the phone persisted it as a
-// tile. Mapbox then threw "Unimplemented type: 4" parsing it on EVERY render pass.
-// These tests pin the shape of that condition so the guard can't be removed blind.
+// A tile can filter down to 0 bytes (every layer stripped) — shipping that as a PackedTile made Mapbox throw "Unimplemented type: 4"; these tests pin the guard.
 describe("filtered-to-nothing tiles (the 'Unimplemented type: 4' origin)", () => {
   it("a tile whose every layer is stripped filters to ZERO bytes", () => {
     // `earth` is not in the keep-set → nothing survives.
@@ -422,8 +413,7 @@ describe("filtered-to-nothing tiles (the 'Unimplemented type: 4' origin)", () =>
       { name: "roads", features: [{ id: 1, kind: "path" }, { id: 2, kind: "path" }] },
     ]);
     const r = filterMvtToLayers(data, new Set(["roads"]), { dropPaths: true });
-    // The roads LAYER survives as an empty husk or vanishes entirely; either way it
-    // carries no features. What matters is that the pack must not ship it as a tile.
+    // Roads layer may survive as an empty husk or vanish — either way it must not ship as a tile.
     expect(featureKinds(getLayer(r.data, "roads") ?? new Uint8Array()).length).toBe(0);
   });
 

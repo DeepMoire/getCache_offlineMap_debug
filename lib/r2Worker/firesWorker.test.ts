@@ -1,9 +1,6 @@
 /**
- * fires.test.ts — locks the parsing + safety rules of the FIRMS hotspot fetch.
- *
- * The load-bearing tests here are the LIES tests: a network failure, a bad key,
- * or an HTML error body must never surface as "zero fires near you". Everything
- * else is arithmetic.
+ * fires.test.ts
+ * ⚠️ LIES tests: a network failure, bad key, or HTML error body must never surface as "zero fires near you".
  */
 
 import { describe, expect, it } from "vitest";
@@ -18,13 +15,7 @@ import {
 	parseFiresCsv,
 } from "./firesWorker";
 
-/**
- * The header the LIVE Area API actually returns (captured 2026-08-07), which is
- * NOT what the docs describe: the real feed carries an extra `instrument` column
- * and has no `type`. That mismatch is precisely why fires.ts looks columns up by
- * NAME — index-based parsing would have silently read `instrument` as
- * `confidence` here. Keep this fixture byte-accurate to the live feed.
- */
+// ⚠️ Real API header (captured 2026-08-07) differs from the docs: extra `instrument` column, no `type`. Index-based parsing would misread `instrument` as `confidence` — keep this fixture byte-accurate to the live feed.
 const HEADER =
 	"latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,instrument,confidence,version,bright_ti5,frp,daynight";
 
@@ -53,8 +44,7 @@ describe("parseAcqTime", () => {
 	});
 
 	it("does NOT shift the day (the UTC date trap)", () => {
-		// Late-UTC on the 7th must stay the 7th regardless of the host timezone —
-		// an ISO-slice implementation would roll this to the 6th west of GMT.
+		// UTC date trap: late-UTC on the 7th must stay the 7th regardless of host timezone — ISO-slice would roll it to the 6th.
 		const t = parseAcqTime("2026-08-07", "2350");
 		expect(new Date(t).getUTCDate()).toBe(7);
 		expect(new Date(t).getUTCHours()).toBe(23);
@@ -110,9 +100,7 @@ describe("parseFiresCsv", () => {
 	});
 
 	it("parses a VERBATIM live row (captured from the real API 2026-08-07)", () => {
-		// Copied byte-for-byte from a real response. The live feed's `instrument`
-		// column sits exactly where the docs put `confidence` — index-based parsing
-		// would read "VIIRS" as the confidence and silently downgrade every fire.
+		// Byte-for-byte from a real response — `instrument` sits where docs put `confidence`; index-based parsing would misread "VIIRS" as confidence.
 		const live = [
 			HEADER,
 			"45.34053,-73.52417,305.66,0.4,0.44,2026-08-07,629,N20,VIIRS,n,2.0NRT,289.95,0.93,N",
@@ -198,14 +186,7 @@ describe("firmsUrl", () => {
 
 describe("DAY_RANGE — the UTC-midnight blackout", () => {
 	it("asks for MORE THAN ONE calendar day", () => {
-		// FIRMS's day range is a CALENDAR-DAY filter, not a rolling 24 h window.
-		// With DAY_RANGE=1, "today UTC" is genuinely empty for the first hours
-		// after midnight (satellite passes aren't processed yet) and yesterday is
-		// excluded — so the layer blanked itself nightly at UTC midnight, which is
-		// 5pm in BC. Measured 2026-08-08 over southern BC: 1 day → 0 rows;
-		// 2 days → 5,080 rows, every one stamped 2026-08-07, while dozens of
-		// fires were burning. Requesting a day we might not draw costs a few KB;
-		// not requesting it costs the whole feature.
+		// ⚠️ FIRMS's day range is a CALENDAR-DAY filter, not rolling 24h — DAY_RANGE=1 can return 0 rows just after UTC midnight (5pm BC) while dozens of real fires burn; never drop below 2.
 		expect(DAY_RANGE).toBeGreaterThanOrEqual(2);
 	});
 
@@ -214,8 +195,7 @@ describe("DAY_RANGE — the UTC-midnight blackout", () => {
 	});
 
 	it("puts the day range in the URL, so the fetch actually asks for it", () => {
-		// Guards the wiring, not just the constant: a correct DAY_RANGE that never
-		// reaches the URL would reproduce the blackout exactly.
+		// Guards the wiring — a correct DAY_RANGE that never reaches the URL reproduces the blackout.
 		const u = firmsUrl("KEY123", "VIIRS_NOAA20_NRT", [-80, 40, -70, 50]);
 		expect(u.endsWith(`/${DAY_RANGE}`)).toBe(true);
 	});
@@ -269,13 +249,7 @@ describe("fetchFires — must never lie about zero fires", () => {
 	});
 });
 
-/**
- * The tap-popup columns. These are OPTIONAL by design: they add detail to the
- * hotspot card ("how big is this pixel", "day or night pass") but must never be
- * load-bearing. A feed that drops one has to degrade to a plainer popup, never
- * to a hard failure that blanks the whole layer — the same fail-open rule the
- * rest of this file follows for anything that isn't lat/lng/time.
- */
+// ⚠️ px/dn are OPTIONAL popup detail, never load-bearing — a feed missing them must degrade to a plainer popup, never a hard failure.
 describe("optional popup columns — px (footprint) and dn (day/night)", () => {
 	it("takes the LARGER of scan/track as the pixel footprint", () => {
 		// The fixture row carries scan=0.4, track=0.36.

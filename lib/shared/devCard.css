@@ -1,23 +1,6 @@
 /*
- * DEV CARD — the one look for every debugging card on the offline map.
- *
- * Lifted verbatim from OfflineWorkMeter.svelte ("MAP DEBUGGER"), which is the
- * reference style. That file's own note said the tokens were "matched rather
- * than pulled from a shared token file — there isn't one for this component
- * pair yet". This is that file. Until every card imports it, the three cards
- * drift: on 28 Aug 2026 "offline blobs" had a lit header band and a lowercase
- * title, CONFIG had a translucent brown body, a 1.6rem centred title and a
- * 10px radius, and only MAP DEBUGGER looked like the design handoff.
- *
- * USE: `import "../shared/devCard.css";` in the card, then
- *   <div class="dev-card">            body: bg, border, radius, padding, mono
- *     <div class="dev-card__head">    one row, flex, gap
- *       <span class="dev-card__title">name</span>   gold Inter 800 13px CAPS
- *
- * A card keeps its own classes for everything below the header. Only the
- * shell and the title are shared — that is all the eye compares across cards.
- * Tokens are exposed as custom properties on .dev-card so a card's own rules
- * can use var(--gold) etc. instead of re-typing hex.
+ * DEV CARD — shared look for every debugging card on the offline map.
+ * Every card must import this instead of styling its own header, or cards drift apart (see 28 Aug 2026 divergence).
  */
 .dev-card {
 	--bg: #0a0a0a;

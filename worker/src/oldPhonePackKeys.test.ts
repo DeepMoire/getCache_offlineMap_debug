@@ -1,26 +1,6 @@
-/**
- * THE PACK ITSELF, NOT JUST THE BRANCH.
- *
- * THE FIELD REPORT (27 Aug 2026): "the satellite came, but the roads didn't."
- *
- * On 2026-08-20 the Worker started keying road tiles by the PIN
- * (`pin/<lng>,<lat>/<z>/<x>/<y>`) instead of by the grid cell (`<z>/<x>/<y>`),
- * fixing the 50 km bug where two pins in one square shared a blob. Correct fix
- * — but the installed App Store build (iOS 1.0.93, 21 Jul 2026,
- * PACK_FORMAT_VERSION 15) stores whatever key it is sent and then looks tiles
- * up by its OWN `${z}/${x}/${y}`. Every lookup missed: the bytes reached the
- * phone and were unreachable, so the map drew NO ROADS. Roads only — the
- * satellite travels under `${lng},${lat}`, never shared a key, and kept
- * working, which is exactly how it presented in the field.
- *
- * This test drives the REAL `buildPack` and reads the keys out of the manifest
- * it serialises. It fails if the pv branch is removed — which is the point:
- * asserting the key HELPERS in isolation passes even with the bug restored.
- */
 import { describe, expect, it, vi } from "vitest";
 
-/** Every source tile is a non-empty stub; the filter is stubbed to keep a
- *  road blob alive so tiles actually reach the manifest. */
+/** Every source tile is a non-empty stub; the filter is stubbed to keep a road blob alive so tiles reach the manifest. */
 vi.mock("./mvtFilter", () => ({
 	filterTile: (b: Uint8Array) => b,
 }));
@@ -54,8 +34,7 @@ describe("buildPack keys tiles by the CLIENT's pack version", () => {
 		const keys = keysOf(await buildPack(archive, LNG, LAT, false, {}, 15));
 
 		expect(keys.length).toBeGreaterThan(0);
-		// THE ASSERTION THE FIELD BUG NEEDED. A `pin/` prefix here is a phone
-		// that stores roads it can never look up again.
+		// A `pin/` prefix here means a phone that stores roads it can never look up again.
 		for (const k of keys) {
 			expect(k).toMatch(/^\d+\/\d+\/\d+$/);
 		}
@@ -77,8 +56,7 @@ describe("buildPack keys tiles by the CLIENT's pack version", () => {
 		const now = keysOf(await buildPack(archive, LNG, LAT, false, {}, 44));
 
 		expect(old).not.toEqual(now);
-		// The modern key is the legacy key with the pin's address in front, so
-		// one pack's tiles map onto the other's addresses exactly.
+		// The modern key is the legacy key with the pin's address in front, so one pack's tiles map onto the other's addresses exactly.
 		expect(now.every((k, i) => k.endsWith(old[i]))).toBe(true);
 	});
 });

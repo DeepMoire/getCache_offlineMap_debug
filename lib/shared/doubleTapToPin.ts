@@ -1,44 +1,11 @@
 /**
- * doubleTapToPin.ts — the shared "double-tap OR long-press → Snake Ruler" gesture.
- *
- * ONE implementation, used by BOTH the offline wall map (`/mobile/offlinev4`)
- * and the online map (`/mobile/map`) — the popover chrome, the bullseye, the
- * "Drop" button and the gesture plumbing must never drift between them.
- *
- * Behaviour:
- *   • single tap does nothing (it would fight the map pan)
- *   • double tap OR long-press (500ms hold) initiates the Snake Ruler: names
- *     what's under it (best-effort `identify`), flashes an optional outline
- *     (`onSelect`), plants the first ruler node, and shows the popover with
- *     Save (drop pin) / Share (copy GPS) for a lone point, or hand cursors
- *     to grow a line/polygon
- *   • ONLY two deliberate gestures seed: a double-click, or a press held past
- *     ~550ms that never moved past slop (mouse 6px / touch 14px). The long-
- *     press fires FROM THE TIMER while the pointer is still down — so a plain
- *     click (released early) and a drag (moved past slop, or the map's own
- *     `dragstart`) both kill the timer and seed nothing.
- *   • zoom becomes two-finger / pinch only (the default dblclick-zoom is off)
- *
- * The popover is a DOM `mapboxgl.Popup` (no glyphs → air-gap safe on the
- * offline map). Styling lives in the global `mobile.css` (`.rtr-droppin-*`).
+ * doubleTapToPin.ts — shared "double-tap OR long-press → Snake Ruler" gesture.
+ * ONE implementation for both the offline (`/mobile/offlinev4`) and online (`/mobile/map`) maps — popover chrome, bullseye, Drop button and gesture plumbing must never drift between them.
+ * Popover is a DOM `mapboxgl.Popup` with no glyphs — required for offline air-gap safety; styling lives in global `mobile.css` (`.rtr-droppin-*`).
  */
 import type { MapMouseEvent, MapTouchEvent, Point } from "mapbox-gl";
 
-/**
- * The slice of a map this file needs — structural, so BOTH renderers fit.
- *
- * The online map is Mapbox, the offline map (/mobile/offlinev4) is MapLibre.
- * Every event name bound below (`dblclick`, the mouse/touch/drag set,
- * `contextmenu`) exists in both, and the three event fields actually read —
- * `point`, `lngLat`, `originalEvent` — are identically shaped. `Point` is
- * literally the same package in both (`@mapbox/point-geometry`), so the type
- * imports above stay honest for either library.
- *
- * `on`/`off` are typed loosely on purpose: both libraries overload them heavily
- * and differently (Mapbox returns `this`, MapLibre returns a `Subscription`),
- * and a union of the two is unusable at the call site. The return value is
- * discarded here in every case.
- */
+/** Structural type both Mapbox (online) and MapLibre (offline) satisfy — same event names/shapes. on/off are typed loosely on purpose; the two libraries' overloads don't unify at the call site. */
 type TapMap = {
 	doubleClickZoom: { disable(): void };
 	// biome-ignore lint/suspicious/noExplicitAny: two renderers, two overload sets
@@ -47,13 +14,7 @@ type TapMap = {
 	off(type: string, listener: (e: any) => void): unknown;
 };
 
-// ── Long-press release → swallow the synthetic click ──────────────────────
-// When a long-press seeds the ruler, the pointer is STILL DOWN. The release
-// that follows never moved past slop, so the browser fires a normal `click`
-// — and every map click handler (feature hit-test → popover, outside-tap
-// close, etc.) runs as if the user tapped. Kill that one click at the DOM
-// capture phase, before Mapbox ever sees it. A window-capture listener (not
-// shared module state) so Vite HMR module duplication can't fork the flag.
+// Long-press leaves the pointer down; its eventual click fires as a real tap (opens popovers, etc.) unless swallowed at DOM capture before Mapbox sees it. A window-capture listener (not module state) so Vite HMR duplication can't fork the flag.
 function swallowNextClick(windowMs = 250): void {
 	const kill = (e: MouseEvent) => {
 		e.stopPropagation();
@@ -62,8 +23,7 @@ function swallowNextClick(windowMs = 250): void {
 	};
 	const cleanup = () => window.removeEventListener("click", kill, true);
 	window.addEventListener("click", kill, true);
-	// The click lands within ms of mouseup; if none comes (e.g. the browser
-	// suppressed it), expire fast so no genuine later tap gets eaten.
+	// Expire fast if no click comes (e.g. suppressed by the browser) — otherwise a genuine later tap gets eaten.
 	setTimeout(cleanup, windowMs);
 }
 
@@ -75,37 +35,26 @@ export interface IdentifyResult {
 }
 
 export interface DoubleTapToPinOpts {
-	/** Best-effort: name what's under the tapped point ("Forest", "Ontario"…).
-	 *  Return null when nothing can be named — the popover then shows ONLY the
-	 *  GPS point (no misleading headline). */
+	/** Best-effort: name what's under the tap. Return null when nothing can be named — popover then shows ONLY the GPS point (no misleading headline). */
 	identify?: (point: Point) => IdentifyResult | null | undefined;
 	/** Optional: draw (geometry) or clear (null) a selection outline. */
 	onSelect?: (geometry: GeoJSON.Geometry | null) => void;
 	/** Drop the real pin here (caller sets `dropPinAt = [lng, lat]`). */
 	onDrop: (lng: number, lat: number) => void;
-	/** Snake Ruler: plant the first ruler node at the double-tapped bullseye so
-	 *  it's immediately grabbable (the gesture itself — press a node + drag —
-	 *  is handled by Mapbox layer events in MapDrawControls, not here). */
+	/** Snake Ruler: plant the first ruler node at the tap so it's immediately grabbable (the drag itself is handled elsewhere, in MapDrawControls). */
 	onMeasureSeed?: (lng: number, lat: number) => void;
-	/** Hands the caller a fn that tears down the current "Drop" card + bullseye.
-	 *  The caller calls it the moment the double-tap turns into a ruler drag —
-	 *  the "Drop a pin" card is stale once it's a line. */
+	/** Hands the caller a teardown fn for the "Drop" card + bullseye — call it the moment the tap turns into a ruler drag, or the card goes stale. */
 	registerDismiss?: (dismiss: () => void) => void;
 }
 
-/**
- * Wire the gesture onto a Mapbox map. Returns a detach function (call it on
- * teardown to remove the handler + any live popover/bullseye).
- */
+/** Wire the gesture onto a map; returns a detach function (call it on teardown to remove the handler + any live popover/bullseye). */
 export function attachDoubleTapToPin(
 	map: TapMap,
 	opts: DoubleTapToPinOpts,
 ): () => void {
 	map.doubleClickZoom.disable(); // dblclick drops a pin; pinch / two-finger zooms
 
-	// Just clears the identify outline. No popup / decorative bullseye anymore —
-	// the Snake Ruler renders the node AND its Save/Share popover (for a lone
-	// point: Save drops a pin, Share copies the GPS).
+	// Clears the identify outline only — the Snake Ruler renders the node and its Save/Share popover itself.
 	const teardown = () => opts.onSelect?.(null);
 	opts.registerDismiss?.(teardown);
 
@@ -113,48 +62,16 @@ export function attachDoubleTapToPin(
 		teardown(); // clear any prior outline
 		const hit = opts.identify?.(e.point) ?? null;
 		if (hit?.geometry) opts.onSelect?.(hit.geometry);
-		// ⛔ THIS LINE IS NOT GATED BY `DEBUG`, ON PURPOSE.
-		//
-		// A tap that does nothing visible is indistinguishable from a tap the app
-		// never received, and the whole gesture layer was silent by default
-		// (`DEBUG = false` above), so "the pin doesn't drop" and "the pin dropped
-		// and the download failed" produced the SAME empty console. That
-		// ambiguity cost hours on 27 Aug 2026.
-		//
-		// One line per double-tap is not noise: a double-tap is a deliberate,
-		// low-frequency user action, unlike the pointer stream above it, which is
-		// exactly why that stream stays behind DEBUG and this does not. It is the
-		// first link in the chain the [tiles] and [offline-bake] lines continue,
-		// so a silent console after this line means the failure is downstream.
+		// ⛔ NOT gated by DEBUG, on purpose — without it, "pin didn't drop" and "pin dropped but download failed" look identical (empty console); a silent console after this line means the failure is downstream.
 		console.info(
 			`[pin] 📍 double-tap at ${e.lngLat.lng.toFixed(5)}, ${e.lngLat.lat.toFixed(5)} — seeding`,
 			{ handler: opts.onMeasureSeed ? "attached" : "MISSING (nothing will happen)" },
 		);
-		// Seed the Snake Ruler's first node at the tap. It renders the bullseye
-		// and shows the Save (drop pin) / Share (copy GPS) popover for one point,
-		// or grows into a line/polygon as you drag.
+		// Seed the Snake Ruler's first node at the tap — renders the bullseye + Save/Share popover, or grows into a line/polygon as you drag.
 		opts.onMeasureSeed?.(e.lngLat.lng, e.lngLat.lat);
 	};
 
-	// ── Long-press support ──────────────────────────────────────────────────
-	// A long-press initiates the Snake Ruler, matching double-click. ONLY two
-	// deliberate gestures may seed the ruler: a double-click, or a press held
-	// past LONG_PRESS_MS that never moved. Everything else — a plain click, a
-	// drag/pan, a flick — must NOT seed.
-	//
-	// This is the canonical JS long-press recipe (long-press-event lib, Space
-	// Jelly, thetallweeks): the long-press fires FROM THE TIMER while the
-	// pointer is STILL DOWN, and only if it never moved past slop. A plain
-	// click releases before the timer → cancelled. A drag crosses slop → the
-	// timer is killed. So the timer firing is itself proof of "held + still".
-	//
-	//   mousedown            → arm timer, record start point
-	//   mousemove > slop      → DRAG: kill timer (never fires)
-	//   mouseup before timer  → CLICK: kill timer (never fires)
-	//   timer fires (still down, still still) → LONG-PRESS: seed now
-	//
-	// The slop is intentionally TIGHT on desktop: a mouse is precise, so any
-	// real movement means the user is dragging, not pressing.
+	// Long-press matches double-click as the ONLY two gestures that may seed the ruler — a plain click, drag/pan, or flick must NOT seed; the timer firing while the pointer is still down (never past slop) is itself the proof of "held + still".
 	const LONG_PRESS_MS = 550;
 	const MOUSE_SLOP_PX = 6; // mouse is precise — tiny radius
 	const TOUCH_SLOP_PX = 14; // a finger wobbles — looser radius
@@ -170,11 +87,7 @@ export function attachDoubleTapToPin(
 	let pressTimer: ReturnType<typeof setTimeout> | null = null;
 	let downAt = 0; // ms timestamp of mousedown (for logging only)
 
-	// Once the long-press fires, the EVENTUAL release will still produce a
-	// `click` — swallow it whenever it comes. Armed on the raw DOM release
-	// (window capture), NOT on the map's mouseup: seeding mounts DOM (node,
-	// palette, arm) under the still-held pointer, which fires the map's
-	// `mouseout` and wipes any map-event bookkeeping before the release.
+	// Release swallow arms on the raw DOM release (window capture), NOT the map's mouseup — seeding mounts DOM under the still-held pointer, which fires the map's mouseout and wipes event bookkeeping first.
 	let disarmReleaseSwallow: (() => void) | null = null;
 	const armReleaseSwallow = () => {
 		disarmReleaseSwallow?.();
@@ -211,15 +124,7 @@ export function attachDoubleTapToPin(
 		opts.onMeasureSeed?.(pressLngLat.lng, pressLngLat.lat);
 	};
 
-	// DESKTOP SAFARI DOES NOT DEFINE `TouchEvent`. A bare `evt instanceof
-	// TouchEvent` is therefore a ReferenceError — not false — and it threw on
-	// EVERY map press, killing the gesture and red-screening the page. Chrome
-	// defines the constructor even on a mouse-only machine, which is exactly why
-	// this survived: it is invisible in the browser most testing happens in.
-	//
-	// Duck-type instead of brand-check. `touches` is the property we actually
-	// need, so asking for it directly is both safer and more honest than asking
-	// what class the event is.
+	// Desktop Safari doesn't define TouchEvent — `evt instanceof TouchEvent` throws (not false), killing the gesture; duck-type via "touches" in evt instead of instanceof.
 	const isTouchLike = (
 		evt: MouseEvent | TouchEvent,
 	): evt is TouchEvent => "touches" in evt;

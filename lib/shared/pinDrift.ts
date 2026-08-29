@@ -1,43 +1,7 @@
-/**
- * pinDrift.ts — THE CRUISING-PIN DETECTOR (DEV ONLY)
- *
- * ── THE BUG THIS EXISTS TO CATCH ─────────────────────────────────────────
- *
- * A pin is a fixed point on the earth. Its `lngLat` must NEVER change because
- * the camera moved. Zooming and panning change a pin's PIXEL position every
- * frame; they must not change its COORDINATE. Ever.
- *
- * When that invariant breaks, pins visibly "cruise" across the map as you
- * zoom — sliding over oceans and provinces — which is geographically absurd
- * and is the symptom this file detects.
- *
- * ── WHY A TOOL AND NOT A CONSOLE PASTE ───────────────────────────────────
- *
- * This bug has been fixed-then-regressed more than once, and each round was
- * lost to guessing at screenshots. Screenshots cannot separate the two
- * failure modes below, because a still frame has no time axis:
- *
- *   CRUISING  — the pin's lngLat CHANGES while the camera moves.
- *               Something is rewriting coordinates. The pin is animated.
- *
- *   BORN-WRONG — the pin's lngLat is CONSTANT but in the wrong place
- *               (e.g. a tidy column in the Pacific). Nothing is animating;
- *               the coordinate was already wrong when it arrived.
- *
- * They look similar in a screenshot and have completely different causes, so
- * telling them apart is the whole job. This watches coordinates over TIME,
- * which is the only way to do it.
- *
- * ── HOW ──────────────────────────────────────────────────────────────────
- *
- * Patches `Marker.prototype.setLngLat` on BOTH gl libraries (the offline map
- * is MapLibre, the online map is Mapbox — see rendererOf.ts) and records each
- * write together with the camera state at that instant. A coordinate write
- * that lands while the camera is mid-move, and MOVES the pin, is the smoking
- * gun.
- *
- * Never auto-runs. DEV-only, opt-in via window.__pinDrift.start().
- */
+// pinDrift.ts — dev-only detector: a pin's lngLat must NEVER change because the camera moved.
+// CRUISING = the pin's lngLat changes while the camera moves (something is rewriting coords).
+// BORN-WRONG = the pin's lngLat is constant but wrong from the start (bad data, not animation).
+// Never auto-runs — DEV only, opt-in via window.__pinDrift.start().
 
 type Sample = {
 	t: number;
@@ -112,15 +76,8 @@ function record(marker: object, lng: number, lat: number): void {
 	tr.samples.push({ t: Math.round(performance.now()), lng, lat, z: cam.z, moving: cam.moving });
 }
 
-/**
- * Patch both libraries' Marker.setLngLat. Idempotent.
- *
- * Patching the PROTOTYPE (rather than wrapping call sites) is deliberate: it
- * catches every writer, including ones we haven't thought of and any inside
- * the gl libraries themselves. A call-site wrapper would only see the writers
- * we already suspect — which is precisely the assumption that lost the last
- * few rounds of this bug.
- */
+// Patches both libraries' Marker.setLngLat. Idempotent.
+// Patches the PROTOTYPE, not call sites — a call-site wrapper only catches writers you already suspect, which is how past rounds of this bug were missed.
 async function install(): Promise<void> {
 	if (installed) return;
 	installed = true;
@@ -173,9 +130,7 @@ function report(): DriftReport {
 	}
 	cruising.sort((a, b) => b.movedM - a.movedM);
 	const anyDuringMove = cruising.some((c) => c.writesWhileMoving > 0);
-	// NO DATA IS NOT A PASS. If nothing was recorded the detector never saw a
-	// pin — reporting "CLEAN" there would be a false all-clear, the single most
-	// misleading thing this tool could say.
+	// NO DATA IS NOT A PASS — reporting "CLEAN" when nothing was recorded would be a false all-clear.
 	const verdict = tracks.size === 0
 		? `NO DATA — zero pin coordinate writes were seen. The detector did not ` +
 			`observe anything, so this is NOT an all-clear. Either recording wasn't ` +
@@ -195,10 +150,7 @@ function report(): DriftReport {
 	return { verdict, cruising: cruising.slice(0, 20), stationary, totalTracked: tracks.size };
 }
 
-/**
- * Wire up the detector. Call from a map route in DEV.
- * Exposes window.__pinDrift with start/stop/report.
- */
+// Wire up the detector from a map route in DEV; exposes window.__pinDrift with start/stop/report.
 export function installPinDrift(map: {
 	getZoom: () => number;
 	isMoving?: () => boolean;

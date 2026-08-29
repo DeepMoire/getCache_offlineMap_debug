@@ -1,10 +1,6 @@
 /**
- * placeReference.test.ts — "18 km NE of Whitecourt".
- *
- * Every case the spec called for: inside a town; near a small town but far from
- * a city; roadless with nothing in 150 km; sparse coverage; the antimeridian;
- * and a pole. The bearing cases matter most — a reversed bearing is 180° wrong
- * and reads perfectly plausible, so the direction is asserted in words.
+ * placeReference.test.ts
+ * ⚠️ A reversed bearing is 180° wrong and reads perfectly plausible — direction is asserted in words.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -24,7 +20,6 @@ import {
 	type PlaceRow,
 } from "./placeReference";
 
-// Real coordinates, so the numbers can be sanity-checked against a map.
 const WHITECOURT: PlaceRow = ["Whitecourt", -115.6855, 54.1501, TIER_TOWN, "Alberta"];
 const EDSON: PlaceRow = ["Edson", -116.4356, 53.5834, TIER_TOWN, "Alberta"];
 const EDMONTON: PlaceRow = ["Edmonton", -113.4687, 53.5501, TIER_MAJOR, "Alberta"];
@@ -39,8 +34,6 @@ describe("bearing16 — the direction must be from the PLACE to the FIRE", () =>
 	});
 
 	it("reads SW for the reverse — catches a flipped origin", () => {
-		// The failure mode this guards: swapping from/to points every reference
-		// exactly backwards while still looking like a valid answer.
 		expect(bearing16([-115.4, 54.3], [-115.68, 54.15])).toBe("SW");
 	});
 
@@ -97,8 +90,7 @@ describe("the cascade — small town first, city as the anchor", () => {
 		// ~9 km east of Blue Ridge.
 		const r = placeReference([-115.28, 54.15], AB);
 		expect(r.primary?.name).toBe("Blue Ridge");
-		// Ends with the province — the anchor here is a TOWN, not a major city,
-		// so the recognisable reference is appended.
+		// Anchor is a TOWN not MAJOR, so the province is appended.
 		expect(r.text).toMatch(
 			/^\d+ km \w+ of Blue Ridge, \d+ km \w+ of (Whitecourt|Edson), Alberta$/,
 		);
@@ -151,9 +143,7 @@ describe("roadless — nothing within any tier's radius", () => {
 	});
 
 	it("prefers the PROVINCE over coordinates when one is within reach", () => {
-		// ~330 km south of Edmonton: past even the MAJOR tier's 250 km radius,
-		// but well inside REGION_ANCHOR_KM. "Alberta" is true and useful;
-		// "50.5800, -113.4687" is not.
+		// ~330 km south of Edmonton — past the MAJOR tier's 250 km radius, but inside REGION_ANCHOR_KM.
 		const r = placeReference([-113.4687, 50.58], [EDMONTON]);
 		expect(r.primary).toBeNull();
 		expect(r.text).toBe("Alberta");
@@ -171,8 +161,7 @@ describe("sparse coverage — a lone big city and nothing else", () => {
 		const r = placeReference([-120.5, 51.2], [KAMLOOPS]);
 		expect(r.primary?.name).toBe("Kamloops");
 		expect(r.anchor).toBeNull();
-		// No province suffix: Kamloops is a MAJOR place, so ", British Columbia"
-		// would be redundant padding on a name people already place.
+		// No province suffix — Kamloops is MAJOR, so it'd be redundant.
 		expect(r.text).toMatch(/^\d+ km \w+ of Kamloops$/);
 	});
 });
@@ -213,11 +202,7 @@ describe("the user's own block wins — 'your Sundance block'", () => {
 });
 
 describe("the high-level anchor — 'I don't know what Hamilton means'", () => {
-	// The reported failure: "24 km NNW of Fairfield Island, 28 km NNE of Cedar
-	// Valley" — two names nobody outside those blocks knows, stacked together,
-	// for a fire beside a major city. Two separate causes, both fixed:
-	//   1. those are NEIGHBOURHOODS (GeoNames PPLX), now excluded from the asset
-	//   2. nothing guaranteed a recognisable reference; now the province does
+	// Regression guard: neighbourhood names (GeoNames PPLX) and a missing province fallback both read as "named a place nobody recognises".
 	const YALE: PlaceRow = ["Yale", -121.4333, 49.5667, TIER_VILLAGE, "British Columbia"];
 	const CHILLIWACK: PlaceRow = ["Chilliwack", -121.9526, 49.1664, TIER_MAJOR, "British Columbia"];
 
@@ -227,16 +212,14 @@ describe("the high-level anchor — 'I don't know what Hamilton means'", () => {
 	});
 
 	it("does NOT append the province when a MAJOR city is already named", () => {
-		// "10 km N of Vancouver, British Columbia" is redundant — everyone can
-		// place Vancouver.
+		// Redundant — everyone can place Vancouver.
 		const r = placeReference([-121.95, 49.4], [CHILLIWACK]);
 		expect(r.text).toMatch(/of Chilliwack$/);
 		expect(r.text).not.toContain("British Columbia");
 	});
 
 	it("always yields at least one recognisable reference", () => {
-		// Village primary + major anchor: the city carries recognition, so no
-		// province needed.
+		// City anchor carries recognition, so no province needed.
 		const r = placeReference([-121.5, 49.4], [YALE, CHILLIWACK]);
 		expect(r.text).toContain("Chilliwack");
 	});
@@ -253,11 +236,7 @@ describe("regionNear — the province of the nearest known place", () => {
 });
 
 describe("distance overrules prominence when the gap is large", () => {
-	// The bug this catches: the cascade searched smallest-tier-FIRST without
-	// regard to distance, so a village 20 km away beat the major city 3 km away.
-	// Standing downtown, the card said "20 km SE of Bowen Island". It only
-	// surfaced once suburb suppression removed the inner-city entries that had
-	// been papering over it.
+	// Regression: smallest-tier-first ignored distance — a village 20 km away beat a city 3 km away ("20 km SE of Bowen Island" from downtown).
 	const VANCOUVER: PlaceRow = ["Vancouver", -123.1193, 49.2497, TIER_MAJOR, "British Columbia"];
 	const BOWEN: PlaceRow = ["Bowen Island", -123.3667, 49.3833, TIER_VILLAGE, "British Columbia"];
 
@@ -268,8 +247,7 @@ describe("distance overrules prominence when the gap is large", () => {
 	});
 
 	it("still prefers the nearby VILLAGE when it is genuinely the closest", () => {
-		// Right beside Bowen Island, far from downtown — the small name is the
-		// better locator here and must still win.
+		// Far from downtown — the small name must still win here.
 		const r = placeReference([-123.36, 49.39], [VANCOUVER, BOWEN]);
 		expect(r.primary?.name).toBe("Bowen Island");
 	});
@@ -277,14 +255,7 @@ describe("distance overrules prominence when the gap is large", () => {
 
 describe("suburb suppression is a DATA rule, not a code rule", () => {
 	it("documents why feature codes alone cannot fix it", () => {
-		// GeoNames tags Burquitlam as PPL — identical to a standalone town — so
-		// no code filter can separate it from a real community. The asset build
-		// drops any sub-MAJOR place within 12 km of a MAJOR city instead, which
-		// separates cleanly: suburbs ≤10 km (West End 8, Burquitlam 5), real
-		// towns further out (Agassiz 15, Whitecourt 160).
-		//
-		// This test exists so the reasoning is not lost; the enforcement lives in
-		// the build recipe in placeIndex.ts.
+		// Feature codes can't separate suburbs from towns (GeoNames tags them all plain PPL) — the build's 12km-of-MAJOR geometric rule does; see placeIndex.ts.
 		expect(TIER_MAJOR).toBe(0);
 	});
 });

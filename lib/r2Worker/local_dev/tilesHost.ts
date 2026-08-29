@@ -1,92 +1,24 @@
 import { noteProbe } from "../../shared/workMeter.svelte";
 /**
  * WHICH offline-tiles Worker the app talks to. ONE definition, both routes.
- *
- * ⛔ WHY THIS FILE EXISTS AT ALL
- *
- * `wrangler deploy` publishes straight to tiles-prod.getcache.org — the hostname
- * every shipped phone talks to. A local override lets a Worker change be
- * tried on your own machine, against the real R2 bucket, before it ever
- * reaches that hostname.
- *
- * TWO TIERS, ON PURPOSE (Chris's call, 24 Aug 2026, after weighing a third
- * "dev" cloud tier and deciding against it): local_dev and production. Local
- * `wrangler dev --remote` already tests against real R2 data with no deploy
- * step, so a cloud staging Worker added upkeep (a second live Worker, a
- * third `wrangler` invocation, three-way state everywhere WorkerTarget is
- * used) without adding test fidelity a local run doesn't already have.
- *
- * The "don't push to prod by accident" risk this was meant to guard against
- * is handled at the actual dangerous step instead: `deployProduction.sh`
- * requires a typed confirmation before `wrangler deploy` runs bare. That
- * guards the ACTION; a third toggle position here only would have decorated
- * the read side. Do not re-add a cloud dev tier without asking first — if
- * the confirm guard isn't enough friction, that's the thing to strengthen.
- *
- * ⛔ WHY import.meta.env.DEV IS THE RIGHT SWITCH, AND WHAT IT IS NOT
- *
- * It is true ONLY for `npm run dev`. A Capacitor / TestFlight / App Store build
- * is a production Vite build, so a real phone ALWAYS gets the production
- * Worker. Do not swap this for a hostname check or a runtime flag: a runtime
- * toggle can be left switched on, and then a shipped build quietly depends on
- * a Worker nobody promised to keep alive.
- *
- * ⛔ ONE DEFINITION ON PURPOSE. Both /pack (roads) and /fires import from here.
- * When these were two string literals in two files they were free to drift, and
- * a half-migrated pair would have meant roads from one target and fires from
- * another — the kind of split-brain that reads as "it works sometimes".
- *
- * Deploy production:  ./deployProduction.sh   ← asks for confirmation first
+ * ⛔ Two tiers only (local_dev, production) — do not re-add a cloud dev tier without asking first; if deployProduction.sh's confirm guard isn't enough friction, strengthen that instead.
+ * ⛔ import.meta.env.DEV is the switch (true only for `npm run dev`) — do not swap for a hostname check or runtime flag; a runtime toggle can be left on and a shipped build silently depends on a Worker nobody promised to keep alive.
+ * ⛔ ONE DEFINITION — both /pack and /fires import from here; two literals could drift into split-brain (roads from one target, fires from another).
+ * Deploy production: ./deployProduction.sh — asks for confirmation first.
  */
 /**
- * ⛔ NO PRODUCTION HOST IS BAKED IN. THE APP THAT MOUNTS THIS CHILD SETS IT.
- *
- * This file used to open with:
- *
- *     export const PRODUCTION_HOST = "https://tiles-prod.getcache.org";
- *
- * That is a bill, not a default. This child is published as its own AGPL
- * package, so a stranger who installed it streamed tiles off the maintainer's
- * R2 bucket, on the maintainer's account, indistinguishable from real traffic — and
- * npm versions are immutable, so a wrong default cannot be recalled by a later
- * release. It was RAPPER.md step 3, "the one leak still parked".
- *
- * WHY MODULE STATE AND NOT A PARAMETER. packUrl() is called at
- * roads/packDownload.ts:686 and firesUrl() at fires/fireFetch.ts:85 — deep
- * inside the download path, never passed down. Threading a host through would
- * change signatures the whole way to the surface, for a value that is constant
- * for the lifetime of the app. One call at boot is the smaller change.
- *
- * WHY NULL AND NOT A FALLBACK. Any fallback that happens to be reachable is a
- * fallback that bills whoever owns it. Unconfigured means NO tiles — which is
- * the channel rule this child already lives by (deps.json `_channel_why`):
- * "Anything the channel does not provide comes back null and the child renders
- * nothing rather than crashing."
- *
- * LOCAL_DEV_HOST below stays hardcoded on purpose: 127.0.0.1 is nobody's
- * resource and costs nobody anything.
+ * ⛔ NO PRODUCTION HOST IS BAKED IN — the app that mounts this child sets it via configureTilesHost(); a hardcoded default would bill the maintainer's R2 account for every stranger who installs this package.
+ * LOCAL_DEV_HOST stays hardcoded on purpose — 127.0.0.1 is nobody's resource and costs nobody anything.
  */
 let configuredHost: string | null = null;
 let configuredDevHost: string | null = null;
 
-/** Call ONCE at app boot, before any tile fetch. Trailing slashes are trimmed
- *  so `https://x.dev/` and `https://x.dev` cannot produce `//pack`. */
+/** Call once at app boot, before any tile fetch — trailing slashes are trimmed so `https://x.dev/` and `https://x.dev` cannot produce `//pack`. */
 export function configureTilesHost(host: string): void {
 	configuredHost = host.trim().replace(/\/+$/, "") || null;
 }
 
-/**
- * THE CLOUD DEV WORKER — same injection rule as production, same reason.
- *
- * `r2_dev` is a SECOND deployed Worker, not a second bucket: it reads the very
- * same R2 data as `r2_prod`, so a difference between them is always CODE and
- * never data. That is the whole point of having it — you deploy a change there
- * and compare against production without touching what shipped phones read.
- *
- * Injected, never baked in, for exactly the reason the production host is (see
- * the block above): this child is published on its own, and a hardcoded origin
- * would bill whoever owns it. Unconfigured → null → the r2Dev row greys out.
- */
+// r2_dev is a second deployed Worker (not a second bucket) reading the same R2 data as r2_prod — a difference between them is always code, never data; unconfigured → null → the r2Dev row greys out.
 export function configureTilesDevHost(host: string): void {
 	configuredDevHost = host.trim().replace(/\/+$/, "") || null;
 }
@@ -97,85 +29,26 @@ export function isTilesHostConfigured(): boolean {
 }
 /**
  * THE LOCAL TIER — `tiles-local.getcache.org`, the third of dev/prod/local.
- *
- * ⛔ ONE CONVENTION, READ AT A GLANCE. The three tiers are named the same way
- * on purpose: tiles-prod / tiles-dev / tiles-local. A bare IP here broke that
- * — it was the one row you could not read as a tier, and the panel showed
- * "127.0.0.1:8787" beside two dotted hostnames.
- *
- * `tiles-local.getcache.org` is a DNS record pointing at 127.0.0.1. It costs
- * nothing (no Worker, no bill, no Cloudflare account for whoever uses it) and
- * resolves to the developer's own machine, exactly as the bare IP did. It is a
- * NAME for localhost, not a server.
- *
- * ✅ THE RECORD EXISTS as of 27 Aug 2026 — an A record on the getcache.org
- * zone, DNS-only (unproxied; Cloudflare cannot proxy to a loopback address).
- * It is the ONE tier added by hand: prod and dev have a Worker behind them and
- * Cloudflare creates their records itself during `wrangler deploy`, refusing to
- * adopt one you made first. See the long note in wrangler.toml.
- *
- * `npm run dev:local` in workers/offline-tiles serves it. That script seeds
- * wrangler's LOCAL R2 simulator with a public sample archive first, so it needs
- * no Cloudflare account and no key — which is what makes this the one tier an
- * outside contributor can reach. `wrangler dev --remote` still works if you DO
- * have credentials and want the real planet archive.
+ * ⛔ ONE CONVENTION — tiers are named tiles-prod / tiles-dev / tiles-local; a bare IP here breaks that (unreadable as a tier).
  */
-// MEASURED 27 Aug 2026: `dig +short A tiles-local.getcache.org` → 127.0.0.1.
-// The record is live, so the name is now safe to use — a name with no DNS is
-// strictly worse than an IP, which is what cost 27 Aug.
 const LOCAL_HOST_NAME = "tiles-local.getcache.org:8787";
 export const LOCAL_DEV_HOST = `http://${LOCAL_HOST_NAME}`;
 
-/**
- * THE THREE PLACES BLOBS CAN COME FROM. Chris's naming, 27 Aug 2026.
- *
- *   production / r2_prod — tiles-prod.getcache.org. Every shipped phone. Real users.
- *   r2Dev      / r2_dev  — tiles-dev.getcache.org. A deployed sandbox worker.
- *   localDev   / local_dev — 127.0.0.1:8787, `wrangler dev --remote`.
- *
- * The r2_prod / r2_dev / local_dev spellings are what the CONFIG panel shows
- * and what we say out loud; the camelCase ids are the same three things in
- * code. Don't invent a fourth name for any of them.
- *
- * WHY r2_dev CAME BACK (it was dropped 24 Aug, restored 27 Aug). The argument
- * for dropping it was that `wrangler dev --remote` tests the same thing with
- * less upkeep. True — but it only works while a terminal is open, and the day
- * that terminal was closed the switch went dead and read as a broken app.
- * MEASURED the same day: tiles-dev.getcache.org was STILL LIVE and still
- * serving the pre-fix v29 build, months after its config block was deleted —
- * so the upkeep was being paid without the benefit. Adopting it is cheaper
- * than pretending it is gone.
- */
+// three tiers: production/r2_prod (tiles-prod.getcache.org, real users), r2Dev/r2_dev (tiles-dev.getcache.org, sandbox), localDev/local_dev (127.0.0.1:8787, wrangler dev --remote) — don't invent a fourth name.
 export type WorkerTarget = "production" | "r2Dev" | "localDev";
 
-/** null when the tier's host was never configured — production and r2Dev are
- *  both injected by the app, so either can be null; localDev is always known. */
-/** EXPORTED so the CONFIG panel can NAME the host in its diagnostics. A log
- *  saying "production unreachable" sends you looking at Cloudflare; one saying
- *  "production (https://typo.example.org) unreachable" ends the search. */
+/** null when the tier's host was never configured — production and r2Dev are injected by the app so either can be null; localDev is always known. */
+/** Exported so the CONFIG panel can name the host in its diagnostics (e.g. "production (https://x) unreachable" vs just "production unreachable"). */
 export function hostFor(t: WorkerTarget): string | null {
 	if (t === "localDev") return LOCAL_DEV_HOST;
 	if (t === "r2Dev") return configuredDevHost;
 	return configuredHost;
 }
 
-/** What the phone talks to with no override: always production. Local dev
- *  must be picked explicitly via the CONFIG panel — see the DEV note above. */
+/** With no override the phone always talks to production; local dev must be picked explicitly via the CONFIG panel. */
 export const DEFAULT_TARGET: WorkerTarget = "production";
 
-/**
- * ⛔ THE OVERRIDE EXISTS ONLY IN A DEV BUILD.
- *
- * The warning above says a runtime toggle can be left switched on and then a
- * shipped build quietly depends on a Worker nobody promised to keep alive.
- * That risk is real, so the switch is not defended by remembering to turn it
- * off — `import.meta.env.DEV` is a compile-time constant, so in a Capacitor /
- * TestFlight / App Store build this whole branch is DEAD CODE that Vite drops.
- * A production build cannot read the override even if something writes it.
- *
- * Session-scoped (sessionStorage) so it also cannot outlive the tab it was set
- * in — closing the tab is enough to forget it.
- */
+// ⛔ the override exists only in a DEV build — import.meta.env.DEV is compile-time, so this whole branch is dead code in a Capacitor/TestFlight/App Store build; session-scoped so closing the tab forgets it too.
 const OVERRIDE_KEY = "rt_worker_target";
 
 export function getWorkerTarget(): WorkerTarget {
@@ -184,8 +57,7 @@ export function getWorkerTarget(): WorkerTarget {
 		const v = sessionStorage.getItem(OVERRIDE_KEY);
 		if (v === "production" || v === "r2Dev" || v === "localDev") return v;
 	} catch {
-		// codestyle-allow-swallow: sessionStorage is unavailable in SSR and in
-		// some private modes; the default target is always a correct answer.
+		// codestyle-allow-swallow: sessionStorage is unavailable in SSR and in some private modes; the default target is always a correct answer.
 	}
 	return DEFAULT_TARGET;
 }
@@ -195,39 +67,19 @@ export function setWorkerTarget(t: WorkerTarget): void {
 	try {
 		sessionStorage.setItem(OVERRIDE_KEY, t);
 	} catch {
-		// codestyle-allow-swallow: as above — a failed write just means the
-		// default stays in force, which is the safe outcome.
+		// codestyle-allow-swallow: as above — a failed write just means the default stays in force, which is the safe outcome.
 	}
 }
 
-/**
- * ⚠️ FUNCTIONS, NOT CONSTANTS — deliberately.
- *
- * These were `export const PACK_URL = ...`, evaluated once at module load. A
- * const cannot see a target chosen later, so a toggle would have appeared to do
- * nothing until a full reload — and "the switch does nothing" is how you end up
- * testing production while believing you are on staging. Call these per
- * request; it is one property read.
- */
+// ⚠️ functions, not constants — a const evaluated at module load can't see a target chosen later; the toggle would look inert until a full reload. Call per request.
 export function tilesHost(): string | null {
 	return hostFor(getWorkerTarget());
 }
 
-/** Roads. One request returns the whole pack of tiles for a pin.
- *  null when no host is configured — callers MUST check. Interpolating null
- *  would fetch the literal string "null/pack", which is a silent wrong URL. */
+/** Roads: one request returns the whole pack for a pin. null when unconfigured — callers MUST check; interpolating null would silently fetch the literal URL "null/pack". */
 export function packUrl(): string | null {
 	const h = tilesHost();
-	// SAY WHERE THE BLOB IS COMING FROM, OR WHY IT ISN'T COMING.
-	//
-	// A null host is the single most expensive silent failure in this
-	// subsystem: the download is skipped BEFORE the network, so DevTools >
-	// Network shows nothing at all, and "no request" is indistinguishable
-	// from "request failed" when you are staring at an empty map. The only
-	// prior signal was one console.info at boot that reads as a config note.
-	//
-	// Logged on STATE CHANGE, not per call — packUrl() is hit on every bake
-	// slice, and a line per slice is the noise that buries the signal.
+	// a null host is a silent failure — the fetch is skipped before the network, so DevTools > Network shows nothing; logged on state change only, not per call, since packUrl() runs every bake slice.
 	if (h !== lastAnnouncedPackHost) {
 		lastAnnouncedPackHost = h;
 		if (h === null) {
@@ -242,33 +94,19 @@ export function packUrl(): string | null {
 	return h === null ? null : `${h}/pack`;
 }
 
-/** Last host packUrl() spoke about, so it reports transitions and not every
- *  call. undefined = never announced; null = announced as unconfigured. */
+/** Last host packUrl() reported, so it logs transitions only; undefined = never announced, null = announced as unconfigured. */
 let lastAnnouncedPackHost: string | null | undefined;
 
-/** Wildfire hotspots. The Worker proxies NASA FIRMS so the API key stays
- *  server-side. null when unconfigured — see packUrl(). */
+/** Wildfire hotspots — the Worker proxies NASA FIRMS so the API key stays server-side; null when unconfigured, see packUrl(). */
 export function firesUrl(): string | null {
 	const h = tilesHost();
 	return h === null ? null : `${h}/fires`;
 }
 
-/** Back-compat for callers that only report which host is in play (the debug
- *  report). Reads the CURRENT target, unlike the old module-load constant. */
+/** Back-compat for callers that just report which host is in play; reads the CURRENT target, unlike the old module-load constant. */
 export const TILES_HOST_LABEL = "see tilesHost()";
 
-/**
- * IS THIS WORKER ACTUALLY THERE?
- *
- * A developer who picks "local Dev" without `wrangler dev` running gets no
- * error — just a map that never fills, which reads as "the offline map is
- * broken" rather than "nothing is listening on 8787". So the switch asks first
- * and greys out what cannot answer.
- *
- * Probe is an OPTIONS preflight, not /bench: the CORS handler answers it
- * without a single R2 read, so this costs nothing even against production.
- * (/bench does 500 range reads by default — never use it as a liveness check.)
- */
+// probe an OPTIONS preflight (CORS handler, zero R2 reads) so it costs nothing even against production — never use /bench as a liveness check (500 range reads by default).
 /** Last failure reason per host, so a repeated probe does not repeat the log. */
 const lastProbeFailure: Record<string, string> = {};
 
@@ -277,8 +115,7 @@ export async function probeTarget(
 	timeoutMs = 1500,
 ): Promise<boolean> {
 	const host = hostFor(t);
-	// Nothing configured is not "down", but it is equally un-probeable, and
-	// false is what the switch needs to grey the option out.
+	// nothing configured is not "down" but is equally un-probeable — false is what greys the option out.
 	if (host === null) return false;
 	const ctl = new AbortController();
 	const timer = setTimeout(() => ctl.abort(), timeoutMs);
@@ -288,27 +125,11 @@ export async function probeTarget(
 			signal: ctl.signal,
 			mode: "cors",
 		});
-		// ANY answer means something is listening. A 4xx still proves reachable,
-		// and treating "wrong status" as "absent" would grey out a Worker that
-		// is up but answering differently than expected.
+		// any answer (even 4xx) means something is listening — treating "wrong status" as "absent" would grey out a Worker that's up but answering differently.
 		noteProbe(t, true);
 		return true;
 	} catch (err) {
-		// SAY WHY, NOT JUST THAT.
-		//
-		// This catch used to swallow the reason, and "unreachable" covered two
-		// completely different problems with completely different fixes:
-		// the Worker is down (deploy it) vs the NAME does not resolve (a stale
-		// negative DNS entry on a resolver you may not even own).
-		//
-		// MEASURED 27 Aug 2026: tiles-prod.getcache.org was deployed, live, and
-		// serving 342 KB to curl, while this panel greyed it out and the app
-		// showed ERR_NAME_NOT_RESOLVED. The resolver was caching NXDOMAIN from
-		// before the record existed, with a 30-minute negative TTL. An hour went
-		// into "the Worker is broken" because the probe could not tell the two
-		// apart. The browser knew; we discarded it.
-		//
-		// Logged once per host, not per probe — probeAll runs on every mount.
+		// distinguish WHY, not just that it failed — "unreachable" can mean the Worker is down (deploy it) or the name doesn't resolve (stale negative DNS); logged once per host, not per probe.
 		const why = err instanceof Error ? err.message : String(err);
 		noteProbe(t, false);
 		if (lastProbeFailure[host] !== why) {

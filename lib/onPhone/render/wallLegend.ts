@@ -1,15 +1,4 @@
-/**
- * wallLegend.ts — the layer TOGGLES and the read-only colour KEY.
- *
- * Both describe the same stack from the user's side, so they live together and
- * next to `wallStyle.ts`, which is the thing they describe. The old page kept
- * all three apart and the legend went stale: it listed land-cover rows that
- * were dropped at decode time and therefore never on the map at all.
- *
- * ⚠️ THESE MUST MATCH `wallStyle.ts` / `wallLabels.ts`. The ids below are the
- * real layer ids; `offlineLaws.test.ts` checks that every id here exists in the
- * stack, so a rename fails the build instead of silently disabling a switch.
- */
+/** wallLegend.ts — layer TOGGLES and colour KEY. ⚠️ Ids here must match wallStyle.ts / wallLabels.ts — offlineLaws.test.ts checks every id exists in the stack, so a rename fails the build instead of silently disabling a switch. */
 
 import {
 	PATH_LINE,
@@ -23,25 +12,13 @@ export interface LayerToggle {
 	readonly key: string;
 	readonly label: string;
 	readonly ids: readonly string[];
-	/** HOW this layer is drawn, in one or two words, shown greyed beside the
-	 *  label. Not a description of what the layer IS — the label says that —
-	 *  but of the mechanism, because the mechanism is what you are debugging:
-	 *  "always on" cannot be the cause of a missing feature, "cluster" and
-	 *  "pyramid" can, and they fail differently. */
+	/** HOW this layer is drawn, in one or two words, shown greyed beside the label. */
 	readonly hint?: string;
-	/** WHICH DOWNLOAD this layer draws from — the circuit key in
-	 *  workMeter.svelte.ts whose circle the CONFIG row shows. Roads, labels,
-	 *  places and hospitals all ride in the one pack, so they share `pack`. */
+	/** WHICH DOWNLOAD this layer draws from — the circuit key in workMeter.svelte.ts whose circle the CONFIG row shows; roads, labels, places and hospitals all share `pack`. */
 	readonly feed?: "sat" | "pack" | "fires";
 }
 
-/**
- * The on/off switches, in the order they render.
- *
- * `sat` is special: its `v4-sat` id is a STAND-IN, not a real layer. Per-pin
- * photo layers (`v4-sat-<key>-l`) are mounted dynamically by the page's
- * reconcile, so the page sweeps every `v4-sat-*` layer when this key toggles.
- */
+/** The on/off switches, in render order. "sat"'s "v4-sat" id is a stand-in, not a real layer — per-pin photo layers (v4-sat-<key>-l) are mounted dynamically, so the page sweeps every v4-sat-* layer when this key toggles. */
 export const LAYER_TOGGLES: readonly LayerToggle[] = [
 	{ key: "sat", label: "Satellite", ids: ["v4-sat"], hint: "always on", feed: "sat" },
 	{
@@ -56,9 +33,6 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 		hint: "always on",
 		feed: "pack",
 	},
-	// LAND COVER TOGGLE REMOVED — the fills are gone (wallStyle.ts). A switch
-	// for layers that do not exist is a dead control, and offlineLaws.test.ts
-	// fails on ids that are not in the stack.
 	{
 		key: "labels",
 		label: "Labels",
@@ -66,43 +40,24 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 		hint: "pyramid",
 		feed: "pack",
 	},
-	// ⚠️ PLACES SITS ABOVE HOSPITALS, on Chris's instruction 28 Aug 2026 (it
-	// was below Fires until that morning). Order is by what he looks at first
-	// in the field, not by mechanism — the `hint` column still names the
-	// mechanism, so the pyramid/cluster comparison is a glance, not a position.
+	// ⚠️ Places sits above Hospitals — order is by field priority, not mechanism (see the hint column for that).
 	{ key: "camps", label: "Places", ids: ["v4-poi-camp"], hint: "cluster", feed: "pack" },
 	{ key: "hospitals", label: "Hospitals", ids: ["v4-poi-hospital"], hint: "pyramid", feed: "pack" },
-	// Fires: the SWITCH exists on Chris's 24 Aug 2026 instruction, but `ids` is
-	// empty because no v4-fire* layer exists in wallStyle.ts / wallLabels.ts
-	// yet — attaching one is separate work (see attachFireLayer() in the
-	// fire-layer index). Until then this row renders and is clickable but has
-	// nothing to show/hide, i.e. toggling it is a no-op on the map. Wire the
-	// real layer ids into `ids` here the day attachFireLayer() lands on this
-	// route — don't add a second fires entry. Ordinary toggle, no expiry (that
-	// rule is for the field-facing MapLegend.svelte only, not this debugger).
+	// Fires' ids is empty on purpose — no v4-fire* layer exists yet, so toggling this row is a no-op. Wire the real ids in here when attachFireLayer() lands — don't add a second fires entry.
 	{ key: "fires", label: "Fires", ids: [], hint: "cluster", feed: "fires" },
 ] as const;
 
-/** Toggle keys `resetLayersAllOn()` must NOT force back on. Empty here —
- *  every row in LAYER_TOGGLES defaults on. */
+/** Toggle keys `resetLayersAllOn()` must NOT force back on. Empty here — every row in LAYER_TOGGLES defaults on. */
 export const OPT_IN_LAYERS: readonly string[] = [];
 
-/** A row in the read-only colour key. The swatch is drawn to match how the
- *  feature renders: a solid line for roads, a dashed line for trails, a rail
- *  hatch for railways, a filled chip for water bodies. */
+/** A row in the read-only colour key — the swatch matches how the feature renders: solid line for roads, dashed for trails, rail hatch for railways, filled chip for water bodies. */
 export interface LegendEntry {
 	label: string;
 	color: string;
 	swatch: "line" | "dashed" | "fill" | "rail";
 }
 
-/**
- * ONLY what this map actually paints.
- *
- * Land cover is absent ON PURPOSE: those fills carry PLACEHOLDER hexes the user
- * has not signed off (Law 4), and a legend that names an unapproved colour
- * makes it look decided. Add the rows when the real hexes land.
- */
+/** Only what this map actually paints. Land cover is absent on purpose — those fills carry unapproved placeholder hexes (Law 4); add the rows only when the real hexes land. */
 export const LEGEND: readonly LegendEntry[] = [
 	{ label: "Roads", color: ROAD_LINE, swatch: "line" },
 	{ label: "Major roads / highways", color: ROAD_MAJOR_LINE, swatch: "line" },

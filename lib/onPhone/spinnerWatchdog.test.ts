@@ -1,35 +1,8 @@
-/**
- * ⛔ THE RUNAWAY SPINNER — AND WHY THE FIRST TWO FIXES DID NOT HOLD.
- *
- * The on-map "saving offline map" animation ran continuously for minutes. The
- * user asked for a hard stop FOUR times:
- *
- *   "there's got to be a limit on this thing... it keeps resetting to zero but
- *    it doesn't stop... it can't keep running and running for no reason...
- *    we really have to make a hard stop."
- *
- * The pattern he was reaching for has a name: a WATCHDOG (deadman switch).
- * Its defining property is what both failed attempts violated —
- *
- *     THE WATCHED PROCESS MUST NOT BE ABLE TO SKIP OR RESET THE WATCHDOG.
- *
- * Attempt 1 armed a `setTimeout` inside `if (!baking)`, so it only started on a
- * false→true edge. During a large re-bake `baking` was already true, so that
- * branch never ran and nothing was ever armed.
- *
- * Attempt 2 armed it correctly but cleared the latch on every "tiles landed"
- * event — handing the spinner a fresh 30 s licence hundreds of times.
- *
- * This models the real control flow so both holes stay closed.
- */
+/** ⛔ Watchdog invariant: the watched process must never be able to skip or reset the watchdog. */
 import { describe, expect, it } from "vitest";
 
 const MAX_VISIBLE_MS = 30_000;
 
-/**
- * The spinner's control flow, mirroring
- * /Users/chrisharris/DEV/fetch/ReTreever/src/routes/(getcache)/offline/+page.svelte
- */
 function makeSpinner() {
 	let visible = false;
 	let startedAt = 0;
@@ -37,17 +10,15 @@ function makeSpinner() {
 	let now = 0;
 
 	return {
-		/** The bake service reports progress. Fires once PER AREA. */
 		onDownloading(): void {
 			if (latched) return; // cannot reopen
 			if (!visible) {
 				visible = true;
-				// STICKY: the clock measures the PASS. Resetting it per area is
-				// hole #3 — elapsed never accumulated, so no ceiling was reachable.
+				// STICKY: clock measures the PASS — don't reset it per area, or the ceiling is never reached.
 				if (startedAt === 0) startedAt = now;
 			}
 		},
-		/** An area finished and tiles landed. MUST NOT clear the latch. */
+		/** MUST NOT clear the latch when tiles land. */
 		onTilesLanded(): void {
 			visible = false; // hidden, but the PASS clock keeps running
 		},
@@ -68,7 +39,6 @@ function makeSpinner() {
 describe("spinner watchdog — a hard stop the bake cannot skip", () => {
 	it("⛔ stops within the ceiling even while progress keeps arriving", () => {
 		const s = makeSpinner();
-		// A re-bake: an area event every second, forever.
 		for (let i = 0; i < 600; i++) {
 			s.onDownloading();
 			s.tick(1000);
@@ -78,7 +48,6 @@ describe("spinner watchdog — a hard stop the bake cannot skip", () => {
 
 	it("⛔ ATTEMPT 2's HOLE: completions must NOT re-arm it", () => {
 		const s = makeSpinner();
-		// Areas completing constantly — each one used to reset the latch.
 		for (let i = 0; i < 600; i++) {
 			s.onDownloading();
 			s.tick(1000);
@@ -89,7 +58,7 @@ describe("spinner watchdog — a hard stop the bake cannot skip", () => {
 
 	it("⛔ ATTEMPT 1's HOLE: already-visible when events arrive still stops", () => {
 		const s = makeSpinner();
-		s.onDownloading(); // visible BEFORE the flood — the edge never repeats
+		s.onDownloading();
 		for (let i = 0; i < 600; i++) {
 			s.onDownloading(); // `if (!visible)` never taken again
 			s.tick(1000);

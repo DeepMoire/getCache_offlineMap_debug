@@ -1,25 +1,11 @@
-// Pin markers — DOM mapboxgl.Marker per Point feature. Extracted from
-// MapDrawControls.svelte.
-//
-// Why DOM markers (not a GL symbol layer): tapping a pin always fires the
-// element's click handler (no hit-test / layer-order quirks), the markers live
-// outside the GL canvas so setStyle / basemap swaps / hideLabels never wipe
-// them, and at our scale (dozens–hundreds of pins) the perf cost is nothing.
-//
-// Factory (not a singleton) — each map instance owns its own marker set. Same
-// shape as createUserLocator(() => map).
 import * as Sentry from "@sentry/sveltekit";
 import type { Feature } from "geojson";
 import mapboxgl from "mapbox-gl";
 import type { Map as MapboxMap } from "mapbox-gl";
 import { getAreaLabelRects } from "$parent/siblings/getCache_OnlineMap/lib/areaLabels";
 import { isFiniteCoord } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
-// Pins render on BOTH maps: the online one is Mapbox, the offline one
-// (/mobile/offlinev4) is MapLibre. A Mapbox Marker attached to a MapLibre map
-// throws "e2._addMarker is not a function" and takes the whole map down.
-// 28 Aug 2026: everything below is now in-child (relative) or arrives through
-// ../shared/mapHostPorts — EmojiPin via ports.ui, the store as MapHostStore,
-// plotByGpsKey via the optional ports.q704 (absent on hosts without inspections).
+// Pins render on BOTH Mapbox (online) and MapLibre (offline /mobile/offlinev4) — a Mapbox Marker attached to a MapLibre map throws and takes the whole map down.
+// plotByGpsKey arrives via the optional ports.q704 — absent on hosts without inspections, so callers must optional-chain it.
 import { markerCtor } from "../shared/rendererOf";
 import {
     iconPath,
@@ -36,24 +22,13 @@ import { overlayVisibility } from "./overlayVisibility.svelte";
 
 type PinMarker = { key: string; pinTypeKey: string; marker: mapboxgl.Marker };
 
-// NATIVE Mapbox clustering — the stock pattern from the mapbox-gl docs, nothing
-// custom: every pin lives in ONE GeoJSON source with `cluster: true`; the GL
-// engine groups them and renders the bubbles itself (circle + count layers),
-// re-clustering continuously and perfectly camera-locked as you pan/zoom.
-// Individual (unclustered) pins still render as DOM markers (numbered plot
-// plaques, custom pin art, tap-to-popover need real elements); WHICH pins are
-// unclustered is read back from the same source via querySourceFeatures, so the
-// two views can never disagree.
+// NATIVE Mapbox clustering (stock pattern): one GeoJSON source w/ cluster:true; unclustered pins render as DOM markers, and WHICH ones are unclustered is read back via querySourceFeatures so the two views can never disagree.
 const CLUSTER_SOURCE = "rt-pin-clusters";
 const CLUSTER_LAYER = "rt-pin-clusters-circle";
 const CLUSTER_COUNT_LAYER = "rt-pin-clusters-count";
 const CLUSTER_ICON = "rt-cluster-bubble";
 
-// The cluster bubble sprite — a round dark disc in the plot-plaque colours
-// (#1a1a1a body, #f0c040 gold ring) wrapped in a DASHED gold halo, so a
-// cluster reads as "several plaques folded together" rather than a plain
-// gold coin. Drawn on a canvas because GL circle layers can't dash a stroke.
-// Sized a touch bigger than the ~17px plaques it replaces.
+// Canvas-drawn (not a GL circle layer) because GL circle layers can't dash a stroke.
 const CLUSTER_ICON_SIZE = 32; // CSS px (icon bounding box)
 function drawClusterIcon(): ImageData | null {
     const scale = 2; // crisp on retina; addImage gets pixelRatio: 2
@@ -66,22 +41,17 @@ function drawClusterIcon(): ImageData | null {
     ctx.scale(scale, scale);
     const c = CLUSTER_ICON_SIZE / 2;
     const gold = "#f0c040";
-    // Soft gold GLOW filling the band between the body's ring and the dashed
-    // halo — laid down first so the body disc paints over its centre.
     ctx.beginPath();
     ctx.arc(c, c, c - 1, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(240, 192, 64, 0.3)";
     ctx.fill();
-    // Dashed halo — the outermost ring, translucent gold.
     ctx.beginPath();
     ctx.arc(c, c, c - 1, 0, Math.PI * 2);
     ctx.setLineDash([2.75, 2.75]);
     ctx.lineWidth = 1.25;
     ctx.strokeStyle = "rgba(240, 192, 64, 0.8)";
     ctx.stroke();
-    // Body — dark disc with a gold ring. Nominally the plaques' 1.25px border,
-    // drawn a hair heavier (1.6) because the GL-scaled canvas softens it — at
-    // parity numbers it read thinner/dimmer than the plaques' crisp CSS border.
+    // Nominally the plaques' 1.25px border; bumped to 1.6 — the GL-scaled canvas softens it, so 1.25 read thinner/dimmer than the plaques' CSS border.
     ctx.setLineDash([]);
     ctx.beginPath();
     ctx.arc(c, c, c - 4.5, 0, Math.PI * 2);
@@ -93,22 +63,7 @@ function drawClusterIcon(): ImageData | null {
     return ctx.getImageData(0, 0, px, px);
 }
 
-// ── Pin captions (tier 2) ────────────────────────────────────────────────
-// PINS ONLY — a pin is a user-dropped icon marker (cache, gate, pump
-// house…). PLOTS ARE NOT PINS: a Quality-704 plot is a numbered plaque, its
-// number IS its identity, and it NEVER gets a name caption.
-//
-// Each visible pin can carry its NAME as a small neutral-white halo caption
-// below the marker — deliberately quieter than the coloured tier-1 area
-// names (areaLabels.ts) so the eye ranks area > pin instantly. Whether a
-// caption actually shows is fully automatic (no per-pin toggles):
-//   1. Zoom gate — below PIN_CAPTION_MINZOOM no captions at all.
-//   2. Area names (and track name labels) reserve their space first.
-//   3. Captions place in priority order — selected pin first, then the
-//      rest. A caption that overlaps ANY already-placed rect (area name,
-//      marker, prior caption) is DROPPED — never truncated, never nudged.
-//      Crowded ground = few names; open ground = many.
-// The selected pin's caption bypasses both the gate and collisions.
+// Captions are PINS ONLY — a plot's plaque number is its identity and it NEVER gets a name caption.
 const PIN_CAPTION_MINZOOM = 13;
 
 type Rect = { left: number; top: number; right: number; bottom: number };
@@ -124,9 +79,7 @@ function rectsOverlap(a: Rect, b: Rect): boolean {
 
 // Reported-offender memo so the audit logs each duplicate ONCE (sync() runs often).
 const auditedDupes = new Set<string>();
-// Scan the live plot pins for two sharing the same plot number on the same survey
-// (the "two 78s on one map" bug). Drop-time guards block NEW dupes; this surfaces
-// ones already on disk. Logs LOUD + Sentry, once per unique (survey, plotNo).
+// Scans live plot pins for two sharing the same plot number on the same survey (the "two 78s on one map" bug) — surfaces dupes already on disk; drop-time guards block new ones.
 function auditDuplicatePlotPins(
     pins: (Feature & { geometry: GeoJSON.Point })[],
 ): void {
@@ -160,14 +113,10 @@ function auditDuplicatePlotPins(
 export interface PinMarkersDeps {
     getMap: () => MapboxMap | null;
     mapStore: MapStore;
-    /** The host's door (28 Aug 2026): `ui.EmojiPin` is mounted for emoji pins;
-     *  `q704?.plotByGpsKey` resolves a plot pin's live row. q704 is optional —
-     *  a host without inspections gets the baked `plot:N` label and nothing
-     *  throws. */
+    /** `ui.EmojiPin` mounts emoji pins; `q704?.plotByGpsKey` resolves a plot's live row — q704 is optional, a host without inspections gets the baked `plot:N` label and nothing throws. */
     ports: Pick<MapHostPorts, "ui" | "q704">;
     getOffline: () => boolean;
-    /** mapFeatureKey of the selected feature (popover open), or null — drives
-     *  the selected plot marker's gold "Plot N" pill. */
+    /** mapFeatureKey of the selected feature (popover open), or null — drives the selected plot marker's gold "Plot N" pill. */
     getSelectedKey: () => string | null;
     popoverPos: { compute(feature: Feature): void };
     /** null clears the selection (tap the selected pin again to toggle off). */
@@ -176,39 +125,25 @@ export interface PinMarkersDeps {
 }
 
 export interface PinMarkers {
-    /** Reconcile markers against the store's current Point features. Run inside
-     *  a `$effect` — its synchronous reads of mapStore drive reactivity. */
+    /** Run inside an `$effect` — its synchronous reads of mapStore drive reactivity. */
     sync(): void;
-    /** Remove every marker. Run in the map-wiring effect cleanup. */
+    /** Run in the map-wiring effect cleanup. */
     clear(): void;
 }
 
 export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
     const { getMap, mapStore, ports } = deps;
-    // Tip on the spot, EVERY route — the pin art is a teardrop whose point IS
-    // the coordinate. (The offline map once centre-anchored its pins, which put
-    // the same GPS coord half a pin north of where the online map showed it.)
+    // Anchor 'bottom' EVERY route — the pin art is a teardrop whose point IS the coordinate. (Was center-anchored on offline once, which put the GPS coord half a pin north of where online showed it.)
     const PIN_ANCHOR = "bottom" as const;
     let pinMarkers: PinMarker[] = [];
 
-    // The pins most recently pushed into the clustered source — reconcileSingles
-    // builds DOM markers from these once the source reports which are unclustered.
+    // Pins most recently pushed into the clustered source — reconcileSingles builds DOM markers from these once the source reports which are unclustered.
     let lastPins: (Feature & { geometry: GeoJSON.Point })[] = [];
-    // Pins that NEVER cluster: feature pins (few and important) + the selected
-    // pin (pulled out of its cluster so it always stands alone). Rebuilt every
-    // sync alongside lastPins.
+    // Pins that NEVER cluster: feature pins + the selected pin. Rebuilt every sync alongside lastPins.
     let forcedSingleKeys = new Set<string>();
     let handlersInstalled = false;
 
-    // ── COINCIDENT-PIN STACKS (spiderfy) ────────────────────────────────────
-    // Above clusterMaxZoom the bubbles unfold into single markers — but plots
-    // thrown on the SAME spot (repeat surveys, imports) land as perfectly
-    // stacked plaques where only the top one is tappable: invisible
-    // duplicates. So coincident plot markers collapse into ONE representative
-    // plaque wearing a count badge; tapping it fans the members out on a
-    // circle (screen-space Marker offsets — the coords never change), each
-    // with a gold leader leg pointing back at the true spot. Tap a fanned
-    // plaque → normal selection; tap the map → the fan folds back up.
+    // Coincident same-spot plot markers (repeat surveys/imports) would stack invisibly (only the top tappable) — collapsed into one badge-wearing representative that fans out on tap (screen-space offsets; coords never change).
     const STACK_DECIMALS = 6; // ~0.11 m — same-spot pins, never neighbours
     let expandedStack: string | null = null; // coordKey the user fanned open
     let stackByFeature = new Map<string, string>(); // featureKey → coordKey
@@ -230,9 +165,6 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         badge.textContent = String(n);
     }
 
-    // The leader leg — a thin gold line from the fanned plaque's tip back to
-    // the true coordinate. Anchored at the plaque's bottom-center (= the
-    // offset anchor point); rotate so it points at the un-offset spot.
     function setStackLeg(el: HTMLElement, dx: number, dy: number | null): void {
         let leg = el.querySelector<HTMLElement>(".map-pin-stack-leg");
         if (dy == null) {
@@ -245,8 +177,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             el.appendChild(leg);
         }
         leg.style.height = `${Math.round(Math.hypot(dx, dy))}px`;
-        // A top-anchored div extends DOWN (0,1); CSS rotate is clockwise in
-        // screen coords, so pointing it along (−dx,−dy) needs θ = atan2(dx,−dy).
+        // Top-anchored div extends DOWN (0,1); CSS rotate is clockwise in screen coords, so pointing at (−dx,−dy) needs θ = atan2(dx,−dy).
         leg.style.transform = `rotate(${Math.atan2(dx, -dy)}rad)`;
     }
 
@@ -269,10 +200,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         setStackLeg(el, 0, null);
     }
 
-    // Group the live plot markers by exact coordinate and lay each group out —
-    // collapsed (one badge-wearing representative, the rest hidden) or fanned
-    // (everyone offset on a circle with a leader leg). Runs every reconcile so
-    // zoom/cluster churn can never strand a stale fan.
+    // Groups plot markers by exact coordinate → collapsed (badge rep) or fanned (offset circle + leg); runs every reconcile so zoom/cluster churn never leaves a stale fan.
     function layoutStacks(selKey: string | null): void {
         const groups = new Map<string, PinMarker[]>();
         for (const pm of pinMarkers) {
@@ -297,8 +225,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             // Stable fan order — keyed sort so angles never shuffle between frames.
             members.sort((a, b) => (a.key < b.key ? -1 : 1));
             for (const pm of members) stackByFeature.set(pm.key, ck);
-            // The selected pin forces its stack open — a selection must never
-            // sit hidden under a representative.
+            // The selected pin forces its stack open — a selection must never sit hidden under a representative.
             const expanded =
                 expandedStack === ck || members.some((m) => m.key === selKey);
             if (expanded) openStacks.add(ck);
@@ -331,10 +258,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         }
     }
 
-    // Move the bubble layers to the very top of the style's layer stack (count
-    // above circle), skipping when they're already there — the skip is what
-    // makes this safe to call from styledata (moveLayer itself fires styledata;
-    // without the guard that's an infinite loop).
+    // Skip-if-already-on-top guard is required — moveLayer fires styledata itself, so without it this becomes an infinite loop when called from styledata.
     function hoistClusterLayers(map: MapboxMap): void {
         if (!map.getLayer(CLUSTER_LAYER) || !map.getLayer(CLUSTER_COUNT_LAYER)) return;
         const ids = map.getStyle()?.layers?.map((l) => l.id) ?? [];
@@ -348,9 +272,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         map.moveLayer(CLUSTER_COUNT_LAYER);
     }
 
-    // Install the clustered source + the two stock layers (bubble circle +
-    // count). Idempotent — runs every sync, because setStyle (basemap swap)
-    // wipes all custom sources/layers and the next sync must re-create them.
+    // Idempotent — setStyle (basemap swap) wipes all custom sources/layers, so this must re-run and re-create them every sync.
     function ensureClusterLayers(map: MapboxMap): void {
         if (!map.getSource(CLUSTER_SOURCE)) {
             map.addSource(CLUSTER_SOURCE, {
@@ -358,15 +280,11 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
                 data: { type: "FeatureCollection", features: [] },
                 cluster: true,
                 clusterMaxZoom: 14,
-                // Pins fold into a bubble when ~25px apart CENTER-TO-CENTER —
-                // 20 let neighbouring plaques visibly overlap before merging;
-                // the stock 50 merged pins that were still clearly separate on
-                // screen, killing the per-pin status dots way too early.
+                // clusterRadius 25 (~25px): the stock 50 merged clearly-separate pins too early (killed status dots); 20 let plaques visibly overlap before merging.
                 clusterRadius: 25,
             });
         }
-        // setStyle (basemap swap) wipes custom images along with the layers —
-        // the hasImage guard makes this as idempotent as the layer adds below.
+        // setStyle wipes custom images too — hasImage guard keeps this idempotent like the layer adds below.
         if (!map.hasImage(CLUSTER_ICON)) {
             const img = drawClusterIcon();
             if (img) map.addImage(CLUSTER_ICON, img, { pixelRatio: 2 });
@@ -378,11 +296,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
                 source: CLUSTER_SOURCE,
                 filter: ["has", "point_count"],
                 layout: {
-                    // The canvas-drawn bubble (dark disc + dashed gold halo).
-                    // ONE fixed small size — a cluster is a marker, not a data
-                    // readout: the count label already says how many, so the
-                    // bubble must NOT grow with it (graduated sizes ballooned
-                    // busy blocks into a wall of fat coins).
+                    // Bubble is ONE fixed size, must NOT grow with count — graduated sizes previously ballooned busy blocks into a wall of fat coins.
                     "icon-image": CLUSTER_ICON,
                     "icon-allow-overlap": true,
                 },
@@ -396,20 +310,13 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
                 filter: ["has", "point_count"],
                 layout: {
                     "text-field": ["get", "point_count_abbreviated"],
-                    // Font must exist in the CURRENT style's glyph endpoint. The
-                    // offline base bundles ONLY "Noto Sans Regular" (the full
-                    // 256-range set in static/mobileAssets/worldBase/glyphs) — a DIN Pro
-                    // request 404s there and the count silently never renders
-                    // (blank gold coins). Online keeps the Mapbox-hosted stack.
+                    // Font must exist in the CURRENT style's glyph endpoint — offline only bundles "Noto Sans Regular"; requesting DIN Pro there 404s and the count silently never renders (blank gold coins).
                     "text-font": deps.getOffline()
                         ? ["Noto Sans Regular"]
                         : ["DIN Pro Bold", "Arial Unicode MS Bold"],
                     "text-size": 12,
                     "text-allow-overlap": true,
                 },
-                // Gold-on-dark, matching the plot plaques' number treatment:
-                // same gold, bold weight, and a dark halo standing in for the
-                // plaques' 1px black text-shadow.
                 paint: {
                     "text-color": "#f0c040",
                     "text-halo-color": "rgba(0, 0, 0, 0.9)",
@@ -420,15 +327,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         hoistClusterLayers(map);
         if (!handlersInstalled) {
             handlersInstalled = true;
-            // KEEP ON TOP, event-driven — other installers (the grid, draw
-            // layers, overlays) add their layers whenever THEY like (grid
-            // toggle, zoom threshold, tile load), not just at sync time, and a
-            // layer added after our last hoist paints over the bubbles (a grid
-            // dot sitting on top of a cluster). styledata fires on every layer
-            // add/remove, so re-hoisting there keeps the bubbles on top no
-            // matter who installs what, in any order. The already-on-top guard
-            // in hoistClusterLayers stops the moveLayer→styledata feedback
-            // loop. (Single pins are DOM markers — always above the GL canvas.)
+            // Re-hoist on every styledata (not just once) — other installers (grid, draw layers, overlays) add layers whenever THEY like, and a layer added after our last hoist paints over the bubbles.
             map.on("styledata", () => hoistClusterLayers(map));
             // Tap a bubble → ease to the zoom where it splits (stock behaviour).
             map.on("click", CLUSTER_LAYER, (e) => {
@@ -456,28 +355,14 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             map.on("mouseleave", CLUSTER_LAYER, () => {
                 map.getCanvas().style.cursor = "";
             });
-            // Tap the open map → fold any fanned stack back up. Marker taps
-            // stopPropagation, so they never reach this.
+            // Tap the open map → fold any fanned stack back up; marker taps stopPropagation so they never reach this handler.
             map.on("click", () => {
                 if (expandedStack) {
                     expandedStack = null;
                     reconcileSingles();
                 }
             });
-            // Clustering is computed in worker tiles AFTER setData — re-derive
-            // which pins are unclustered whenever the source settles (initial
-            // load, every setData, and every re-tile as the camera moves).
-            //
-            // COALESCED TO ONE RUN PER FRAME. `sourcedata` fires PER TILE, so a
-            // pan across a populated area fires it dozens of times in a few
-            // hundred ms — and every hit ran `querySourceFeatures` (which
-            // materialises the source's features) plus built a fresh Set, a
-            // filtered array and a new Map. All of that to compute a value that
-            // only needs to be right ONCE, at the end of the burst.
-            //
-            // rAF is the correct clock here: the output is what the user sees,
-            // so recomputing more than once per painted frame cannot change
-            // anything on screen. The extra runs were pure garbage.
+            // Coalesced to ONE run per animation frame — sourcedata fires PER TILE (dozens of times during a pan), and querySourceFeatures is expensive; the unclustered set only needs to be right once, at the end of the burst.
             let reconcileRaf = 0;
             const scheduleReconcile = () => {
                 if (reconcileRaf) return; // already queued for this frame
@@ -500,26 +385,13 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         btn.className = "map-pin-marker";
         btn.dataset.featureKey = featureKey;
         btn.setAttribute("aria-label", "Pin");
-        // Quality-plot marker: `plot:N` → a small black/gold numbered plaque (the
-        // classic forester's plot marker), built here rather than from the icon
-        // registry because the number is dynamic.
+        // Quality-plot marker (`plot:N`) is built here, not from the icon registry — the number is dynamic.
         if (pinTypeKey.startsWith("plot:")) {
-            // The baked `plot:N` is just a placeholder for first paint — the sync()
-            // loop overwrites `.map-pin-plot__num` with the DERIVED per-map number
-            // (plot.displayNo) on the same frame, so what the user sees is the
-            // dynamic rank, never this stale value.
+            // The baked `plot:N` is only a first-paint placeholder — sync() overwrites `.map-pin-plot__num` with the derived per-map rank (plot.displayNo) same frame; never treat this as the real number.
             const n = pinTypeKey.slice(5);
             btn.classList.add("map-pin-plot");
-            // Number + the StatusDots cluster (the cute corner bulbs). Built here as
-            // an innerHTML string (one DOM node per marker, no per-pin Svelte mount),
-            // but it emits the SAME class contract StatusDots.svelte owns, and that
-            // component's :global CSS (imported by MapDrawControls) styles it. The
-            // sync() loop toggles --under/--over/--fault on the BUTTON; CSS shows the
-            // matching bulb. Symbol-only on the map (the plot row's PILLS carry −2/+2).
-            // The number + dot cluster live inside `.map-pin-plot__inner` — a
-            // position:relative wrapper that is the dots' anchor. The dots can NOT
-            // anchor to the button root: that root is the Mapbox marker, which must
-            // keep position:absolute or it drifts across the map on zoom.
+            // Built as an innerHTML string, but MUST emit the same class contract StatusDots.svelte owns (its :global CSS, imported by MapDrawControls, styles this) — sync() toggles --under/--over/--fault on the button to match.
+            // Dots anchor to `.map-pin-plot__inner`, NOT the button root — the root is the Mapbox marker and must keep position:absolute or it drifts across the map on zoom.
             btn.innerHTML =
                 `<span class="map-pin-plot__inner">` +
                 `<span class="map-pin-plot__num">${n}</span>` +
@@ -531,11 +403,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
                 `</span>`;
             return btn;
         }
-        // Emoji pin (`emoji:<char>`) — mounts THE EmojiPin component, the
-        // same one the PIN LIBRARY swatch and the detail header render. This
-        // surface builds plain DOM (one node per marker, no per-pin Svelte
-        // overhead elsewhere), but the pin itself is not re-implemented here:
-        // there is exactly one definition of what an emoji pin looks like.
+        // Mounts THE EmojiPin component (same one PIN LIBRARY + detail header use) — never re-implement the emoji pin look here.
         const emojiChar = parseEmojiPin(pinTypeKey);
         if (emojiChar) {
             btn.classList.add("map-pin-emoji");
@@ -545,9 +413,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             });
             return btn;
         }
-        // Every other icon path comes from the registry in icons.ts — never built
-        // here. `tiles` is the reserved system marker (a meta icon, not a
-        // user-pickable pin); any unrecognised key falls back to `default`.
+        // Every other icon path comes from the registry in icons.ts, never built here; `tiles` is the reserved system marker, unrecognised keys fall back to `default`.
         const src =
             pinTypeKey === "tiles"
                 ? iconPath("tiles")
@@ -559,18 +425,14 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
     function attachMarkerClick(el: HTMLElement, featureKey: string) {
         el.addEventListener("click", (e) => {
             e.stopPropagation();
-            // COLLAPSED STACK representative → the first tap fans the stack
-            // out (spiderfy); nothing selects yet. Once fanned, taps fall
-            // through to normal per-plaque selection below.
+            // Tapping a collapsed stack representative fans it out (spiderfy) first — nothing selects yet; once fanned, taps fall through to normal selection.
             const stackKey = stackByFeature.get(featureKey);
             if (stackKey && !openStacks.has(stackKey)) {
                 expandedStack = stackKey;
                 reconcileSingles();
                 return;
             }
-            // Tap the selected pin again → clear the selection (same as
-            // tapping empty map): popover closes, dim lifts, caption obeys
-            // the normal priority rules again.
+            // Tap the selected pin again → clear the selection (same as tapping empty map).
             if (deps.getSelectedKey() === featureKey) {
                 deps.setSelectedIndex(null);
                 return;
@@ -583,14 +445,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             const feat = mapStore.features[idx];
             if (feat) {
                 deps.popoverPos.compute(feat);
-                // CONVENTION — NEVER "slam" the user into the ground on a pin tap.
-                // A tap only ensures the DEFAULT context zoom (PIN_TAP_ZOOM, 10z):
-                // farther out → eases IN to 10 so the pin lands up top with some
-                // surroundings; already closer → zoom LEFT ALONE. It must never
-                // force a deeper zoom than the user chose — being yanked to street
-                // level is disorienting when you don't yet know where you are.
-                // (Was max(cur,16) live / 12 offline, which slammed every tap to
-                // z16+.) Same cap on the live + offline maps.
+                // CONVENTION: NEVER force a deeper zoom than the user chose on pin tap — only ease IN to PIN_TAP_ZOOM (10z) if farther out, leave alone if already closer. (Was max(cur,16) live/12 offline, which slammed every tap to street level.)
                 const PIN_TAP_ZOOM = 10;
                 const map = getMap();
                 const cur = map ? map.getZoom() : NaN;
@@ -614,18 +469,10 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         const map = getMap();
         if (!map) return;
         if (!mapStore.ready) return;
-        // NaN-CAMERA GUARD. A degenerate camera transform (zoom === NaN) makes
-        // map.getBounds() THROW (Invalid LngLat (NaN,NaN)) → red-screen crash.
-        // It can happen for one frame during a jump/ease (see mapInit's
-        // renderGuard, which restores the camera next frame). Skip this sync
-        // when the camera is non-finite; the next sync runs once it's restored.
+        // NaN-CAMERA GUARD — a degenerate camera (zoom===NaN) makes map.getBounds() THROW → red-screen crash; skip sync until it's restored (see mapInit's renderGuard).
         if (!Number.isFinite(map.getZoom())) return;
         const feats = mapStore.features;
-        // Honour the per-type visibility toggles (Legend / Basemap popover). A
-        // `plot:` marker is a Quality-704 plot → `plots`; the reserved `tiles`
-        // system marker is ALWAYS shown; every other Point pin → `pins`. Hidden
-        // types are filtered out here so their DOM markers are removed by the
-        // reconcile below (reads overlayVisibility reactively → re-syncs on toggle).
+        // Honours per-type visibility toggles: `plot:` → `plots`, `tiles` → ALWAYS shown, everything else → `pins`; filtered here so the reconcile below removes their DOM markers.
         const pins = feats.filter(
             (f): f is Feature & { geometry: GeoJSON.Point } => {
                 if (f.geometry?.type !== "Point") return false;
@@ -636,18 +483,10 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             },
         );
 
-        // DUPLICATE-PIN AUDIT — scoped to ONE survey. The displayed number is now a
-        // DERIVED per-map rank, so two DIFFERENT surveys sharing a baked `plot:N` is
-        // EXPECTED (they merge into one 1..N) — NOT flagged. But two pins with the
-        // same baked number inside the SAME survey is still a real bug (a survey
-        // can't own its own plot 5 twice). The audit keys by survey|plot:N, so it
-        // only fires on same-survey collisions.
+        // Duplicate audit is scoped to ONE survey — different surveys sharing a baked `plot:N` is EXPECTED (merges into 1..N, not flagged); same survey sharing one is a real bug.
         auditDuplicatePlotPins(pins);
 
-        // NATIVE CLUSTERING — numbered plots ONLY. Feature pins (cache, gate,
-        // pump house…) are few and important, so they never fold into a count
-        // bubble; they render as always-on DOM markers. The selected pin is
-        // pulled out of the cluster feed too, so it always stands alone.
+        // Only numbered plots go through native clustering — feature pins never bubble (always-on DOM markers), and the selected pin is pulled out too so it always stands alone.
         const selKey = deps.getSelectedKey();
         const clusterFeed: typeof pins = [];
         forcedSingleKeys = new Set();
@@ -666,22 +505,16 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         reconcileSingles();
     }
 
-    // Reconcile the DOM pin markers to exactly the pins the clustered source
-    // reports as UNCLUSTERED right now. Runs after every sync() and every time
-    // the source finishes re-tiling (sourcedata) — clustering happens in worker
-    // tiles, so the answer isn't available synchronously after setData.
+    // Reconciles DOM markers to exactly what the clustered source reports as unclustered; runs after sync() and every re-tile — clustering happens in worker tiles, so the answer isn't available synchronously after setData.
     function reconcileSingles() {
         const map = getMap();
         if (!map || !mapStore.ready) return;
         if (!Number.isFinite(map.getZoom())) return;
         if (!map.getSource(CLUSTER_SOURCE)) return;
-        // Not yet re-clustered → keep the current markers; the sourcedata
-        // listener re-runs this the moment the source settles.
+        // Not yet re-clustered → keep the current markers; the sourcedata listener re-runs this the moment the source settles.
         if (!map.isSourceLoaded(CLUSTER_SOURCE)) return;
         const pins = lastPins;
-        // Unclustered = source features WITHOUT point_count. querySourceFeatures
-        // only returns features in loaded viewport tiles, so off-screen pins
-        // simply keep no marker (same effect as the old viewport culling).
+        // Unclustered = features without point_count; querySourceFeatures only sees loaded viewport tiles, so off-screen pins simply keep no marker.
         const singleKeys = new Set<string>();
         for (const f of map.querySourceFeatures(CLUSTER_SOURCE, {
             filter: ["!", ["has", "point_count"]],
@@ -689,11 +522,9 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             const k = f.properties?.mapFeatureKey as string | undefined;
             if (k) singleKeys.add(k);
         }
-        // Feature pins + the selected pin never cluster — they're not in the
-        // clustered source at all, so add them back as always-wanted singles.
+        // Feature pins + the selected pin never cluster — they're not in the clustered source at all, so add them back as always-wanted singles.
         for (const k of forcedSingleKeys) singleKeys.add(k);
 
-        // Only the un-clustered SINGLES render as real pins.
         const wantKeys = singleKeys;
 
         // Drop markers whose pin no longer exists OR is now inside a cluster.
@@ -713,10 +544,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             if (!fkey) continue;
             const pinTypeKey = (pin.properties?.pinTypeKey as string) ?? "pin";
             const coords = pin.geometry.coordinates as [number, number];
-            // Mandatory NaN guard before every Mapbox coord write — see memory
-            // `mapbox-camera-via-safeMap`. If we let NaN reach Marker.setLngLat
-            // or .addTo, Mapbox's projection matrix gets nulled and EVERY
-            // subsequent render throws (breaking unrelated features too).
+            // Mandatory NaN guard before any Mapbox coord write (see memory `mapbox-camera-via-safeMap`) — letting NaN reach setLngLat/.addTo nulls Mapbox's projection matrix and EVERY subsequent render throws, breaking unrelated features too.
             if (!isFiniteCoord(coords as unknown)) {
                 console.warn(
                     `[markers] skipping pin ${fkey} — non-finite coords:`,
@@ -727,14 +555,12 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             const existing = have.get(fkey);
 
             if (existing) {
-                // Position can shift if user moves a feature; type can change
-                // via the popover. Update both in place.
+                // Position can shift if user moves a feature; type can change via the popover. Update both in place.
                 existing.marker.setLngLat(coords);
                 if (existing.pinTypeKey !== pinTypeKey) {
                     const newEl = buildPinElement(fkey, pinTypeKey);
                     attachMarkerClick(newEl, fkey);
-                    // mapboxgl.Marker doesn't expose a setElement, so swap by
-                    // replacing the marker entirely.
+                    // mapboxgl.Marker doesn't expose a setElement, so swap by replacing the marker entirely.
                     existing.marker.remove();
                     const m = new (markerCtor(map))({
                         element: newEl,
@@ -759,38 +585,24 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             pinMarkers.push({ key: fkey, pinTypeKey, marker });
         }
 
-        // Selected plot marker → gold "Plot N" pill (you can see which pin the
-        // open popover belongs to). Only the selected marker's label/class
-        // changes; unselected plot markers are reset to their plain number, so
-        // this never de-styles the others.
+        // Selected plot marker → gold "Plot N" pill; only the selected marker's label/class changes, so this never de-styles the others.
         const selKey = deps.getSelectedKey();
         for (const pm of pinMarkers) {
             if (!pm.pinTypeKey.startsWith("plot:")) continue;
             const el = pm.marker.getElement();
             const isSel = pm.key === selKey;
             el.classList.toggle("map-pin-plot--selected", isSel);
-            // pm.key is the pin's mapFeatureKey = the plot row's gpsFeatureKey, so
-            // plotByGpsKey resolves the live row — re-checked EVERY sync(), so an
-            // edit (or a merge/delete that re-flows numbers) shows live.
-            // ports.q704 is absent on hosts without inspections → null → baked label.
+            // pm.key = plot row's gpsFeatureKey → plotByGpsKey resolves the live row, re-checked every sync() so edits/re-flows show live; ports.q704 absent on hosts without inspections → null → baked label.
             const plot = (ports.q704?.plotByGpsKey(pm.key) ?? null) as {
                 displayNo?: number | string | null;
             } | null;
-            // THE DYNAMIC NUMBER. The pin label is the plot's per-MAP rank
-            // (plot.displayNo), NOT the frozen `plot:N` baked into the feature at
-            // drop time. So as surveys merge onto one map the labels re-flow into a
-            // single 1..N, and deleting a plot shifts the rest up — all live here.
-            // Fall back to the baked `plot:N` only if the row can't be resolved.
+            // Label is the plot's per-MAP rank (plot.displayNo), NOT the frozen `plot:N` baked at drop time — re-flows as surveys merge/delete; falls back to baked `plot:N` only if unresolved.
             const numEl = el.querySelector(".map-pin-plot__num");
             if (numEl) {
                 const n = String(plot?.displayNo || pm.pinTypeKey.slice(5));
                 numEl.textContent = isSel ? `Plot ${n}` : n;
             }
-            // STATUS BADGES — corner badges flag a plot's status at a glance,
-            // matching the popover's own maths (PlotMapPopover): a rose "−" when
-            // planting came up SHORT of the spot count, a teal "+" when there are
-            // EXCESS trees over M, a red dot for a quality FAULT. All INDEPENDENT — a
-            // plot can show any combination.
+            // Status badges match PlotMapPopover's maths: rose '−' = under spot count, teal '+' = excess trees, red dot = quality fault — all independent, any combination.
             const hasFault = (plot?.faults.length ?? 0) > 0;
             const under = Math.max(0, (plot?.spots ?? 0) - (plot?.planted ?? 0));
             const over = plot?.excess ?? 0;
@@ -799,25 +611,19 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             el.classList.toggle("map-pin-plot--fault", hasFault);
         }
 
-        // SELECTION OVERRIDE — any selected pin (plot or feature pin) lifts
-        // above the dim veil (z via .map-pin-marker--selected; the veil
-        // itself is owned by MapDrawControls). Toggled every reconcile so
-        // deselecting (tap map / tap pin again) restores everything.
+        // SELECTION OVERRIDE — any selected pin lifts above the dim veil (owned by MapDrawControls). Toggled every reconcile so deselecting restores everything.
         for (const pm of pinMarkers) {
             pm.marker
                 .getElement()
                 .classList.toggle("map-pin-marker--selected", pm.key === selKey);
         }
 
-        // Coincident plot plaques fold into count-badged stacks / fan out.
         layoutStacks(selKey);
 
         placeCaptions(map, selKey);
     }
 
-    // TIER-2 CAPTION PLACEMENT — see the constants block up top for the rules.
-    // Runs after every marker reconcile (sync, sourcedata settle, moveend), so
-    // the winners re-compete whenever the camera or the data settles.
+    // Runs after every marker reconcile (sync, sourcedata settle, moveend) — caption winners re-compete whenever camera or data settles.
     function placeCaptions(map: MapboxMap, selKey: string | null): void {
         const zoom = map.getZoom();
         const zoomOk = Number.isFinite(zoom) && zoom >= PIN_CAPTION_MINZOOM;
@@ -827,10 +633,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             if (k) nameByKey.set(k, String(p.properties?.name ?? "").trim());
         }
 
-        // WRITE pass — ensure each marker's caption element exists with the
-        // current name, hidden-but-laid-out so it can be measured. Pins with
-        // no name (and the reserved `tiles` marker) never caption. PLOTS
-        // never caption at all — the plaque number is a plot's identity.
+        // WRITE pass: builds each caption hidden-but-laid-out for measurement; unnamed pins, `tiles`, and PLOTS (identity is the plaque number) never get one.
         type Candidate = { pm: PinMarker; cap: HTMLElement; priority: number };
         const candidates: Candidate[] = [];
         for (const pm of pinMarkers) {
@@ -852,8 +655,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
             }
             if (cap.textContent !== name) cap.textContent = name;
             const isSel = pm.key === selKey;
-            // Zoom gate: markers only, no captions — except the selected pin,
-            // whose caption shows regardless of zoom or collisions.
+            // Zoom gate: no captions below it — except the selected pin, which shows regardless of zoom or collisions.
             if (!zoomOk && !isSel) {
                 cap.style.display = "none";
                 continue;
@@ -864,8 +666,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         }
         if (candidates.length === 0) return;
 
-        // READ pass — one reflow: caption rects, marker rects, and the tier-1
-        // area-name rects (reserved first; a caption never crowds an area name).
+        // READ pass — one reflow: caption rects, marker rects, and the tier-1 area-name rects (reserved first; a caption never crowds an area name).
         const capRects = candidates.map(
             (c) => c.cap.getBoundingClientRect() as Rect,
         );
@@ -875,9 +676,7 @@ export function createPinMarkers(deps: PinMarkersDeps): PinMarkers {
         }));
         const placed: Rect[] = getAreaLabelRects(map);
 
-        // PLACE pass — selected pin first, the rest in stable order. Overlap
-        // anything already placed or any OTHER marker → drop (no truncation,
-        // no nudging).
+        // PLACE pass — selected pin first, the rest in stable order. Overlap anything already placed or any OTHER marker → drop (no truncation, no nudging).
         const order = candidates
             .map((c, i) => ({ c, rect: capRects[i], i }))
             .sort((a, b) => a.c.priority - b.c.priority || a.i - b.i);

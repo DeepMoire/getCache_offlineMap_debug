@@ -1,21 +1,4 @@
-/**
- * MVT PROTOBUF PRIMITIVES — varints, field skipping, and the two tiny feature
- * readers built on them. Pure byte-level helpers, no geometry policy.
- *
- * ⛔ THE CLIP IS GONE. This file used to be `clip.ts` and held `clipTile`,
- * `clipLayer`, `clipGeometry`, `insideDisc` and `featureBBox` — the machinery
- * for cutting every tile to a 30 km circle around a pin.
- *
- * That existed because the unit of storage was a DISC centred on an arbitrary
- * point, so selection ("does this square touch the circle") had to be followed
- * by a cut. Two pins meant two differently-centred circles, so a road crossing
- * both was cut at two different arcs and the halves did not meet — the seam the
- * user photographed.
- *
- * The unit is now a SNAPPED SQUARE CELL (grid.ts). Neighbours share exact edges
- * by construction, and the one remaining trim happens against the cell frame in
- * oneBlob.ts. Nothing here needs to know about circles, radii or centres.
- */
+// ⛔ THE CLIP IS GONE — don't re-add per-tile circle clipping here; the unit is now a snapped square cell (grid.ts), trimmed against the cell frame in oneBlob.ts.
 
 /** Read a varint at `pos`. Returns [value, nextPos]. */
 export function readVarint(buf: Uint8Array, pos: number): [number, number] {

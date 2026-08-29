@@ -1,121 +1,31 @@
 /**
  * fireOutline.ts — a thin red line around each group of fire detections.
- *
- * ── What it is for ──
- * Thirty orange flames scattered across a hillside do not, on their own, say
- * "there is A FIRE here". They say "there are thirty things here". BC Wildfire's
- * public map solves this by drawing a perimeter around each incident, and the
- * effect is reassurance in both directions: the fire is INSIDE the line, and —
- * just as importantly — it is NOT outside it.
- *
- * That second half is the real product. A planter looking at a cluster near
- * their block wants to know where it stops.
- *
- * ── ⚠️ This is NOT a fire perimeter, and must never be presented as one ──
- * BC Wildfire's outlines are surveyed by people on the ground. Ours is a hull
- * drawn around satellite pixels — it is a READING AID for the dots that are
- * already on screen, not an authority on where the fire front is. Consequences,
- * all deliberate:
- *
- *   • the dots are ALWAYS still drawn, and are the primary mark. The line adds
- *     to them, never replaces them (a shape alone would imply a survey)
- *   • it is thin and unfilled — a pencil line, not a hazard zone
- *   • no tap target, no card, no area readout. The card's `Size` is the honest
- *     figure, computed from unique 375 m cells; a hull's area would be the
- *     "area between the dots" error this layer explicitly rejected (a hull over
- *     six markers measured 22,328 ha, nearly all unburnt hillside)
- *
- * ── Why convex hulls, and why that is enough ──
- * "The lines don't have to be perfect, you don't need a lot of points, just
- * more or less" — and a convex hull is the cheapest honest answer. Concave
- * (alpha) shapes hug the dots more tightly and cost an order of magnitude more
- * code, for a shape nobody will measure. Measured on a real 500 km disc during
- * BC fire season:
- *
- *   36,489 detections → 12,197 distinct cells
- *   → 303 groups (flood fill, 45 ms)
- *   → 142 outlines of ≥5 cells (hulls, 7 ms)
- *   → 980 vertices total, ~16 KB of GeoJSON
- *
- * ~52 ms ONCE per data change, not per frame — the same discipline as
- * `fireClassifyCache` and the union memo: the outlines are a property of the
- * DATA, so panning must never recompute them.
- *
- * ⚠️ THAT SENTENCE WAS AN INTENTION, NOT A FACT, FOR ITS FIRST LIFE. The caller
- * runs this inside `paint()`, and `paint()` IS the pan path (moveend → ensure →
- * paint), so the full ~52 ms landed on every pan gesture. Two memos now make the
- * claim true — see `fireOutlines` — and the reason it took two is worth keeping:
- * the first attempt sat after the cell bucketing and still paid ~20 ms per pan
- * to reach itself. A memo placed after the expensive part is not a memo.
- *
- * If you touch this file, re-measure the PAN, not the cold build. The cold
- * number has never been the problem.
+ * ⚠️ NOT a fire perimeter — a reading aid over satellite pixels, never a surveyed authority; dots stay primary, no tap target/card/area readout.
+ * ⚠️ A memo placed after the expensive part is not a memo — re-measure the PAN cost (not the cold build) when touching this file.
  */
 
 /** Grid quantum — one VIIRS pixel. Mirrors `CELL_DEG` in staticHeatSources. */
 const CELL_DEG = 0.00375;
 
-/**
- * How many cells apart two detections can be and still count as one fire.
- *
- * 2 cells ≈ 750 m. Chosen so a fire seen by different satellites on slightly
- * offset grids still joins up (a pixel wanders a few hundred metres between
- * passes), without chaining unrelated fires across a valley into one shape.
- */
+/** How many cells apart two detections still count as one fire (2 cells ≈ 750 m — joins offset satellite passes, not unrelated fires). */
 const JOIN_CELLS = 2;
 
-/**
- * Below this many cells, no outline is drawn.
- *
- * A line around one or two dots is noise: it says nothing the dots did not
- * already say, and at low zoom it degenerates into a speck. The dots themselves
- * are never suppressed — this only decides whether the group is worth ringing.
- */
+/** Below this many cells, no outline is drawn — a line around 1-2 dots is noise; the dots themselves are never suppressed. */
 const MIN_CELLS = 5;
 
 /**
- * How far OUTSIDE the outermost detections the line is drawn.
- *
- * ⚠️ Without any margin the hull runs through the CENTRES of the edge
- * detections, so every border flame straddles the line and half of each icon
- * hangs outside — it reads as "the outline missed some of them".
- *
- * ⚠️⚠️ But this number is TINY, and the first attempt at it was ~5× too big.
- * The correct gap is about ONE FLAME ICON — just enough that the border icons
- * sit inside the line rather than on it. At 4 cells (1.5 km) the line stood a
- * huge empty swath away from the nearest fire, which is worse than no margin:
- * an outline that far out silently claims ground that is not burning, and the
- * whole point of the shape is that the fire is inside it and NOT outside.
- *
- * 0.8 cells ≈ 300 m ≈ the width of the flame glyph at the zooms where the
- * outline is visible. Nudge it in hundredths, never in whole cells.
+ * How far OUTSIDE the outermost detections the line is drawn (0.8 cells ≈ 300 m — nudge in hundredths, never whole cells).
+ * ⚠️ No margin → hull runs through detection centres, border flames straddle the line.
+ * ⚠️ Too big a margin is worse than none — 4 cells (1.5km) silently claimed unburnt ground; keep it ~one flame icon wide.
  */
 const OUTLINE_MARGIN_DEG = CELL_DEG * 0.8;
 
 type Cell = number; // packed grid key, see cellOf
 
-/**
- * The memo for `fireOutlines` — see the long note at its cell-key computation.
- *
- * Module-scope and shared by BOTH maps, which is safe and in fact desirable:
- * the key is derived purely from the cell set, so the online and offline maps
- * showing the same fires legitimately share one answer. The stored value is
- * never mutated by this module; callers clone it across the GL worker boundary.
- *
- * Bounded by construction — exactly one entry, replaced whenever the data
- * changes. There is nothing to evict and no growth path.
- */
+/** Module-scope memo shared by both maps (key = cell set); never mutated here — callers clone it across the GL worker boundary. Bounded: one entry, replaced on change. */
 let outlineMemoKey: string | null = null;
 let outlineMemo: GeoJSON.FeatureCollection | null = null;
-/**
- * The hotspot array the memo was built from — the FAST-PATH key, checked before
- * any work happens (see the note at the top of `fireOutlines`).
- *
- * A WeakRef so a stale memo can never keep a 36,000-element hotspot array alive.
- * This module is the fire layer's, and the fire layer is the one that was
- * holding tens of thousands of detections resident; a memo that reintroduced
- * that would be trading one leak for another.
- */
+/** Fast-path key for the memo (checked before any work). WeakRef — a strong ref here would leak the 36k-element hotspot array. */
 let outlineMemoSrc: WeakRef<object> | null = null;
 let outlineMemoLen = -1;
 
@@ -127,11 +37,9 @@ export function __resetOutlineMemoForTest(): void {
 	outlineMemoLen = -1;
 }
 
-/** Pack a grid coordinate into one number so the Set/Map stay primitive-keyed —
- *  string keys measured ~3× slower at this volume. */
+/** Pack a grid coordinate into one number — primitive Set/Map keys measured ~3× faster than strings at this volume. */
 function pack(gx: number, gy: number): Cell {
-	// gy is offset into the upper bits; ±2^20 cells covers the whole globe at
-	// 375 m with room to spare.
+	// gy is offset into upper bits; ±2^20 cells covers the whole globe at 375m with room to spare.
 	return gx * 4_194_304 + gy;
 }
 
@@ -142,14 +50,7 @@ function cellOf(lng: number, lat: number): { gx: number; gy: number } {
 	};
 }
 
-/**
- * Convex hull, monotone chain. Returns the ring in order, WITHOUT repeating the
- * first point (the caller closes it for GeoJSON).
- *
- * Local rather than turf: this module is pure and dependency-free so it can be
- * tested without pulling map code into the environment, and turf's `convex`
- * allocates a FeatureCollection per call — 142 of those per rebuild is waste.
- */
+/** Convex hull, monotone chain. Returns the ring in order, WITHOUT repeating the first point (caller closes it for GeoJSON). */
 export function convexHull(
 	points: readonly (readonly [number, number])[],
 ): [number, number][] {
@@ -186,20 +87,8 @@ export function convexHull(
 }
 
 /**
- * Push every vertex OUTWARD from the ring's centroid, so the line clears the
- * detections instead of bisecting them.
- *
- * Radial rather than a true geometric offset (mitred edges, arc joins): a
- * convex ring has no reflex corners, so pushing the vertices out along the
- * centroid ray always produces a valid, slightly larger convex ring — and it is
- * a dozen lines instead of a polygon-offset library. The corners end up a touch
- * more generous than the edges, which is the harmless direction: corners are
- * where a stray flame is most likely to sit outside.
- *
- * Longitude is scaled by cos(lat) so the margin is the same distance ON THE
- * GROUND north and south — at 50°N a degree of longitude is only ~64% of a
- * degree of latitude, and skipping this would make the line visibly tighter
- * east-west the further north you go.
+ * Push every vertex outward from the ring's centroid so the line clears detections instead of bisecting them.
+ * Longitude scaled by cos(lat) — skipping this makes the line visibly tighter east-west further north (~64% at 50°N).
  */
 export function expandRing(
 	ring: readonly (readonly [number, number])[],
@@ -220,8 +109,7 @@ export function expandRing(
 		const dx = (p[0] - cx) * lngScale;
 		const dy = p[1] - cy;
 		const len = Math.hypot(dx, dy);
-		// A vertex sitting exactly on the centroid has no outward direction;
-		// leaving it put is correct and avoids dividing by zero.
+		// vertex exactly on centroid has no outward direction — leave it put, avoids divide-by-zero
 		if (len < 1e-12) return [p[0], p[1]] as [number, number];
 		return [
 			p[0] + ((dx / len) * marginDeg) / lngScale,
@@ -230,52 +118,14 @@ export function expandRing(
 	});
 }
 
-/**
- * Group detections into fires and draw one outline around each.
- *
- * Flood fill over the 375 m grid: two cells belong to the same fire if they are
- * within `JOIN_CELLS` of each other. That is a plain connected-components pass,
- * O(cells), with no distance matrix and no clustering library.
- */
+/** Group detections into fires and draw one outline around each — flood fill over the 375m grid, O(cells), no distance matrix. */
 export function fireOutlines(
 	hotspots: readonly { coordinates: readonly [number, number] }[],
-	/**
-	 * OPTIONAL stable identity for `hotspots`, for the fast-path memo.
-	 *
-	 * ⚠️ Needed because the obvious key — `hotspots` itself — is NOT stable in
-	 * the real caller. `paint()` passes `shown`, which `fireFeatureCollection`
-	 * produces with `.filter()`, so it is a brand-new array on every pan even
-	 * when not one detection changed. Keying on it meant the fast path never hit
-	 * and every pan re-bucketed 36,000 detections into 12,000 cells (~20 ms) just
-	 * to reach the second-tier memo.
-	 *
-	 * The caller instead passes the UPSTREAM array that `shown` is derived from
-	 * (`unionHotspots().hotspots`, which IS memoized and therefore reference-
-	 * stable until the cache actually changes). Pass nothing and the memo simply
-	 * falls back to content hashing — correct, just slower.
-	 */
+	/** OPTIONAL stable identity for `hotspots`, for the fast-path memo. ⚠️ `hotspots` itself is NOT stable — paint() passes a freshly-filtered `shown` every pan; pass the upstream stable array (e.g. unionHotspots().hotspots) instead, or omit to fall back to slower content hashing. */
 	stableKey?: object,
 ): GeoJSON.FeatureCollection {
-	// ── THE PER-PAN MEMO — CHECKED FIRST, BEFORE ANY WORK ──
-	//
-	// ⚠️ Placement is the whole fix, and getting it wrong is subtle enough to be
-	// worth spelling out. This memo originally sat AFTER the `cellPts` build, so
-	// it correctly skipped the hulls but still paid ~20 ms per pan bucketing
-	// 36,000 detections into 12,000 cells — plus the GC churn of allocating that
-	// Map every frame. Measured: 50 ms cold, but still 69 ms per pan with the
-	// memo "hitting". A memo that runs after the expensive part is not a memo.
-	//
-	// So the key must be derivable WITHOUT touching the hotspots. The only such
-	// signal is the array itself, hence identity + length: `paint()` hands over
-	// the exact same `shown` array reference for repeat paints of unchanged data
-	// (it is rebuilt only when the underlying hotspot list is re-derived), and
-	// length guards the one case where a mutated-in-place array keeps identity.
-	//
-	// ⚠️ This is deliberately CONSERVATIVE: a caller that rebuilds an identical
-	// array gets a miss and recomputes. That costs one wasted rebuild — correct,
-	// just slower. The opposite error, a stale hit, would freeze the outlines
-	// while the fires under them moved, and this layer's entire job is not lying
-	// about where fire is. When in doubt, recompute.
+	// ⚠️ memo placement is the fix — must run BEFORE any work, or "hitting" still costs ~20ms/pan re-bucketing; a memo after the expensive part is not a memo.
+	// ⚠️ deliberately conservative: a miss just recomputes (slow), but a stale hit would freeze outlines while fires move — when in doubt, recompute.
 	const fastKey = stableKey ?? hotspots;
 	if (
 		outlineMemo !== null &&
@@ -286,8 +136,7 @@ export function fireOutlines(
 		return outlineMemo;
 	}
 
-	// One representative point per cell — the hull only ever needs cell corners,
-	// and collapsing 36k detections to 12k cells is most of the speed-up.
+	// one representative point per cell — hull only needs cell corners; collapsing 36k detections to 12k cells is most of the speed-up
 	const cellPts = new Map<Cell, [number, number]>();
 	for (const h of hotspots) {
 		const [lng, lat] = h.coordinates;
@@ -297,32 +146,8 @@ export function fireOutlines(
 		if (!cellPts.has(key)) cellPts.set(key, [lng, lat]);
 	}
 
-	// ── THE SECOND-TIER MEMO ──
-	//
-	// The header above promises "~52 ms ONCE per data change, not per frame", and
-	// the call site says "panning never recomputes it". Neither was true: the
-	// caller runs this inside `paint()`, and `paint()` is exactly the pan path
-	// (moveend → ensure → paint). So every pan rebuilt 142 hulls to produce a
-	// byte-identical answer — the same disease the union memo and
-	// `fireClassifyCache` were both written to cure, caught a third time.
-	//
-	// Keyed on the CELL SET, not the hotspot array: `shown` is rebuilt fresh on
-	// every paint (a filter inside `fireFeatureCollection`), so identity is
-	// useless here — but the cells are the only input the outlines actually
-	// depend on. Two paints over unchanged data produce the same key and skip the
-	// work; a genuine data change moves a cell and misses.
-	//
-	// ⚠️ The key is a COMMUTATIVE HASH, not a sorted join. Sorting 12,197 cells
-	// and joining them into a ~90 KB string on every pan would be a cheaper
-	// version of the same mistake — real work, every frame, to decide whether to
-	// skip real work. Summing and XOR-ing is O(cells) with no allocation, and
-	// both operations are order-independent, so a reordered-but-identical cell
-	// set still hits.
-	//
-	// Two accumulators because either alone collides too easily: XOR misses
-	// duplicate-pair changes, addition misses swaps around the modulus. Together
-	// with the exact count, a collision needs a change that preserves the size,
-	// the sum AND the xor — which no realistic edit to a fire field does.
+	// second-tier memo: keyed on the CELL SET (not the hotspot array), since `shown` is rebuilt fresh every paint but cells are the real input.
+	// ⚠️ key is a commutative hash (sum + xor, O(cells), no allocation) — NOT a sorted join, which would just be the same "real work every frame" mistake again.
 	let sum = 0;
 	let xor = 0;
 	for (const k of cellPts.keys()) {
@@ -331,10 +156,7 @@ export function fireOutlines(
 	}
 	const key = `${cellPts.size}:${sum}:${xor}`;
 	if (key === outlineMemoKey && outlineMemo !== null) {
-		// Content matched even though the array was a different object — so adopt
-		// THIS array as the fast-path key. Without this, a caller that rebuilds an
-		// equal-but-new array would pay the cell bucketing on every single pan
-		// forever, never graduating to the cheap check above.
+		// content matched despite a new array object — adopt it as the fast-path key, or an equal-but-new array pays cell bucketing forever
 		outlineMemoSrc = new WeakRef(fastKey as object);
 		outlineMemoLen = hotspots.length;
 		return outlineMemo;
@@ -345,8 +167,7 @@ export function fireOutlines(
 
 	for (const start of cellPts.keys()) {
 		if (seen.has(start)) continue;
-		// Iterative, never recursive: a province-sized blob is ~1,700 cells deep
-		// and recursion would risk the stack on a phone.
+		// iterative, never recursive — a province-sized blob is ~1,700 cells deep; recursion would risk the stack on a phone
 		const stack: Cell[] = [start];
 		seen.add(start);
 		const group: [number, number][] = [];
@@ -374,8 +195,7 @@ export function fireOutlines(
 		if (ring.length < 3) continue;
 		features.push({
 			type: "Feature",
-			// No id, no tap target, no properties worth reading: this is a reading
-			// aid for the dots, and giving it a card would make it look surveyed.
+			// no id/tap target/properties — a card here would make the hull look surveyed
 			properties: {},
 			geometry: {
 				type: "Polygon",
@@ -390,8 +210,7 @@ export function fireOutlines(
 	};
 	outlineMemoKey = key;
 	outlineMemo = result;
-	// Arm the fast path too, so the NEXT pan over this same array skips even the
-	// cell bucketing above.
+	// arm the fast path too, so the NEXT pan over this array skips even the cell bucketing above
 	outlineMemoSrc = new WeakRef(fastKey as object);
 	outlineMemoLen = hotspots.length;
 	return result;

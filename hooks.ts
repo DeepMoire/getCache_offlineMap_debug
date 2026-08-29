@@ -1,44 +1,11 @@
 import type { Reroute } from "@sveltejs/kit";
 
-/**
- * A CLOSED LOOP — every url this install can be given lands on a real page.
- *
- * THE DEFAULT is /offline. "/" resolves here, the nav logo links here, and the
- * dev server prints it. It is also the ONLY view: the debug rails are a toggle
- * on the map, not a second url. That is the WHOLE surface of a solo install.
- *
- * WHY ANYTHING ELSE COMES BACK RATHER THAN 404ING.
- * Someone who installed one child from npm has no other tier and no second
- * child. A url outside this set cannot be a page they meant to reach — it is a
- * typo, a stale bookmark, or a link copied from the two-tier workspace. Sending
- * them to a dead end is the worst of the three answers, so an unknown path
- * resolves to the default. There is no way to get stranded.
- *
- * `reroute` maps a url to a ROUTE without changing the address bar and without
- * a load running, so each view keeps exactly ONE url that names it. Alternatives
- * were measured worse in the who_what child: rendering a page at "/" too gives
- * one view TWO urls, and a redirect from a root `+page.ts` 500s in this mount,
- * because SvelteKit resolves the child's routes through the PARENT's
- * `kit.files.routes`.
- *
- * A UNIVERSAL hook, so hard loads and client-side navigations agree. Reached
- * only when a parent points `kit.files.hooks.universal` at this file; a child
- * cloned alone with its own config simply never runs it.
- *
- * KEEP IN STEP with this child's `defaultPath` in retreeved/childRegistry.ts —
- * that record is what the nav and the printed url read.
- */
-// Dev-only endpoints are "views" too as far as the reroute is concerned: an
-// unknown path collapses to DEFAULT, which would hand a fetch("/api/…") the
-// map page's HTML with a 200. The parent-guard light's endpoint is the one
-// for now — see lib/dev/parentGuard.server.ts.
+// ⚠️ keep DEFAULT in step with this child's defaultPath in retreeved/childRegistry.ts — nav and the printed url read it.
+// ⚠️ list dev endpoints in SERVED — an unlisted path collapses to DEFAULT, so fetch("/api/…") gets the map page's HTML with a 200.
 const SERVED: string[] = ["/api/parentGuard"];
 const DEFAULT = "/offline";
 
 export const reroute: Reroute = ({ url }) => {
-	// The DEFAULT counts as served too — it is the one url guaranteed to exist.
-	// Listing it here rather than in SERVED keeps SERVED meaning "the OTHER
-	// views", so the two constants stay readable side by side.
 	const known = [DEFAULT, ...SERVED].some((p) => url.pathname === p);
 	if (!known) return DEFAULT;
 };

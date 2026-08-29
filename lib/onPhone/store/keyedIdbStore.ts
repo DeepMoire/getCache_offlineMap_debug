@@ -1,19 +1,4 @@
-/**
- * keyedIdbStore.ts — the ONE IndexedDB wrapper for the offline boxes
- * (satellite photos, coverage registry, legacy line vectors, road thumbs).
- * Each box is a single object store, NO keyPath, keyed by an explicit string —
- * the same shape `idbRename.migrateIdbDatabase` assumes.
- *
- * What every box needs, built in ONCE:
- *   • dbPromise memo — one open handle per store, opened lazily.
- *   • sandbox awareness — the DB name resolves through `currentDbName` AT OPEN
- *     TIME, and the cached handle registers with `registerOfflineDbReset` so a
- *     sandbox toggle drops it (the next open targets the correct DB).
- *   • SHELL HEAL — a DB that exists but LACKS its object store (created
- *     store-less by an interrupted/older versionless open — "object store was
- *     not found" forever after, since same-version opens never fire
- *     onupgradeneeded) is deleted and recreated on first open.
- */
+/** keyedIdbStore.ts — the IndexedDB wrapper for the offline boxes (one object store, no keyPath, explicit string keys). ⚠️ SHELL HEAL: a DB that exists but lacks its store throws "object store not found" forever until deleted + recreated on first open. */
 
 import {
 	currentDbName,
@@ -26,15 +11,9 @@ export interface KeyedIdbStore<T> {
 	delete(key: string): Promise<void>;
 	/** Every stored key, as strings (keys are always explicit strings here). */
 	keys(): Promise<string[]>;
-	/** Every stored value (key order — same order `keys()` returns).
-	 *
-	 *  ⚠️ Deserializes the WHOLE store in one main-thread task. If you only need
-	 *  a few fields per record, use `getAllProjected` — on a big store the
-	 *  difference is measured in hundreds of milliseconds of blocked UI. */
+	/** Every stored value. ⚠️ Deserializes the WHOLE store in one main-thread task — use getAllProjected for a big store. */
 	getAll(): Promise<T[]>;
-	/** Every stored value, cursor-streamed and reduced to `project(value)` as it
-	 *  goes, so the full records never all exist at once. See the implementation
-	 *  for the measurement that motivated it. */
+	/** Every stored value, cursor-streamed and reduced via project(value) so full records never all exist at once. */
 	getAllProjected<P>(project: (value: T) => P): Promise<P[]>;
 }
 
@@ -80,20 +59,10 @@ export function makeKeyedIdbStore<T>(opts: {
 		return dbPromise;
 	}
 
-	// When sandbox mode toggles, the cached handle points at the wrong DB —
-	// drop it so the next openDb() reopens against the correct name.
-	//
-	// ⚠️ CLOSE THE CONNECTION, don't just drop the reference. Nulling
-	// `dbPromise` forgets the handle but leaves the underlying connection OPEN,
-	// and an open connection BLOCKS `deleteDatabase` forever. That was harmless
-	// for the sandbox toggle this was written for (a stale handle is only a
-	// correctness problem, not a locking one) and fatal for the WIPE: measured,
-	// `gc-offlineSatellite` reported "blocked" and survived a wipe the user had
-	// been told was clean.
+	// ⚠️ Close the connection, don't just drop the reference — an open connection blocks deleteDatabase forever, which let a wipe report a store "clean" while it actually survived.
 	registerOfflineDbReset(() => {
 		const pending = dbPromise;
 		dbPromise = null;
-		// The promise may still be in flight — close whenever it lands.
 		void pending?.then((db) => db.close()).catch(() => {});
 	});
 
@@ -146,24 +115,7 @@ export function makeKeyedIdbStore<T>(opts: {
 					}),
 			);
 		},
-		/**
-		 * Read every record, but keep ONLY what `project` returns.
-		 *
-		 * ── Why this exists (measured, not theoretical) ──
-		 * `getAll()` deserializes every value in the store in ONE uninterruptible
-		 * main-thread task. On a real fire cache that is 73,225 hotspots, and the
-		 * browser flagged it directly: `'success' handler took 600–1140 ms`.
-		 * A caller that only wants each record's CENTRE pays that entire cost.
-		 *
-		 * A cursor walks records one at a time, so each value is deserialized,
-		 * projected, and then immediately garbage — the big arrays never all
-		 * exist at once. The total work is smaller AND it is split across many
-		 * small tasks instead of one long one, which is what actually keeps the
-		 * map interactive.
-		 *
-		 * ⚠️ `project` runs inside the IDB transaction: keep it pure and cheap,
-		 * and never await in it or the transaction auto-closes.
-		 */
+		/** ⚠️ project runs inside the IDB transaction: keep it pure and cheap, and never await in it or the transaction auto-closes. */
 		getAllProjected<P>(project: (value: T) => P): Promise<P[]> {
 			return openDb().then(
 				(db) =>

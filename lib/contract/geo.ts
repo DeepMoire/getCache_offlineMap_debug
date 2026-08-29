@@ -1,15 +1,6 @@
-/**
- * Tile geometry. Pure maths — no I/O, no MapLibre, no storage.
- *
- * ⛔ THE DISC FUNCTIONS ARE GONE, not moved. `tilesAtZoom`, `blobTiles`,
- * `discInTile` and the whole of `clip.ts` existed to answer "which tiles does a
- * circle touch, and where is that circle inside each tile" — questions the
- * square grid does not ask. The unit is a snapped cell now (grid.ts): the cell
- * IS the boundary, neighbours share exact edges, and nothing is cut to a radius.
- *
- * What remains is the slippy-tile arithmetic and `km`, which the grid uses to
- * decide when a neighbouring cell is needed.
- */
+/** Tile geometry. Pure maths — no I/O, no MapLibre, no storage. */
+
+/** ⛔ Disc functions (tilesAtZoom, blobTiles, discInTile, clip.ts) are gone, not moved — replaced by the snapped-cell grid (grid.ts); don't resurrect them for radius/circle logic. */
 
 export interface TileId {
 	z: number;
@@ -54,4 +45,3 @@ export function km(
 		(lng2 - lng1) * 111.32 * Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
 	return Math.hypot(dLat, dLng);
 }
-

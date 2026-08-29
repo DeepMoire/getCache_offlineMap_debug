@@ -1,11 +1,4 @@
-/**
- * fireSeverity.test.ts — the severity + trend lookups.
- *
- * These pin a TABLE, so the tests are mostly about the table's edges: every
- * boundary, both open-ended bands, and the inputs that would otherwise fall
- * through a gap. The wording matters as much as the numbers — "Hottest: Very
- * high heat" was replaced precisely because it read as a riddle.
- */
+/** fireSeverity.test.ts — the severity + trend lookups; these pin a TABLE, mostly at its edges. Wording matters too — "Hottest: Very high heat" was rejected as reading like a riddle. */
 import { describe, expect, it } from "vitest";
 import {
 	FRP_EXTREME_MW,
@@ -44,8 +37,7 @@ describe("the severity table covers every input", () => {
 	});
 
 	it("treats garbage as the GENTLEST band, never the scariest", () => {
-		// A card rendering mild wording beats a card that throws — but it must
-		// also never invent an emergency out of a NaN.
+		// mild wording beats throwing, but must never invent an emergency out of a NaN
 		expect(severityFor(Number.NaN, Number.NaN).level).toBe(1);
 		expect(severityFor(-1, -1).headline).toBe("Small patch of low heat");
 	});
@@ -61,17 +53,14 @@ describe("severityFor — the spec's own rows", () => {
 	});
 
 	it("a tiny but blazing patch caps at level 3, not 5", () => {
-		// Intensity alone must not produce the top level — ONE VIIRS pixel
-		// (0.375² = 0.14 km² = 14 ha) is not a catastrophe however hot it reads.
+		// intensity alone must not produce the top level — one VIIRS pixel (0.14 km²/14ha) is not a catastrophe however hot
 		const r = severityFor(0.1406, 5000);
 		expect(r.level).toBe(3);
 		expect(r.headline).toBe("Small fire burning very hot");
 	});
 
 	it("a SINGLE detection can never exceed level 3, at any heat", () => {
-		// The load-bearing invariant behind SIZE_SPOT_MAX_KM2: one nominal pixel
-		// must land in `spot`. If that ceiling ever drops below 0.1406 a lone
-		// detection starts reporting level 4+, which is the layer crying wolf.
+		// load-bearing: one nominal pixel must land in `spot` — if SIZE_SPOT_MAX_KM2 ever drops below 0.1406, a lone detection starts crying wolf at level 4+
 		for (const frp of [1, 30, 120, 5000, 999_999]) {
 			expect(severityFor(0.1406, frp).level).toBeLessThanOrEqual(3);
 		}
@@ -124,8 +113,7 @@ describe("severityFor — band boundaries are lower-inclusive", () => {
 	});
 
 	it("the bands are contiguous — no gap can swallow a fire", () => {
-		// A gap would drop straight through severityFor's .find() to the
-		// fallback row, silently reporting "Faint" for anything inside it.
+		// a gap would drop through severityFor's .find() to the fallback row, silently reporting "Faint" for anything inside it
 		const bands = [...new Set(SEVERITY_TABLE.map((r) => r.sizeBand))];
 		for (const band of bands) {
 			const rows = SEVERITY_TABLE.filter((r) => r.sizeBand === band);
@@ -146,8 +134,7 @@ describe("severityFor — band boundaries are lower-inclusive", () => {
 	});
 
 	it("the MEASURED southern-BC distribution spreads across the bands", () => {
-		// 21,607 detections → 257 clusters, deduped. If these ever bunch into one
-		// band the thresholds have drifted away from reality again.
+		// measured (21,607 detections → 257 clusters) — if these ever bunch into one band, the thresholds have drifted from reality again
 		expect(severityFor(2.08, 30).sizeBand).toBe("small"); // median, 208 ha
 		expect(severityFor(6.76, 30).sizeBand).toBe("large"); // p75,   676 ha
 		expect(severityFor(13.5, 30).sizeBand).toBe("large"); // p90, 1,351 ha
@@ -166,12 +153,7 @@ describe("severityFor — band boundaries are lower-inclusive", () => {
 		);
 	});
 
-	/**
-	 * ⛔ THE MEASURED BUG. The cuts were 10 / 50 / 200 — a stated first guess —
-	 * and on live FIRMS (37,138 detections → 302 fires) they put **70% of every
-	 * fire in the bottom band**, and 80% of lone detections at level 1 of 5. A
-	 * scale where seven fires in ten score lowest teaches the reader nothing.
-	 */
+	// ⛔ measured bug: cuts of 10/50/200 put 70% of every fire in the bottom band (37,138 detections → 302 fires) — a scale where 7-in-10 score lowest teaches nothing
 	it("spreads the MEASURED distribution instead of bunching at the bottom", () => {
 		// The real peak-FRP percentiles, southern BC in fire season.
 		expect(severityFor(1, 0.7).frpBand).toBe("low"); // p10
@@ -182,21 +164,18 @@ describe("severityFor — band boundaries are lower-inclusive", () => {
 	});
 
 	it("a LONE detection can still reach the middle of the scale", () => {
-		// One VIIRS pixel is always 14 ha, so size cannot move — heat has to. At
-		// the old cuts a lone fire essentially only ever read 1 or 2 of 5.
+		// one VIIRS pixel is always 14ha, so size can't move — heat has to; old cuts left a lone fire reading only 1 or 2 of 5
 		expect(severityFor(0.14, 1).level).toBe(1); // p10 heat
 		expect(severityFor(0.14, 5).level).toBe(2); // around the median
 		expect(severityFor(0.14, 20).level).toBe(3); // genuinely hot for one pixel
-		// ...and STILL capped at 3: one 14 ha pixel is not a catastrophe however
-		// hot it reads. That asymmetry is why this is a table, not a formula.
+		// still capped at 3 — one 14ha pixel is not a catastrophe however hot; that asymmetry is why this is a table, not a formula
 		expect(severityFor(0.14, 5000).level).toBe(3);
 	});
 });
 
 describe("the headline never asks 'hottest WHAT?'", () => {
 	it("reads as a sentence about the fire, not about a data aggregate", () => {
-		// The wording this replaced: "Hottest: Very high heat". A planter sees one
-		// marker; they don't know or need to know it's a cluster of pixels.
+		// replaced "Hottest: Very high heat" — a planter sees one marker, not a cluster of pixels
 		for (const row of SEVERITY_TABLE) {
 			expect(row.headline.toLowerCase()).not.toContain("hottest");
 			expect(row.headline.toLowerCase()).not.toContain("cluster");
@@ -218,8 +197,7 @@ describe("trendFor — what it's doing between passes", () => {
 		// Both inside one bucket → one pass.
 		expect(r.band).toBe("new");
 		expect(r.line).toBe(TREND_LINES.new);
-		// TWO passes is also not enough: one comparison of a signal that swings
-		// 0.20–3.43× between overpasses is noise, not a trend.
+		// two passes is also not enough — one comparison of a signal that swings 0.20–3.43× between overpasses is noise, not a trend
 		expect(
 			trendFor([
 				{ t: T0, frp: 20 },
@@ -260,16 +238,9 @@ describe("trendFor — what it's doing between passes", () => {
 		expect(r.line).toBe("Holding steady");
 	});
 
-	/**
-	 * ⛔ THE MEASURED BUG. The old rule compared only the LAST TWO passes, and on
-	 * live FIRMS data that verdict disagreed with the fire's own full history in
-	 * **64% of cases** — which is what produced two adjacent clusters reading
-	 * "Dying down" and "Newly spotted" for the same fire.
-	 */
+	// ⛔ measured bug: comparing only the last two passes disagreed with the fire's full history in 64% of cases (live FIRMS) — producing "Dying down" and "Newly spotted" for the same fire
 	it("ONE noisy pass cannot decide the verdict", () => {
-		// A steady fire whose most recent overpass happened to read low — cloud,
-		// swath angle, a night retrieval. Last-two would call this "Dying down";
-		// averaged halves see a fire that is holding.
+		// a steady fire's most recent overpass can read low (cloud/swath/night) — last-two would call it "Dying down"; averaged halves see it holding
 		const r = trendFor([
 			{ t: T0, frp: 100 },
 			{ t: T0 + 6 * H, frp: 100 },
@@ -280,8 +251,7 @@ describe("trendFor — what it's doing between passes", () => {
 	});
 
 	it("a genuine sustained decline still reads QUIETER", () => {
-		// The other half of the promise: damping noise must not make the layer
-		// blind to a fire that is actually going out.
+		// damping noise must not make the layer blind to a fire that is actually going out
 		const r = trendFor([
 			{ t: T0, frp: 200 },
 			{ t: T0 + 6 * H, frp: 180 },
@@ -331,9 +301,7 @@ describe("trendFor — what it's doing between passes", () => {
 	});
 
 	it("never claims ABSENT from detections alone", () => {
-		// "Nothing detected on last pass" requires knowing a pass happened AND
-		// covered this ground. Satellite gaps and cloud make that unsafe to infer,
-		// and a false "it's out" is the worst thing this layer could say.
+		// "nothing detected" requires knowing a pass happened AND covered this ground — satellite gaps/cloud make that unsafe to infer; a false "it's out" is the worst thing this layer could say
 		const many = Array.from({ length: 10 }, (_, i) => ({
 			t: T0 + i * 6 * H,
 			frp: 50,

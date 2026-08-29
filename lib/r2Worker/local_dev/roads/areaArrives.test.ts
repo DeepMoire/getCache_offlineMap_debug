@@ -1,26 +1,4 @@
-/**
- * ARE THE BLOBS COMING? — the test the user asked for, in his own words.
- *
- * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
- *
- * Every failure on this route is SILENT. A missing tile renders nothing and
- * throws nothing, so "I dropped a pin and waited 30 seconds and saw nothing" is
- * indistinguishable, from the outside, from "the download never started". That
- * ambiguity has cost entire evenings, repeatedly.
- *
- * These tests pin the three things that must be true for a pin to show its
- * 20 km, so a regression fails HERE instead of on a phone in the bush:
- *
- *   1. EVERY cell the pin needs is requested — not just the one under it.
- *      (The user photographed a half-drawn map: 1 of 9 cells had arrived.)
- *   2. They are requested IN PARALLEL — nine 3-second cells in series is the
- *      half-minute wait; concurrently it is one cell's time.
- *   3. A per-cell failure does NOT abort the area — eight cells of roads beats
- *      an exception that leaves the user with nothing.
- *
- * ⛔ NO NETWORK HERE. `fetch` is stubbed, so this measures OUR orchestration.
- * The server's own build time is measured separately (X-Diag, ~2-3 s per cell).
- */
+// ⛔ NO NETWORK HERE — fetch is stubbed; this measures OUR orchestration only, not the server's build time.
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cellTileKey, cellsFor } from "../../../contract/grid";
@@ -58,22 +36,14 @@ let gate: Array<() => void> = [];
 beforeEach(async () => {
 	urls = [];
 	gate = [];
-	// A HOST MUST BE CONFIGURED OR THERE IS NO REQUEST TO OBSERVE.
-	//
-	// packUrl() returns null until the app calls configureTilesHost() — see
-	// tilesHost.ts. Before 27 Aug 2026 a production origin was baked into the
-	// module, so these tests got a URL without asking for one; now the app
-	// supplies it, and so must a test. Imported dynamically because afterEach
-	// calls vi.resetModules(), which would otherwise leave a stale copy holding
-	// the configuration while packDownload.ts reads a fresh, unconfigured one.
+	// A host must be configured or there's no request to observe (configureTilesHost) — imported dynamically because afterEach's vi.resetModules() would otherwise leave a stale copy holding the config.
 	const { configureTilesHost } = await import("../tilesHost");
 	configureTilesHost("https://tiles.example.test");
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (url: string) => {
 			urls.push(String(url));
-			// Hold every request open until released — that is how the parallel
-			// assertion below can see them all in flight at once.
+			// hold every request open until released, so the parallel assertion below can see them all in flight at once.
 			await new Promise<void>((r) => gate.push(r));
 			const key = PACK_KEY;
 			return new Response(await gzip(makePack(key)), {
@@ -96,15 +66,7 @@ function releaseAll(): void {
 
 describe("are the blobs coming?", () => {
 	it("⛔ ONE PIN = ONE REQUEST — never a fragment", async () => {
-		// THE LAW. A previous version fetched one blob PER CELL, so a pin near a
-		// tile edge issued NINE requests that landed at nine different times. The
-		// map drew a disconnected fragment and maybe another one later — the user:
-		// "some random piece of shit comes after... totally, totally unusable."
-		// It also latched the session download guard after ~7 pins, after which a
-		// new pin showed NOTHING at all.
-		//
-		// One request means the area either arrives or does not. That is the whole
-		// difference between a product and a lottery.
+		// THE LAW: one request per pin — per-cell fetches produced disconnected fragments and could latch the download guard after ~7 pins.
 		const { downloadV4Area } = await import("./packDownload");
 		const p = downloadV4Area(...ANCHOR);
 		await vi.waitFor(() => expect(urls.length).toBeGreaterThan(0));
@@ -114,8 +76,7 @@ describe("are the blobs coming?", () => {
 	});
 
 	it("the request carries the pin's own coordinates", async () => {
-		// The Worker reads the radius AROUND THE PIN, so the pin is what it needs
-		// — not a rounded cell centre, which would shift the data off the user.
+		// the Worker reads the radius around the PIN, not a rounded cell centre — that would shift the data off the user.
 		const { downloadV4Area } = await import("./packDownload");
 		const p = downloadV4Area(...ANCHOR);
 		await vi.waitFor(() => expect(urls.length).toBeGreaterThan(0));
@@ -127,8 +88,7 @@ describe("are the blobs coming?", () => {
 	});
 
 	it("stores what came back, under the key the Worker chose", async () => {
-		// The end of the chain: bytes on disk under an address the renderer asks
-		// for. If this drifts, the map is blank with no error anywhere.
+		// bytes on disk under the address the renderer asks for — if this drifts, the map goes blank with no error anywhere.
 		const { downloadV4Area, getAllTileKeys } = await import(
 			"./packDownload"
 		);
@@ -141,9 +101,7 @@ describe("are the blobs coming?", () => {
 	});
 
 	it("a failed request does NOT throw the pass away", async () => {
-		// A network hiccup must leave the area un-recorded so the next pass
-		// retries — never abort the whole reconcile and starve every area behind
-		// it.
+		// a network hiccup must leave the area un-recorded so the next pass retries — never abort the whole reconcile and starve every area behind it.
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async () => {

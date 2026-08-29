@@ -1,64 +1,18 @@
 /**
  * placeReference.ts — "18 km NE of Whitecourt".
- *
- * Turns a coordinate into the plain-language location reference wildfire
- * agencies actually use, so a detection reads as somewhere a person knows
- * rather than as two decimals.
- *
- * ── Why not reverse geocoding ──
- * Google/Mapbox reverse geocoding answers a DIFFERENT question: it returns the
- * administrative area CONTAINING the point ("Woodlands County"), not proximity
- * with a bearing. It also costs per request, restricts storage, and needs a
- * network — which is precisely absent at the block. Wrong operation, wrong
- * economics, wrong runtime.
- *
- * ── Why the tiers are in the DATA, not in a scoring function ──
- * The asset (`/mobileAssets/places-world.json`) is pre-tiered by population:
- * 0 = ≥15,000, 1 = ≥5,000, 2 = ≥1,000. So the cascade is a series of "nearest
- * hit within radius R at tier T" lookups rather than a population/distance
- * scoring heuristic nobody can reason about later. First hit wins for the
- * primary; the next LARGER tier supplies the anchor.
- *
- * ── Two tiers of answer, never one "best" place ──
- *     9 km E of Blue Ridge, 62 km SW of Edson
- * The small name locates you; the big name orients someone who has never heard
- * of it. Picking one always loses one of those jobs.
- *
- * This module is PURE — the dataset is injected. Loading/caching lives in
- * `placeIndex.ts`, so every rule here is testable without an asset fetch.
+ * Pure — dataset is injected; loading/caching lives in placeIndex.ts.
  */
 
-/** One place: [name, lng, lat, tier, region]. `region` is the province/state
- *  ("British Columbia"), the high-level anchor everyone recognises. */
+/** One place: [name, lng, lat, tier, region]. region = province/state, the high-level anchor. */
 export type PlaceRow = readonly [string, number, number, number, string?];
 
-/**
- * Prominence tiers, baked into the asset by ADMIN STATUS first, population
- * second — a provincial capital or county seat is a landmark whatever its
- * headcount, while a 100k dormitory suburb is no more useful than the city
- * beside it.
- *
- * ⚠️ The asset EXCLUDES GeoNames `PPLX` and friends — "section of populated
- * place", i.e. NEIGHBOURHOODS. That omission is load-bearing. With them in, the
- * card said "2 km SE of East Richmond–Fraser Lands, 4 km SW of Hamilton" for a
- * fire beside Vancouver: three names nobody outside those few blocks knows,
- * while a 4,220-person neighbourhood outranked a 101,491-person city because
- * the tiers were population-only. Naming a neighbourhood is worse than naming
- * nothing — it sounds authoritative and conveys no location.
- */
+/** ⚠️ Asset EXCLUDES GeoNames PPLX/neighbourhoods — load-bearing: naming a neighbourhood sounds authoritative but conveys no real location. Tiered by ADMIN STATUS first, population second. */
 export const TIER_MAJOR = 0; // capital / admin seat, or ≥ 100,000
 export const TIER_NOTABLE = 1; // 2nd-order admin seat, or ≥ 15,000
 export const TIER_TOWN = 2; // ≥ 5,000
 export const TIER_VILLAGE = 3; // ≥ 1,000
 
-/**
- * Search radius per tier, km. A village only counts when you're nearly on top
- * of it; a major city is worth naming from far away because everyone knows
- * where it is.
- *
- * Deliberately NOT per-region: exceptions rot, and a rule that behaves the same
- * in Alberta and Aotearoa is one you can still reason about in a year.
- */
+/** Search radius per tier, km — deliberately NOT per-region. */
 export const TIER_RADIUS_KM: Readonly<Record<number, number>> = {
 	[TIER_VILLAGE]: 25,
 	[TIER_TOWN]: 50,
@@ -66,9 +20,7 @@ export const TIER_RADIUS_KM: Readonly<Record<number, number>> = {
 	[TIER_MAJOR]: 250,
 };
 
-/** How far a place may be and still lend its PROVINCE as the last-resort
- *  anchor. Generous: "in British Columbia" is true across a wide area and is
- *  strictly better than bare coordinates. */
+/** How far a place may be and still lend its PROVINCE as the last-resort anchor. */
 export const REGION_ANCHOR_KM = 400;
 
 /** Under this, "at"/"near" rather than a bearing — never emit "0 km of X". */
@@ -82,8 +34,7 @@ export function distanceKm(
 	b: readonly [number, number],
 ): number {
 	const dLat = (b[1] - a[1]) * RAD;
-	// Normalise the longitude delta into (-180, 180] so a pair straddling the
-	// antimeridian measures the SHORT way round instead of most of the planet.
+	// Normalise lng delta into (-180, 180] — antimeridian pairs must measure the SHORT way.
 	let dLng = (b[0] - a[0]) % 360;
 	if (dLng > 180) dLng -= 360;
 	if (dLng < -180) dLng += 360;
@@ -99,14 +50,7 @@ const POINTS_16 = [
 	"S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
 ] as const;
 
-/**
- * Great-circle INITIAL bearing, rounded to 16 points.
- *
- * From the PLACE to the DETECTION — "18 km NE of Whitecourt" means the fire is
- * north-east of the town, so the town is the origin. Getting this backwards
- * points every reference 180° wrong and reads perfectly plausible, which is why
- * the tests state the direction in words.
- */
+/** ⚠️ Great-circle initial bearing, PLACE→DETECTION not reversed — a flipped origin is 180° wrong and looks plausible. */
 export function bearing16(
 	from: readonly [number, number],
 	to: readonly [number, number],
@@ -160,9 +104,7 @@ export function nearestInTier(
 	return best;
 }
 
-/** The province/state of the nearest place of ANY tier within REGION_ANCHOR_KM.
- *  The last-resort orientation: "in British Columbia" beats bare coordinates
- *  and beats naming a village nobody has heard of. */
+/** Province/state of the nearest place within REGION_ANCHOR_KM — last-resort orientation, beats bare coordinates. */
 export function regionNear(
 	at: readonly [number, number],
 	places: readonly PlaceRow[],
@@ -195,27 +137,7 @@ export interface PlaceReference {
 	readonly anchor: PlaceHit | null;
 }
 
-/**
- * The reference line for a coordinate.
- *
- * Cascade from the SMALLEST tier outward: village → town → notable → major.
- * First hit wins the primary; the anchor is the nearest hit from a MORE
- * prominent tier, so the pair reads "here, near there".
- *
- * ── The high-level anchor is not optional ──
- * "24 km NNW of Fairfield Island, 28 km NNE of Cedar Valley" was two names
- * nobody knows stacked on each other. Even with neighbourhoods removed, a pair
- * of villages can do the same thing. So when the anchor is not itself a MAJOR
- * place, the province is appended: someone always gets one reference they
- * recognise.
- *
- *     18 km NE of Whitecourt, Alberta
- *     6 km S of Yale, 44 km NE of Chilliwack, British Columbia
- *     at Kamloops, British Columbia
- *
- * With nothing in range at all, the province alone still beats coordinates;
- * only when even that is missing do we print lat/lon.
- */
+/** Cascade village→town→notable→major; first hit = primary, nearest MORE prominent tier = anchor. When the anchor isn't MAJOR, the province is appended so there's always one recognisable name. */
 export function placeReference(
 	at: readonly [number, number],
 	places: readonly PlaceRow[],
@@ -225,12 +147,7 @@ export function placeReference(
 	);
 	const hits = byTier.filter((h): h is PlaceHit => h !== null);
 
-	// Smallest tier first — a nearby village locates you better than the city it
-	// belongs to. BUT distance overrules prominence when the gap is large:
-	// standing downtown, "20 km SE of Bowen Island" is absurd when Vancouver is
-	// 2 km away. So a more prominent place wins if it is meaningfully CLOSER.
-	// (This surfaced the moment suburb suppression removed the inner-city
-	// villages that had been papering over it.)
+	// Smallest tier wins, but a more prominent tier overrides if genuinely closer (< 0.6× distance) — else "near a village" beats "in the city" from 2 km away.
 	const primary =
 		hits.length === 0
 			? null
@@ -252,9 +169,7 @@ export function placeReference(
 	const parts = [phraseFor(primary)];
 	if (anchor !== null) parts.push(phraseFor(anchor));
 
-	// The recognisable one. Skipped when a MAJOR city is already named — "10 km
-	// N of Vancouver, British Columbia" is redundant, everyone knows where
-	// Vancouver is.
+	// Skip province suffix when a MAJOR city is already named — redundant.
 	const named = anchor ?? primary;
 	if (named.tier !== TIER_MAJOR) {
 		const region = named.region || regionNear(at, places);
@@ -264,13 +179,7 @@ export function placeReference(
 	return { text: parts.join(", "), primary, anchor };
 }
 
-/**
- * A ReTreever block beats any town name for someone standing in it.
- *
- * "14 km NW of your Sundance block" is the reference a planter actually holds in
- * their head. Only used when the detection is within `maxKm` of a block the user
- * owns; otherwise the world cascade runs.
- */
+/** A user's own block beats any town name when within maxKm; otherwise the world cascade runs. */
 export interface UserBlock {
 	readonly name: string;
 	readonly coordinates: readonly [number, number];

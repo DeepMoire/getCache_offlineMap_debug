@@ -1,8 +1,4 @@
-/**
- * The soft cellular download gate: never prompts on WiFi; on cellular it prompts at
- * each +100 MB; Continue raises the bar; "per feature only" latches the session flag.
- * Module state is sequential, so this runs as one monotonic flow (bytes only grow).
- */
+/** Soft cellular download gate: never prompts on WiFi; cellular prompts every +100MB; Continue raises the bar; "per feature only" latches the session flag. */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 let connType: "wifi" | "cellular" = "wifi";

@@ -1,10 +1,4 @@
-// Vertex dragging on completed lines + polygons. Press any vertex (line
-// interior, line endpoint, or polygon corner) and drag: pure visual update
-// during the drag (setData on the live "completed-features" source), with the
-// store getting the final geometry only on release.
-//
-// Extracted from MapDrawControls.svelte. Factory (not a singleton) — each map
-// instance wires its own listeners. Same shape as createUserLocator(() => map).
+// Vertex dragging on completed lines + polygons: pure visual update during the drag (setData on the "completed-features" source), store gets the final geometry only on release. Factory — each map instance wires its own listeners.
 import type {
     Map as MapboxMap,
     MapLayerMouseEvent,
@@ -19,8 +13,6 @@ import {
 } from "$parent/siblings/getCache_OnlineMap/lib/mapDraw";
 import { syncAreaLabels } from "$parent/siblings/getCache_OnlineMap/lib/areaLabels";
 import { isFiniteLngLat } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
-// 28 Aug 2026: now comes from the host through ../shared/mapHostPorts (MapHostStore = the
-// slice of the host's MapStore this file touches).
 import type { MapHostStore as MapStore } from "../shared/mapHostPorts";
 
 type GeomKind = "LineString" | "Polygon";
@@ -29,15 +21,14 @@ type VertexDragState = {
     vertexIdx: number;
     kind: GeomKind;
     mapFeatureKey: string;
-    coords: Lnglat[]; // line: full coords | polygon: ring without closing dupe
+    coords: Lnglat[]; // line: full coords, polygon: ring without closing dupe
     moved: boolean;
 };
 
 export interface VertexDragDeps {
     getMap: () => MapboxMap | null;
     mapStore: MapStore;
-    /** Popover anchored to the selected feature — cleared while dragging,
-     *  re-anchored on release. Structural to avoid a lib→routes import. */
+    /** Popover anchored to the selected feature — cleared while dragging, re-anchored on release. Structural to avoid a lib→routes import. */
     popoverPos: { clear(): void; compute(feature: Feature): void };
     /** Truthy while a draw tool is armed — vertex drag is disabled then. */
     getDrawIntent: () => unknown;
@@ -46,12 +37,9 @@ export interface VertexDragDeps {
 }
 
 export interface VertexDragger {
-    /** Wire the vertex listeners onto the map. Returns cleanup. Run inside
-     *  the map-wiring `$effect`. */
+    /** Wire the vertex listeners onto the map. Returns cleanup — run inside the map-wiring `$effect`. */
     attach(): () => void;
-    /** Timestamp (performance.now) of the last vertex release. The map's
-     *  click handler reads this to ignore the synthesized click that follows
-     *  a vertex tap/drag, so editing a handle doesn't deselect the feature. */
+    /** Timestamp (performance.now) of the last vertex release, so the map's click handler can ignore the synthesized click that follows a vertex tap/drag. */
     readonly lastUpAt: number;
 }
 
@@ -68,8 +56,7 @@ export function createVertexDrag(deps: VertexDragDeps): VertexDragger {
                 buildCompletedFC(features),
             );
         }
-        // The area-name label rides the polygon's centroid, so it follows
-        // the drag live instead of snapping over on release.
+        // The area-name label rides the polygon's centroid, so it follows the drag live instead of snapping over on release.
         if (map) syncAreaLabels(map, features);
     }
 
@@ -101,7 +88,7 @@ export function createVertexDrag(deps: VertexDragDeps): VertexDragger {
         } else if (feat.geometry?.type === "Polygon") {
             kind = "Polygon";
             const ring = (feat.geometry as GeoJSON.Polygon).coordinates[0];
-            // Strip closing dupe; we re-append on commit.
+            // Strip closing dupe — re-appended on commit.
             const last = ring.length - 1;
             const closes =
                 ring.length > 1 &&
@@ -122,9 +109,7 @@ export function createVertexDrag(deps: VertexDragDeps): VertexDragger {
             moved: false,
         };
         m.getCanvas().style.cursor = "grabbing";
-        // Keep the feature selected so its vertex handles stay visible for
-        // the duration of the drag; only the popover is dismissed (clearing
-        // the bbox) so it doesn't obstruct the gesture.
+        // Keep the feature selected so its vertex handles stay visible; only the popover is dismissed so it doesn't obstruct the gesture.
         deps.setSelectedIndex(idx);
         popoverPos.clear();
         m.on("mousemove", vertexMove);
@@ -136,8 +121,7 @@ export function createVertexDrag(deps: VertexDragDeps): VertexDragger {
 
     const vertexMove = (e: MapMouseEvent | MapTouchEvent) => {
         if (!drag) return;
-        // Multi-touch / pinch can yield NaN lngLat. NaN in source coords
-        // poisons every render-time unproject downstream — see safeMap.ts.
+        // ⚠️ Multi-touch/pinch can yield NaN lngLat — NaN in source coords poisons every render-time unproject downstream (see safeMap.ts).
         if (!isFiniteLngLat(e.lngLat)) return;
         drag.moved = true;
         drag.coords[drag.vertexIdx] = [e.lngLat.lng, e.lngLat.lat];
@@ -165,8 +149,7 @@ export function createVertexDrag(deps: VertexDragDeps): VertexDragger {
             };
         });
         paintCompleted(feats);
-        // No live segment labels while editing a SAVED feature — measurement legs
-        // belong to the Snake Ruler only; a saved line/polygon stays clean.
+        // No live segment labels while editing a saved feature — measurement legs belong to the Snake Ruler only.
     };
 
     const vertexUp = () => {
@@ -182,8 +165,7 @@ export function createVertexDrag(deps: VertexDragDeps): VertexDragger {
             m.off("touchmove", vertexMove);
         }
         if (!moved || !original) {
-            // No drag — the feature stays selected; re-anchor its popover
-            // (the bbox was cleared on vertexDown).
+            // No drag — the feature stays selected; re-anchor its popover (the bbox was cleared on vertexDown).
             if (original) popoverPos.compute(original);
             return;
         }
@@ -206,8 +188,7 @@ export function createVertexDrag(deps: VertexDragDeps): VertexDragger {
                       properties: { ...(original.properties ?? {}) },
                   };
         mapStore.updateFeature(mapFeatureKey, { geometry });
-        // The feature stays selected so its handles remain editable; bring
-        // the popover back, re-anchored to the new geometry.
+        // The feature stays selected so its handles remain editable; bring the popover back, re-anchored to the new geometry.
         popoverPos.compute(geometry);
     };
 

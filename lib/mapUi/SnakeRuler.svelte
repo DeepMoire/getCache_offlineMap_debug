@@ -1,28 +1,7 @@
-<!--
-  SnakeRuler.svelte — the Snake Ruler measure tool, fully self-contained.
-
-  A SEPARATE feature from the draw palette (LINE/POLY/PIN). It owns ALL its own
-  state (its own vertices, never the draw tool's `drawnVertices`/`drawIntent`),
-  renders its own dark "technical ruler" GL layers + grab hands + readout, and on
-  Save/Share hands the finished geometry back to the host via `onPersist` — which
-  runs the normal feature create + select (+ share) flow.
-
-  Entry: the host's double-tap / long-press gesture seeds the first node via
-  `measureEvent`. From there CLICK-TO-PLACE is the standard mode: each tap
-  appends a node, tapping the LAST node commits, tapping the FIRST (3+ nodes)
-  closes it into a polygon. Dragging an end hand (or the gold node) still grows
-  the snake; snapping the far end onto the other closes it into a polygon
-  (hysteresis so a release-wobble can't un-close it). It NEVER touches draw
-  state, so it can't open the draw palette.
--->
+<!-- SnakeRuler — Snake Ruler measure tool, fully self-contained; owns ALL its own state (never the draw tool's `drawnVertices`/`drawIntent`) and never touches draw state, so it can't open the draw palette. -->
 <script lang="ts">
-// iconPath lives in this child now (28 Aug 2026).
 import { iconPath } from "../shared/icons";
-// Cursor art comes from `$parent/retreeved/sharedAssets` — retreeved/ is the SINGLE
-// SOURCE OF TRUTH for shared art. It used to be the static URL
-// `/mobileAssets/...`, which only resolves on this server, so a child or
-// any other tier reusing the same hand had to keep its own second copy.
-// Importing binds the bytes to the build instead of to one host's URL.
+// Cursor art imports from `$parent/retreeved/sharedAssets` (single source of truth) — binds the bytes to the build, not to one host's URL.
 import handShovelCursor from "$parent/retreeved/sharedAssets/hand_shovel_cursor.webp";
 import handShovelCursorRight from "$parent/retreeved/sharedAssets/hand_shovel_cursor_right.webp";
 import handShovelCursor100 from "$parent/retreeved/sharedAssets/hand_shovel_cursor_100.webp";
@@ -30,15 +9,12 @@ import type { Feature } from "geojson";
 import mapboxgl from "mapbox-gl";
 import type { Map as MapboxMap } from "mapbox-gl";
 import { area, length as turfLength } from "@turf/turf";
-// The ruler runs on BOTH maps (online = Mapbox, offline = MapLibre). A Marker
-// from the wrong library throws "_addMarker is not a function" on addTo.
+// Runs on BOTH maps (Mapbox online, MapLibre offline) — a Marker from the wrong library throws "_addMarker is not a function" on addTo.
 import { markerCtor } from "../shared/rendererOf";
 import type { Lnglat } from "$parent/siblings/getCache_OnlineMap/lib/mapDraw";
 import { formatHectares, formatMeasureDist } from "../panels/measureFormat";
 import { type Rect, mapKeepOutRects, shiftClear } from "../shared/mapKeepOut";
-// Now comes from the host through mapHostPorts (28 Aug 2026). Icon and SharePicker render as
-// ports.ui.*, copyToClipboard is ports.ui.copyToClipboard, ShareFormat is the
-// contract's MapShareRow and MapShareFormat is defined in the contract.
+// Icon and SharePicker render as ports.ui.*; copyToClipboard is ports.ui.copyToClipboard; ShareFormat is the contract's MapShareRow, MapShareFormat is in the contract.
 import type {
     MapHostPorts,
     MapShareFormat,
@@ -64,20 +40,11 @@ let {
     map: MapboxMap | null;
     // Seed from the host's double-tap gesture: plant the first ruler node.
     measureEvent?: { lng: number; lat: number; n: number } | null;
-    // Palette entry: arm the SAME ruler in a tap-to-build mode.
-    //   pin     → a tap DROPS the pin right there (host opens its editor — the
-    //             PIN tool never detours through the ruler's measure popover)
-    //   line    → tap drops ONE bullseye, then the hands extend it
-    //   polygon → each tap drops a corner of an always-closed snake polygon (no hands)
-    // null = not armed (double-tap + hands is the other way in). Palette mode shows
-    // Save only (no inline Share — you Save first, then send the saved feature).
+    // armKind: palette entry arms the SAME ruler in tap-to-build mode — pin drops immediately, line drops one bullseye then hands extend it, polygon adds a corner per tap (closed, no hands); null = double-tap+hands mode.
     armKind?: "line" | "polygon" | "pin" | null;
-    // Fired the instant an end is grabbed — the host tears down the stale
-    // double-tap "Drop a pin" card (it's a ruler now, not a pin).
+    // Fired the instant an end is grabbed — host tears down the stale double-tap "Drop a pin" card.
     onMeasureDrag?: (() => void) | undefined;
-    // Save/Share: hand the finished geometry to the host to persist + select
-    // (+ share when `share` is true), then the ruler clears itself. `format`
-    // is the SharePicker choice (.getcache / .kmz) riding with share=true.
+    // onPersist: hands the finished geometry to the host to persist+select (+share if `share` true); `format` is the SharePicker choice riding with share=true.
     onPersist: (
         kind: "line" | "polygon",
         verts: Lnglat[],
@@ -86,13 +53,7 @@ let {
     ) => void;
     // Single-point Save: drop a real pin at this spot (host opens the pin editor).
     onSavePoint?: ((lng: number, lat: number) => void) | undefined;
-    // Single-point "Plot": throw a Quality 704 plot at this spot — adds a
-    // geo-referenced plot to the active inspection. The killer feature: drop
-    // plots straight from the map, not just from the survey screen. `atSelf` =
-    // the seed snapped onto the user's own blue dot → proof they were physically
-    // there (the host stamps the plot's atUserLocation provenance flag).
-    // `plusCode` is the snapped grid dot's id (null if the plot dropped free,
-    // not on a grid dot). The host stamps it on the plot when present.
+    // onPlot: drops a Quality 704 plot at this spot; `atSelf` = seed snapped onto the user's blue dot (proof-of-presence, stamped as atUserLocation); `plusCode` = the snapped grid dot's id, or null if dropped free.
     onPlot?:
         | ((
               lng: number,
@@ -103,17 +64,11 @@ let {
         | undefined;
     // Fired when the ruler activates, so the host can deselect any feature.
     onActivate?: (() => void) | undefined;
-    // The live user-location ("blue dot") coord, or null if no GPS fix yet.
-    // A double-tap seed within SELF_SNAP_PX of it snaps ONTO it (snap-to-self).
+    // Live user-location ("blue dot") coord, or null if no GPS fix; a double-tap seed within SELF_SNAP_PX snaps onto it (snap-to-self).
     userCoord?: (() => Lnglat | null) | undefined;
-    // Fired the instant a seed snaps to self — the host pulses the blue dot so
-    // the user feels the "got you, placing exactly where you are" connection.
+    // Fired the instant a seed snaps to self — host pulses the blue dot in response.
     onSnapSelf?: (() => void) | undefined;
-    // SNAP-TO-GRID. `gridSnap(lng,lat)` returns the nearest audit-grid dot
-    // within the magnet radius (or null → drop free), and `setGridGlow(dot)`
-    // pulses the gold heads-up ring on that dot. Both null/absent when the grid
-    // is off or snapping is disabled — then the plot seed behaves exactly as
-    // before. The returned dot carries the Plus Code stamped onto the plot.
+    // gridSnap(lng,lat) returns the nearest audit-grid dot within the magnet radius (or null → drop free); setGridGlow(dot) pulses the gold ring on it; both absent when grid/snapping is off.
     gridSnap?:
         | ((
               lng: number,
@@ -127,47 +82,34 @@ let {
         | undefined;
 } = $props();
 
-// ── State (independent — not shared with the draw tool) ──────────────────
 let active = $state(false); // measure mode on
 let verts: Lnglat[] = $state([]); // committed ruler nodes
 let cursor: Lnglat | null = $state(null); // live tip while dragging an end
 let isPolygon = $state(false); // far end snapped onto the other → closed
 let dragFromHead = false; // which end the current drag pulls (true = vertex 0)
 let dragAnchor: Lnglat | null = null; // the grabbed end's position at drag start
-// Polygon RESHAPE: once closed, you can't un-close it, but you CAN drag any
-// vertex to move it. moveIndex = the vertex being dragged (cursor = its live
-// position); null when not reshaping a polygon.
+// Polygon RESHAPE: once closed you can't un-close it, but you CAN drag any vertex; moveIndex = the vertex being dragged (null when not reshaping).
 let moveIndex: number | null = $state(null);
 let mapMoveSeq = $state(0); // bumped on every camera move → re-project the chrome
-// Palette tap-to-build mode (null = double-tap + hands). `paletteMode` mirrors
-// "armed !== null" for the template — palette entries hide the inline Share.
+// Palette tap-to-build mode (null = double-tap+hands); `paletteMode` mirrors "armed !== null" — palette entries hide the inline Share.
 let armed: "line" | "polygon" | "pin" | null = $state(null);
 let paletteMode = $derived(armed !== null);
 
 let canFinish = $derived(isPolygon ? verts.length >= 3 : verts.length >= 2);
-// A lone placed point with the single-point popover (Save = pin). Only for the
-// double-tap/long-press ruler — the PIN tool drops immediately (no lone-point
-// state) and a 1-vertex LINE/POLYGON is still mid-build.
+// Lone placed point with the single-point popover (Save = pin); only for double-tap/long-press entry — PIN drops immediately, a 1-vertex LINE/POLYGON is still mid-build.
 let singlePoint = $derived(
     active && !isPolygon && !cursor && verts.length === 1 && !armed,
 );
 let copied = $state(false); // "Copied!" feedback after a single-point Share
 let copyFailed = $state(false); // "Couldn't copy" — the write was blocked
 let copiedTimer: ReturnType<typeof setTimeout> | null = null;
-// SNAP-TO-SELF: true when the double-tap seed landed on the user's own blue dot
-// (within SELF_SNAP_PX) and we snapped the node exactly onto it. The lone-point
-// popover then reads "At your location" and the Plot it throws is stamped as
-// proof-of-presence. Only meaningful while it's a single point — cleared the
-// moment it grows into a ruler/polygon or is discarded.
+// SNAP-TO-SELF: true when the double-tap seed landed on the blue dot (within SELF_SNAP_PX) — popover reads "At your location", Plot is stamped proof-of-presence; cleared once it grows past a single point.
 let seedAtSelf = $state(false);
-// SNAP-TO-GRID: the audit-grid dot the lone plot seed is currently magnetised
-// to (or null = will drop free). Recomputed reactively as the seed / camera
-// moves; drives the gold glow ring and the Plus Code stamped on the plot.
+// SNAP-TO-GRID: the audit-grid dot the lone seed is magnetised to (null = drops free); drives the gold glow ring and the Plus Code stamped on the plot.
 let gridSnapDot = $state<{ lng: number; lat: number; plusCode: string } | null>(
     null,
 );
 
-// ── Layers ───────────────────────────────────────────────────────────────
 const MEASURE_LINE_SRC = "measure-line";
 const MEASURE_NODES_SRC = "measure-nodes";
 const MEASURE_FILL_SRC = "measure-fill";
@@ -197,28 +139,18 @@ function ensureLayers() {
     map.addSource(MEASURE_TICKS_SRC, { type: "geojson", data: empty });
     map.addSource(MEASURE_NODES_SRC, { type: "geojson", data: empty });
     map.addSource(MEASURE_ENDDOTS_SRC, { type: "geojson", data: empty });
-    // LIVE polygon body — visibly yellow (the ruler's own gold family, same as
-    // the bullseye nodes + gold leg ticks), so an in-progress measurement reads
-    // "live, not yet saved". Saving flips it to the orange POLYGON_FILL. A flat
-    // fill can't do a radial gradient, so we stack two layers: a broad ~14% wash
-    // over the whole body + a denser core. Together they read ~22% and feel
-    // "denser toward the centre" (the look the user picked in the mockup).
+    // LIVE fill is gold (in-progress); saving flips it orange. Two stacked layers (~14% wash + denser core) fake a radial gradient — flat fill can't do one.
     map.addLayer({
         id: "measure-fill", type: "fill", source: MEASURE_FILL_SRC,
         paint: { "fill-color": "#ffd54a", "fill-opacity": 0.22 },
     });
-    // TRANSLUCENT slate "ruler tape" the snake rides on (the harness look). NO centre
-    // line and NO offset bevel — the snake bends in every direction, so a
-    // directional top/bottom shadow flips and looks wrong; a single flat
-    // translucent band reads cleanly at any angle. Ticks ride on top.
+    // Translucent slate "ruler tape" — NO centre line or bevel (a directional shadow flips wrong as the snake bends); ticks ride on top.
     map.addLayer({
         id: "measure-line-casing", type: "line", source: MEASURE_LINE_SRC,
         layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": "#41454d", "line-width": 12, "line-opacity": 0.55 },
     });
-    // Tiered hairline ticks: GOLD per-leg centre (boldest) > white 1/4 + 3/4 marks
-    // (medium) > fine white graduations (thinnest). Colour + width data-driven off
-    // the `kind` property.
+    // Tiered ticks: GOLD per-leg centre (boldest) > white 1/4+3/4 marks (medium) > fine graduations (thinnest); colour/width driven off `kind`.
     map.addLayer({
         id: "measure-ticks", type: "line", source: MEASURE_TICKS_SRC,
         paint: {
@@ -238,20 +170,14 @@ function ensureLayers() {
         id: "measure-nodes-halo", type: "circle", source: MEASURE_NODES_SRC,
         paint: { "circle-radius": 16, "circle-color": "#ffffff", "circle-opacity": 0.01 },
     });
-    // Small rust centre dot on JUST the two ends, so the grabbable ends read
-    // differently from the fixed middle nodes. 4px diameter = radius 2.
+    // Small rust centre dot on JUST the two ends — grabbable ends read differently from fixed middle nodes (4px diameter = radius 2).
     map.addLayer({
         id: "measure-end-dots", type: "circle", source: MEASURE_ENDDOTS_SRC,
         paint: { "circle-radius": 2, "circle-color": "#c97a4a" },
     });
 }
 
-// Perpendicular tick marks — the ruler/tape look. Each LEG of the snake is its
-// OWN ruler: a GOLD tick at the leg's centre, with white graduation ticks
-// stepping symmetrically OUTWARD from that centre. Building per-leg (rather than
-// one continuous walk across the whole path) keeps every leg mirror-symmetric
-// about its gold centre and stops adjacent legs' ticks fighting across a bend.
-// All ticks are centred on the band and kept screen-constant (rebuilt on move).
+// Each LEG is its own ruler: gold tick at centre, white graduations stepping outward — built per-leg so adjacent legs' ticks don't fight across a bend. Screen-constant (rebuilt on move).
 function buildTicksFC(ring: Lnglat[]): GeoJSON.FeatureCollection {
     const features: GeoJSON.Feature[] = [];
     if (!map || ring.length < 2) return { type: "FeatureCollection", features };
@@ -282,11 +208,7 @@ function buildTicksFC(ring: Lnglat[]): GeoJSON.FeatureCollection {
         const place = (d: number, half: number, kind: string) =>
             tick(a.x + ux * d, a.y + uy * d, ux, uy, half, kind);
 
-        // Divide the leg into N EQUAL parts — N a multiple of 4, so 1/4, 1/2, 3/4
-        // are ALWAYS exact division points. Every tick (gold centre, quarter marks,
-        // fine graduations) is therefore locked to the leg's proportions: they're
-        // perfectly symmetric and NEVER drift against each other. Density just
-        // grows with leg length (≈ SPACING_PX apart), like adding finer ruler lines.
+        // Divide the leg into N equal parts (N a multiple of 4) so 1/4, 1/2, 3/4 are always exact — ticks stay locked to the leg's proportions and never drift.
         let n = Math.round(len / SPACING_PX);
         n = Math.max(4, Math.round(n / 4) * 4);
         for (let k = 1; k < n; k++) {
@@ -309,8 +231,7 @@ function liveVerts(): Lnglat[] {
     }
     return verts;
 }
-// committed vertices + the live tip; the tip grows off whichever END was grabbed.
-// For a closed polygon there's no growing tip — the geometry is liveVerts().
+// Committed vertices + the live tip (grows off whichever END was grabbed); closed polygon has no tip — geometry is liveVerts().
 function points(): Lnglat[] {
     if (isPolygon) return liveVerts();
     if (!cursor) return [...verts];
@@ -330,27 +251,21 @@ function render() {
             : [],
     });
     setData(MEASURE_TICKS_SRC, buildTicksFC(ring));
-    // Line mode: nodes = committed vertices (the live tip isn't a node). Polygon:
-    // every vertex is a draggable node, shown live (the moving one follows cursor).
+    // Line: nodes = committed vertices (tip isn't a node). Polygon: every vertex is a draggable node, shown live.
     setData(MEASURE_NODES_SRC, {
         type: "FeatureCollection",
         features: (isPolygon ? pts : verts).map((c) => ({
             type: "Feature", properties: {}, geometry: { type: "Point", coordinates: c },
         })),
     });
-    // Fill the body as soon as there are 3+ nodes — even while OPEN (not yet
-    // snapped closed). We auto-close the RING for the fill geometry only (no line
-    // drawn across the open side, per the design): the translucent body implies
-    // the closure and lets the ≈ area read live. Once snapped (`isPolygon`) the
-    // visible closing edge is the line layer; the fill is identical either way.
+    // Fill draws as soon as there are 3+ nodes, even while still open — we auto-close the RING for the fill geometry only (no visible line across the open side); the fill itself is identical before/after snapping closed.
     setData(MEASURE_FILL_SRC, {
         type: "FeatureCollection",
         features: pts.length >= 3
             ? [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[...pts, pts[0]]] } }]
             : [],
     });
-    // Rust centre dot: on a polygon EVERY vertex is draggable → dot them all (the
-    // visual cue). On a line, just the two free ENDS.
+    // Rust centre dot: polygon dots EVERY vertex (all draggable); line dots just the two free ends.
     const endPts: Lnglat[] = isPolygon
         ? pts
         : pts.length >= 2
@@ -388,9 +303,7 @@ function clearAll() {
     tailCursor = null;
 }
 
-// ── End cursors — a small hand reaching up to GRAB each free end ──────────
-// HEAD (vertex 0, dropped FIRST, on the LEFT) = LEFT hand.
-// TAIL (last vertex, on the RIGHT as you drag left→right) = RIGHT hand.
+// HEAD (vertex 0, dropped first, left) = LEFT hand; TAIL (last vertex, right) = RIGHT hand.
 const HEAD_CURSOR = {
     src: handShovelCursor,
     w: 47, // ← LEFT hand size (set so rendered height ≈ TAIL's ~64px)
@@ -414,23 +327,13 @@ function makeEndCursorEl(src: string, w: number): HTMLElement {
     el.appendChild(img);
     return el;
 }
-// The whole hand is a drag handle. move/up listeners live on WINDOW (not the
-// sprite) so the gesture survives the sprite being removed mid-drag — which
-// happens the instant it snaps to a polygon, letting you drag in/out without
-// lifting.
+// Whole hand is a drag handle; move/up listeners live on WINDOW (not the sprite) so the gesture survives the sprite being removed mid-drag when it snaps to a polygon.
 function wireHandDrag(el: HTMLElement, which: "head" | "tail") {
     let moved = false;
-    // GRAB OFFSET (screen px): the gap between the node and the pointer at grab
-    // time. Applied on every move so the node DOESN'T jump to the cursor — you grab
-    // the hand where it is and it pulls the bullseye along, keeping that gap.
+    // GRAB OFFSET (screen px): gap between node and pointer at grab time, applied every move so the node doesn't jump to the cursor.
     let grabDX = 0;
     let grabDY = 0;
-    // Keep the layout's fake DOM cursor parked at the live pointer DURING the drag.
-    // It's hidden while the native override shows, but `preventDefault` blocks the
-    // `mousemove` that normally moves it — so without this it stays frozen where the
-    // drag started and, when the override lifts on release, the cursor visibly snaps
-    // back there. Pointer events still fire, so sync it from them (mouse only). 11,5
-    // = FAKE_CURSOR_HOTSPOT.
+    // Keeps the fake DOM cursor parked at the live pointer during drag — preventDefault blocks the mousemove it normally follows, so without this it freezes and visibly snaps back on release; synced from pointer events instead (mouse only). 11,5 = FAKE_CURSOR_HOTSPOT.
     let fakeCursor: HTMLElement | null = null;
     const syncFakeCursor = (e: PointerEvent) => {
         if (e.pointerType !== "mouse") return;
@@ -444,10 +347,7 @@ function wireHandDrag(el: HTMLElement, which: "head" | "tail") {
         const p = map!.unproject([e.clientX - r.left + grabDX, e.clientY - r.top + grabDY]);
         return [p.lng, p.lat];
     };
-    // rAF-throttle the re-render: a pointermove only stores the latest point; one
-    // hover()/render() runs per animation frame. This keeps the per-event handler
-    // cheap so the app's (JS-driven) hand cursor never janks / "gets left behind"
-    // under the heavy ruler re-render — no native-cursor override needed.
+    // rAF-throttles the re-render — pointermove only stores the latest point, one hover()/render() per frame, so the hand cursor never janks under the heavy ruler re-render.
     let raf = 0;
     let pendingLL: Lnglat | null = null;
     const flush = () => {
@@ -489,8 +389,7 @@ function wireHandDrag(el: HTMLElement, which: "head" | "tail") {
         moved = false;
         dragFromHead = which === "head";
         dragAnchor = which === "head" ? verts[0] : verts[verts.length - 1];
-        // Record the grab offset (node position minus pointer position, screen px)
-        // so the bullseye doesn't snap to the cursor — it trails the hand by the gap.
+        // Records the grab offset (node minus pointer, screen px) so the bullseye trails the hand instead of snapping to the cursor.
         {
             const r0 = map.getCanvas().getBoundingClientRect();
             const ns = map.project({ lng: dragAnchor[0], lat: dragAnchor[1] });
@@ -499,16 +398,7 @@ function wireHandDrag(el: HTMLElement, which: "head" | "tail") {
         }
         onMeasureDrag?.();
         map.dragPan.disable();
-        // Force the app's OWN hand as a NATIVE cursor for the whole drag (dt-web).
-        // preventDefault on this pointerdown suppresses the compat `mousemove` the
-        // fake DOM cursor follows, so it freezes ("left behind") and — with the
-        // global `cursor:none` — the pointer looks invisible. A native `url()`
-        // cursor is composited (never lags) and IS the user's hand; hide the fake
-        // one so there's a single hand. Cleared on release.
-        // The cursor image now comes from the shared-assets IMPORT, so the CSS
-        // cannot name a static path any more — it reads --rt-grab-cursor, and
-        // the var has to live on <body> because that is where the class goes.
-        // The var carries the whole url() token: `url(var(--x))` is invalid CSS.
+        // Native `url()` hand cursor for the whole drag (composited, never lags) instead of the fake DOM one; --rt-grab-cursor holds the WHOLE `url(...)` token on <body> — `url(var(--x))` is invalid CSS.
         document.body.style.setProperty(
             "--rt-grab-cursor",
             `url(${handShovelCursor100})`,
@@ -522,8 +412,7 @@ function wireHandDrag(el: HTMLElement, which: "head" | "tail") {
 function updateEndCursors() {
     if (!map) return;
     const pts = points();
-    // Hands on the double-tap ruler + the LINE tool; never on PIN (a lone point)
-    // or POLYGON (handled via !isPolygon — its corners are tapped, not dragged).
+    // Hands show on the double-tap ruler + LINE tool; never on PIN (lone point) or POLYGON (corners are tapped, not dragged).
     const show = active && !isPolygon && pts.length >= 1 && armed !== "pin";
     if (!show) {
         headCursor?.remove();
@@ -557,16 +446,13 @@ function updateEndCursors() {
     }
 }
 
-// ── Readouts ──────────────────────────────────────────────────────────────
-// formatHectares / formatMeasureDist now live in ../measureFormat (shared with the
-// line/polygon draw tool so totals + subtotals round identically across both).
+// formatHectares / formatMeasureDist live in ../measureFormat, shared with the draw tool so totals round identically.
 let legMarkers: mapboxgl.Marker[] = [];
 function clearLegs() {
     for (const m of legMarkers) m.remove();
     legMarkers = [];
 }
-// A subtle "leg of the journey" readout. `offset` is a screen-px nudge off the
-// band (screen-constant — no zoom scaling), so the line + gold centre stay clear.
+// Leg readout; `offset` is a screen-px nudge off the band (screen-constant, no zoom scaling) so it clears the line + gold centre.
 function addLeg(lngLat: Lnglat, text: string, offset: [number, number]) {
     if (!map) return;
     const el = document.createElement("div");
@@ -576,9 +462,7 @@ function addLeg(lngLat: Lnglat, text: string, offset: [number, number]) {
         new (markerCtor(map))({ element: el, anchor: "center", offset }).setLngLat(lngLat).addTo(map),
     );
 }
-// The final position of every leg label: a geo point toward the leg's END plus a
-// perpendicular SCREEN offset (upper side, so it sits above the band). Shared by
-// renderLegs (places the markers) and popAnchor (floats the chrome ABOVE them).
+// Leg label position: geo point toward the leg's END + perpendicular screen offset (upper side); shared by renderLegs and popAnchor.
 function legLabelAnchors(): Array<{ geo: Lnglat; off: [number, number] }> {
     if (!map) return [];
     const pts = points();
@@ -604,9 +488,7 @@ function renderLegs() {
     clearLegs();
     if (!map) return;
     const pts = points();
-    // Polygon: label EVERY side (the closed ring, incl. the closing edge). Line:
-    // label each leg, but only when there's more than one (a single leg's
-    // distance IS the total → noise).
+    // Polygon labels EVERY side (incl. closing edge); line labels each leg only when there's more than one (else it'd duplicate the total).
     const ring = isPolygon && pts.length >= 3 ? [...pts, pts[0]] : pts;
     if (ring.length < (isPolygon ? 4 : 3)) return;
     const anchors = legLabelAnchors();
@@ -619,10 +501,7 @@ function renderLegs() {
     }
 }
 
-// ── Interaction ─────────────────────────────────────────────────────────
-// Snaps the tip onto the FAR end → polygon preview, with hysteresis: snaps IN
-// within MEASURE_SNAP_PX but only un-snaps past MEASURE_UNSNAP_PX, so a wobble
-// on release can't accidentally un-polygon it.
+// Snaps the tip onto the FAR end (polygon preview) with hysteresis — snaps in within MEASURE_SNAP_PX, only un-snaps past MEASURE_UNSNAP_PX, so a release wobble can't un-polygon it.
 function hover(lng: number, lat: number) {
     if (!active) return;
     if (map && verts.length >= 3) {
@@ -643,8 +522,7 @@ function hover(lng: number, lat: number) {
     cursor = [lng, lat];
     render();
 }
-// Release → drop a node on the same end the drag pulled from (or keep the
-// polygon-closed state for Save).
+// Release drops a node on the same end the drag pulled from, or keeps the polygon-closed state for Save.
 function commitAt(lng: number, lat: number) {
     if (!active) return;
     if (isPolygon) {
@@ -652,9 +530,7 @@ function commitAt(lng: number, lat: number) {
         render();
         return;
     }
-    // Snap-back: if you release CLOSE to the end you grabbed, you decided not to
-    // drag — so snap it back to itself and add NO node (no tiny trailing stub).
-    // You don't have to land on the exact start pixel; within MEASURE_SNAP_PX cancels.
+    // Snap-back: releasing close to the grabbed end means you decided not to drag — snaps back with NO node added (within MEASURE_SNAP_PX cancels, no tiny trailing stub).
     if (dragAnchor && map) {
         const a = map.project({ lng: dragAnchor[0], lat: dragAnchor[1] });
         const p = map.project({ lng, lat });
@@ -670,10 +546,7 @@ function commitAt(lng: number, lat: number) {
     render();
 }
 
-// If the double-tap seed landed within SELF_SNAP_PX of the user's blue dot,
-// snap the node EXACTLY onto the dot and report it as self. Pixel-space test
-// (project both, compare on screen) so the tolerance is constant regardless of
-// zoom — a finger-width forgiveness, not a geographic distance.
+// Seed within SELF_SNAP_PX of the blue dot snaps exactly onto it (snap-to-self); pixel-space test keeps the tolerance constant across zoom (finger-width, not geographic).
 function snapSeedToSelf(seed: Lnglat): { seed: Lnglat; atSelf: boolean } {
     const uc = userCoord?.();
     if (!uc || !map) return { seed, atSelf: false };
@@ -703,8 +576,7 @@ function start(seed?: Lnglat) {
     render();
     if (atSelf) onSnapSelf?.(); // pulse the blue dot — "got you, placing on you"
 }
-// Palette entry: arm the ruler in a tap-to-build mode (pin / line / polygon).
-// No seed yet — the first map tap places the first node (see the click handler).
+// Palette entry arms the ruler in tap-to-build mode (pin/line/polygon); no seed — the first map tap places the first node.
 function startArmed(kind: "line" | "polygon" | "pin") {
     active = true;
     armed = kind;
@@ -726,33 +598,24 @@ function discard() {
     clearAll();
     verts = [];
 }
-// performance.now() of the last commit — the seed guard below swallows a
-// double-tap seed that arrives right after (a fast final click-to-commit reads
-// as a dblclick, and the host would seed a brand-new ruler over the fresh
-// feature's popover).
+// performance.now() of the last commit — the seed guard below swallows a double-tap seed arriving right after, so a fast final click-to-commit (read as a dblclick) doesn't seed a new ruler over the fresh popover.
 let lastCommitAt = 0;
 function persist(share: boolean, format?: MapShareFormat) {
     if (!canFinish) return;
     lastCommitAt = performance.now();
     const kind: "line" | "polygon" = isPolygon ? "polygon" : "line";
-    // Deep-copy to PLAIN arrays: `verts` holds Svelte `$state` proxy coords, and
-    // a shallow [...verts] would still hand the proxies across — which later
-    // breaks structuredClone in the store ("[object Array] could not be cloned").
+    // Deep-copies to PLAIN arrays — `verts` holds Svelte `$state` proxies; a shallow [...verts] still hands proxies across, which breaks structuredClone in the store.
     const out: Lnglat[] = verts.map((c) => [c[0], c[1]]);
     onPersist(kind, out, share, format);
     discard();
 }
 
-// Share is a format PICK, not a one-shot: the same .getcache / .kmz menu as
-// the feature popover's share button. Selecting a format saves AND shares in
-// one tap — the run stays synchronous so navigator.share keeps the click's
-// user activation.
+// Share is a format pick (.getcache/.kmz), not a one-shot — selecting saves AND shares in one tap; stays synchronous so navigator.share keeps the click's user activation.
 const shareFormats: ShareFormat[] = [
     { ext: "getcache", run: () => persist(true, "getcache") },
     { ext: "kmz", run: () => persist(true, "kmz") },
 ];
-// Palette UNDO: drop the last-placed corner (stays armed + empty at zero, so you
-// can keep tapping). Exposed to the host via bind:this.
+// Palette UNDO: drops the last-placed corner (stays armed+empty at zero so you can keep tapping); exposed to the host via bind:this.
 export function undoLast() {
     if (!active || verts.length === 0) return;
     verts = verts.slice(0, -1);
@@ -761,41 +624,28 @@ export function undoLast() {
     moveIndex = null;
     render();
 }
-// Whether the ruler currently owns the map (any entry mode). The host gates
-// its map-click feature hit-test on this so a mid-measure tap places a node
-// instead of popping a feature editor. Exposed via bind:this.
+// Whether the ruler owns the map (any entry mode) — host gates its map-click feature hit-test on this so a mid-measure tap places a node, not a feature editor. Exposed via bind:this.
 export function isMeasuring(): boolean {
     return active;
 }
 
-// ── Consume the double-tap seed from the host ────────────────────────────
 $effect(() => {
     const ev = measureEvent;
     if (!ev) return;
     measureEvent = null; // consume
     if (armed) return; // a palette tool is active → ignore double-tap seeding
-    // A fast final click-to-commit can read as a dblclick → the host fires a
-    // seed right after the commit landed. Swallow it: the user just FINISHED a
-    // measurement; don't tear down their fresh feature popover with a new seed.
+    // A fast final click-to-commit can read as a dblclick — swallow the seed so a just-finished measurement's fresh popover isn't torn down.
     if (performance.now() - lastCommitAt < 600) return;
     start([ev.lng, ev.lat]);
 });
 
-// ── Palette arm: choose a tool → arm the ruler; clear it → discard. ───────
 $effect(() => {
     const k = armKind;
     if (k && armed !== k) startArmed(k);
     else if (!k && armed) discard();
 });
 
-// ── Tap-to-build: each map click places geometry. ──────────────────────────
-//   pin     → the tap DROPS the pin right there (host opens its editor)
-//   line    → first tap drops ONE bullseye; after that the hands extend it
-//   polygon → every tap adds a corner of the always-closed snake polygon
-//   (hands) → CLICK-TO-PLACE, the standard mode after a double-tap/long-press
-//             seed: each tap appends a node; tap the LAST node to commit; tap
-//             the FIRST (3+ nodes) to close into a polygon. Dragging the
-//             hands/nodes still works alongside.
+// Map click dispatch: pin drops immediately; line's first tap drops one bullseye (hands extend it); polygon adds a corner per tap; hands mode (double-tap entry) is click-to-place — tap the LAST node to commit, the FIRST (3+ nodes) to close.
 $effect(() => {
     const m = map;
     if (!m) return;
@@ -808,10 +658,7 @@ $effect(() => {
             return (q.x - e.point.x) ** 2 + (q.y - e.point.y) ** 2 < FINISH_TAP_PX ** 2;
         });
         if (armed === "pin") {
-            // Drop the pin RIGHT HERE — the PIN tool never detours through the
-            // ruler's measure popover. Deferred a microtask so the host's own
-            // map-click handler (running in this same dispatch) can't see —
-            // and instantly clear — the fresh pin's selection.
+            // Drops the pin right here (never through the measure popover); deferred a microtask so the host's own map-click handler can't instantly clear the fresh pin's selection.
             const [lng, lat] = pt;
             queueMicrotask(() => {
                 onSavePoint?.(lng, lat);
@@ -829,17 +676,10 @@ $effect(() => {
             isPolygon = verts.length >= 3; // closed once it's a real polygon
             render();
         } else {
-            // HANDS MODE (double-tap / long-press entry) — CLICK-TO-PLACE. The
-            // seed's own release-click is swallowed by doubleTapToPin, so the
-            // first click that lands here is a deliberate second tap.
+            // HANDS MODE (double-tap/long-press entry) — click-to-place; the seed's own release-click is swallowed by doubleTapToPin, so the first click here is a deliberate second tap.
             if (isPolygon) return; // closed: corners are drag-to-reshape only
             if (nearIdx === verts.length - 1 && canFinish) {
-                // Tap the LAST node again → commit (same as Save). Deferred a
-                // microtask, like the pin drop above: this component's click
-                // handler registers BEFORE the host's (child effects run
-                // first), so a synchronous select here would be read by the
-                // host's same-dispatch click handler as "popover open, outside
-                // tap" — and instantly deselected.
+                // Tap the LAST node again → commit (like Save), deferred a microtask — this component's click handler registers before the host's, so a synchronous select would read as an outside tap and get instantly deselected.
                 queueMicrotask(() => persist(false));
                 return;
             }
@@ -865,7 +705,6 @@ $effect(() => {
     if (active && verts.length >= 2) onMeasureDrag?.();
 });
 
-// ── GL node grab (the gold ring / fat halo; the hands cover the rest) ─────
 $effect(() => {
     const m = map;
     if (!m) return;
@@ -950,8 +789,7 @@ $effect(() => {
     };
 });
 
-// Chrome placement constants — how the readout + popover dodge the geometry AND
-// the viewport edges (same idea as the snake's end jumping out of the way).
+// Chrome placement constants — how the readout+popover dodge the geometry and viewport edges.
 const CHROME_STACK_PX = 150; // room the popover stack needs beyond the anchor (offset + height)
 const HAND_DROP_PX = 44; // hands hang below the end nodes — clear them when placing BELOW
 const VP_MARGIN = 14; // keep the chrome at least this far from any viewport edge
@@ -960,22 +798,12 @@ const POP_HALF_W = 85; // ~half the Save/Share popover width (for the horizontal
 const POP_GRID_W = 160; // FIXED single-point 2×2 grid width — must match .measure-grid CSS; sized to the GPS readout pill below it
 const POP_EDGE_PX = 5; // the popover may run this close to the side edges (tighter than VP_MARGIN)
 const TOTAL_HALF_W = 72; // ~half the total pill width
-// The painted box vs the anchor point: CSS translates BOTH chrome elements off
-// `y` (see .measure-pop / .measure-total transforms), so a collision test on the
-// raw anchor tests the wrong rectangle. These are the measured painted sizes.
-// The coord pill sits ABOVE the popover when placed above (both hang off the
-// same anchor at different offsets), so the stack spans from the pill's top to
-// the popover's bottom — treat it as ONE box or the pill dodges alone.
+// CSS translates BOTH chrome elements off `y`, so testing the raw anchor tests the wrong rectangle — treat the pill+popover stack as ONE box for collision, or the pill dodges alone.
 const POP_OFFSET_PX = 52; // .measure-pop translate from the anchor
 const TOTAL_OFFSET_PX = 16; // .measure-total translate from the anchor
 const POP_H = 78; // measured painted height of the 2×2 grid popover
 
-// ── Chrome anchor + placement. Default: ABOVE the bounding box of nodes AND leg
-// labels (clear of every node, hand and label). If "above" would clip off the TOP
-// of the viewport, FLIP the stack BELOW the snake; clamp x off the side edges. If
-// neither above nor below fits (snake fills the screen) → `cornered`, and an effect
-// pans the map to open room. `totalX` is nudged toward the tail so the big total
-// doesn't read as the centre marker. ─────
+// popAnchor: default ABOVE the nodes+labels bbox; flips BELOW if above clips the viewport top; `cornered` when neither fits (an effect pans to open room); totalX nudges toward the tail so the total doesn't read as the centre marker.
 let popAnchor = $derived.by(() => {
     if (!map || !active) return null;
     void mapMoveSeq;
@@ -1007,9 +835,7 @@ let popAnchor = $derived.by(() => {
 
     const W = map.getCanvas().clientWidth;
     const H = map.getCanvas().clientHeight;
-    // Object fully off-screen (past ANY edge by > OFFSCREEN_HIDE) → hide the chrome,
-    // so a stray pill never floats on the map with its object panned out of view.
-    // (Without this the horizontal clamp would keep the pills pinned to the side.)
+    // Object fully off-screen (past any edge by > OFFSCREEN_HIDE) hides the chrome — else the horizontal clamp would keep a stray pill pinned to the side.
     if (
         maxX < -OFFSCREEN_HIDE ||
         minX > W + OFFSCREEN_HIDE ||
@@ -1027,26 +853,11 @@ let popAnchor = $derived.by(() => {
     const y = below ? belowY : minY;
     const clampX = (x: number, half: number, edge: number) =>
         Math.min(Math.max(x, edge + half), W - edge - half);
-    // Single point: the 2×2 grid is FIXED-width (POP_GRID_W) and may run right up
-    // to POP_EDGE_PX from the side; the coord pill stays centred UNDER it so the
-    // pair slides to the edge together, symmetrical. Multi-point keeps the
-    // tail-biased total with its own clamp.
+    // Single point: FIXED-width grid (POP_GRID_W) may run up to POP_EDGE_PX from the side, coord pill centred under it so they slide to the edge together; multi-point keeps its own tail-biased clamp.
     const popHalf = singlePoint ? POP_GRID_W / 2 : POP_HALF_W;
     let popX = clampX(cx, popHalf, POP_EDGE_PX);
 
-    // ── Dodge the map's floating chrome (eye toggle + crow switch, top-right).
-    // Staying inside the canvas is not enough: those buttons are PAINTED ON the
-    // canvas at z-index 40, above this popover, so "fits on screen" still lands
-    // it underneath them. The chrome column is just another edge to flip off.
-    //
-    // SIDEWAYS BEATS UPWARD. Moving up AND left at once reads as a diagonal
-    // leap and lands the buttons far from the finger that summoned them. So try
-    // to solve it on the horizontal axis alone, at the height the popover would
-    // naturally sit — straight left, still beside the touch point. Only if no
-    // clear x exists on that row do we fall back to lifting it.
-    //
-    // ONE box spanning the pill AND the popover: they share `y` and must stay
-    // visually joined, so they dodge together or not at all.
+    // Dodges the map's floating chrome (eye+crow, top-right, painted at z-index 40 above this popover) — SIDEWAYS beats upward (avoids a diagonal leap), falling back to lifting only if no clear x exists; pill+popover dodge together as ONE box.
     const popW = popHalf * 2;
     const rects = mapKeepOutRects(W, undefined, map.getCanvas());
     const minPopX = POP_EDGE_PX;
@@ -1058,21 +869,13 @@ let popAnchor = $derived.by(() => {
         h: POP_OFFSET_PX + POP_H - TOTAL_OFFSET_PX,
     });
     const shifted = shiftClear(stackBox(y, below), rects, minPopX, maxPopX);
-    // null = nowhere clear beside the chrome on this row (narrow screen). Keep
-    // the clamped x rather than teleporting the popover away from its snake;
-    // the vertical placement already chosen above stays as the fallback.
+    // null = nowhere clear beside the chrome on this row — keep the clamped x rather than teleporting the popover away from its snake.
     if (shifted !== null) popX = shifted + popHalf;
 
-    // Did the dodge actually move us? A sideways dodge of a 160px popover past
-    // a chrome column this wide is always a big jump (~124px on a 452px canvas
-    // — there is no smaller move that clears it). Pairing that with the usual
-    // upward lift reads as a diagonal leap away from the finger. Once we are
-    // clear SIDEWAYS the lift has nothing left to avoid, so drop it and sit
-    // level with the touch point: straight left, not up-and-left.
+    // If the dodge actually moved us sideways, drop the usual upward lift too (pairing both reads as a diagonal leap) — sit level with the touch point instead.
     const dodgedSideways =
         shifted !== null && Math.abs(shifted + popHalf - clampX(cx, popHalf, POP_EDGE_PX)) > 1;
-    // Level with the snake's vertical centre, +52px to undo .measure-pop's
-    // upward translate — so the popover's own centre lands on the touch point.
+    // Level with the snake's vertical centre, +52px to undo .measure-pop's upward translate, so the popover's centre lands on the touch point.
     const levelY = dodgedSideways ? (minY + maxY) / 2 + POP_OFFSET_PX + POP_H / 2 : y;
 
     return {
@@ -1087,10 +890,7 @@ let popAnchor = $derived.by(() => {
     };
 });
 
-// Cornered (snake taller than the viewport) → pan the map DOWN so the chrome fits
-// above. One easeTo per cornered state; isEasing() guards against re-triggering
-// mid-animation, and once panned `fitsAbove` flips true so it stops. ("Move the
-// page to find more space.")
+// Cornered (snake taller than viewport) pans the map DOWN so the chrome fits above; isEasing() guards against re-triggering mid-animation.
 $effect(() => {
     if (!map || !active) return;
     const a = popAnchor;
@@ -1104,11 +904,7 @@ $effect(() => {
 let totalText = $derived.by(() => {
     if (!active) return null;
     const pts = points();
-    // AREA — shown the moment there are 3+ nodes, whether the snake is snapped
-    // closed (`isPolygon`) or still OPEN. We auto-close the ring (last→first) so
-    // an open snake reports the same area its translucent fill covers. Open reads
-    // "≈ X ha" (an estimate while drawing); snapped-closed reads a plain "X ha".
-    // points() substitutes the dragged corner, so it recalculates as you reshape.
+    // AREA shows once there are 3+ nodes, open or closed — auto-closes the ring so open matches its translucent fill; open reads "≈ X ha", closed reads "X ha".
     if (pts.length >= 3) {
         const ring: Lnglat[] = [...pts, pts[0]];
         const poly: Feature = { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } };
@@ -1116,16 +912,13 @@ let totalText = $derived.by(() => {
         return isPolygon ? ha : `≈ ${ha}`;
     }
     if (pts.length < 1) return null;
-    // A lone point shows its GPS coords (not a distance), rounded to 3 dp for a
-    // calm readout — Copy still grabs the full 5 dp precision (see sharePoint).
+    // A lone point shows GPS coords rounded to 3 dp; Copy still grabs the full 5 dp precision (see sharePoint).
     if (pts.length === 1) return `${pts[0][1].toFixed(3)}°, ${pts[0][0].toFixed(3)}°`;
     const km = turfLength({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: pts } });
     return formatMeasureDist(km);
 });
 
-// Single-point Share: copy the GPS to the clipboard, flash "Copied!" in place of
-// the Share button — no pin save needed to share one point. The flash only fires
-// when the write actually landed; a blocked clipboard flashes "Couldn't copy".
+// Single-point Share copies GPS to clipboard, flashing "Copied!" in place of the button — only on an actual write; a blocked clipboard flashes "Couldn't copy".
 async function sharePoint() {
     const p = verts[0];
     if (!p) return;
@@ -1145,16 +938,11 @@ function savePoint() {
     onSavePoint?.(p[0], p[1]);
     discard();
 }
-// "Plot" — throw a Quality 704 plot at this point (geo-referenced to it).
-// Passes `seedAtSelf` so the host stamps proof-of-presence when the node snapped
-// onto the user's own blue dot (the only place that provenance can be earned).
+// "Plot" throws a Quality 704 plot at this point; passes `seedAtSelf` so the host stamps proof-of-presence when the node snapped onto the blue dot.
 function dropPlot() {
     const p = verts[0];
     if (!p) return;
-    // SNAP-TO-GRID wins over the raw seed position (but snap-to-self wins over
-    // both — a plot ON YOU keeps proof-of-presence and ignores the grid). When
-    // a grid dot is glowing, the plot lands exactly on it + carries its Plus
-    // Code; otherwise it drops free at the seed with no code.
+    // SNAP-TO-GRID wins over the raw seed position, but snap-to-self wins over both (a plot ON YOU ignores the grid); a glowing grid dot stamps its Plus Code, else it drops free.
     const snap = seedAtSelf ? null : gridSnapDot;
     const lng = snap ? snap.lng : p[0];
     const lat = snap ? snap.lat : p[1];
@@ -1163,9 +951,7 @@ function dropPlot() {
     discard();
 }
 
-// Recolour the node ring to the blue-dot blue while a seed is snapped to self,
-// so the snapped node visibly belongs to "you" (vs the normal gold ring). Reverts
-// to gold otherwise. Guarded on the layer existing (ensureLayers runs in start).
+// Recolours the node ring blue while a seed is snapped to self (vs the normal gold), reverting otherwise; guarded on the layer existing (ensureLayers runs in start).
 $effect(() => {
     if (!map || !map.getLayer("measure-nodes")) return;
     map.setPaintProperty(
@@ -1175,12 +961,7 @@ $effect(() => {
     );
 });
 
-// SNAP-TO-GRID heads-up. While a lone plot seed sits within the magnet radius
-// of an audit-grid dot, glow that dot gold so the user SEES where the plot will
-// land before committing. Snap-to-self overrides (a plot on you ignores the
-// grid). Recomputes as the seed moves (verts) or the camera moves (mapMoveSeq,
-// which can change which dots are even in the live grid). Clears the glow the
-// moment we leave single-point mode.
+// SNAP-TO-GRID heads-up: while a lone seed sits within the magnet radius, glow that dot gold before committing (snap-to-self overrides); recomputes on seed/camera move, clears on leaving single-point mode.
 $effect(() => {
     // Track deps explicitly so the effect re-runs on seed / camera change.
     const seed = singlePoint ? verts[0] : null;
@@ -1196,24 +977,12 @@ $effect(() => {
     setGridGlow(dot);
 });
 
-// On every camera move: (1) bump mapMoveSeq so popAnchor re-projects, and (2)
-// REBUILD the ticks. The ticks are baked into lng/lat from a screen-pixel step +
-// length, so without rebuilding they'd scale GEOGRAPHICALLY on zoom (spreading /
-// poking out of the casing) while the line + highlighter band stay screen-px
-// constant. Rebuilding keeps the ticks screen-constant, matching the line.
+// On every camera move: bump mapMoveSeq (re-projects popAnchor) and rebuild the ticks — baked into lng/lat, so without rebuilding they'd scale geographically on zoom instead of staying screen-constant.
 $effect(() => {
     const m = map;
     if (!m) return;
     const onMove = () => {
-        // ACTIVE CHECK FIRST. This fires on every frame of every pan, for the
-        // whole life of the map, whether or not the ruler is in use — and
-        // `mapMoveSeq` is a $state rune, so bumping it re-ran the two effects
-        // that read it (popAnchor at :955, the grid-snap derived at :1160) on
-        // every frame of an IDLE map. Both of those readers begin with
-        // `if (!active) return null`, so every one of those re-runs was
-        // guaranteed to do nothing. Bumping after the guard keeps the ruler
-        // identical when it IS active and costs one boolean check when it
-        // is not.
+        // ACTIVE CHECK FIRST — this fires on every pan frame for the map's whole life; bumping mapMoveSeq before the guard would re-run popAnchor/grid-snap every idle frame for nothing, so the guard comes first.
         if (!active) return;
         mapMoveSeq += 1;
         const pts = points();
@@ -1226,8 +995,7 @@ $effect(() => {
 });
 </script>
 
-<!-- Running total / area — pinned just above the bounding box, clear of every
-     node, hand and leg label. Glides while dragging. -->
+<!-- Running total/area — pinned just above the bounding box, clear of every node/hand/label; glides while dragging. -->
 {#if active && totalText && popAnchor}
     <div
         class="rt-line-label rt-line-label-total measure-total"
@@ -1237,17 +1005,13 @@ $effect(() => {
     >{totalText}</div>
 {/if}
 
-<!-- Actions — stacked above the readout, also above the bounding box. A lone
-     point gets the same popover: Save drops a pin, Share copies the GPS. -->
+<!-- Actions — stacked above the readout/bounding box; a lone point gets the same popover: Save drops a pin, Share copies the GPS. -->
 {#if active && popAnchor && (canFinish || singlePoint)}
     <div class="measure-pop" class:measure-grid={singlePoint} class:measure-at-self={singlePoint && seedAtSelf} class:measure-gliding={!!cursor} class:measure-below={popAnchor.below} style="left:{popAnchor.popX}px; top:{popAnchor.y}px;">
         {#if singlePoint}
-            <!-- 2×2 grid: copy · ✕  /  save · plot. "Plot" throws a Quality 704
-                 plot at this point — drop plots straight from the map. -->
+            <!-- 2×2 grid: copy · ✕ / save · plot. "Plot" throws a Quality 704 plot straight from the map. -->
             {#if seedAtSelf}
-                <!-- Snapped onto the blue dot — a plot dropped from here is PROOF
-                     the inspector was physically standing at the plot. Spans the
-                     full grid width, above the four buttons. -->
+                <!-- Snapped onto the blue dot — a plot dropped from here is PROOF the inspector was physically standing there; spans the full grid width above the four buttons. -->
                 <div class="measure-self-badge">
                     <span class="measure-self-dot"></span>At your location
                 </div>
@@ -1274,9 +1038,7 @@ $effect(() => {
         {:else}
             <div class="measure-col">
                 {#if !paletteMode}
-                    <!-- side="below": the ruler popover hugs the top of the map,
-                         so an upward menu overlaps the app header and reads as
-                         "coming out of the top menu", not out of this button. -->
+                    <!-- side="below" — the ruler popover hugs the top of the map, so an upward menu would overlap the app header. -->
                     <ports.ui.SharePicker formats={shareFormats} side="below">
                         {#snippet trigger({ toggle })}
                             <button class="measure-btn measure-share" onclick={toggle} title="Save &amp; share">
@@ -1301,10 +1063,8 @@ $effect(() => {
 {/if}
 
 <style>
-    /* Running-total readout — pinned just above the snake's bounding-box top.
-       transition on left/top so it GLIDES as the snake reshapes. */
-    /* z-index 16/17: BELOW the modules drawer (z 22) and its scrim (z 18) —
-       same convention as the title/zoom chips in MapDrawControls. */
+    /* Running-total readout — pinned just above the bounding-box top; transitions left/top so it glides as the snake reshapes. */
+    /* z-index 16/17: BELOW the modules drawer (z 22) and its scrim (z 18) — same convention as the title/zoom chips in MapDrawControls. */
     .measure-total {
         position: absolute;
         transform: translate(-50%, calc(-100% - 16px));
@@ -1313,19 +1073,16 @@ $effect(() => {
     }
     /* Flipped BELOW the snake (no room above) — hang downward from the anchor. */
     .measure-total.measure-below { transform: translate(-50%, 16px); }
-    /* Glide only WHILE dragging (cursor live); during a map pan we want it to
-       stick to the snake with no lag. */
+    /* Glide only WHILE dragging (cursor live); during a map pan it should stick to the snake with no lag. */
     .measure-total.measure-gliding,
     .measure-pop.measure-gliding {
         transition: left 0.14s ease-out, top 0.14s ease-out;
     }
 
-    /* Action popover — stacked above the readout, above the bounding-box top, so
-       it never covers a node / hand / label. */
+    /* Action popover — stacked above the readout/bounding-box top so it never covers a node/hand/label. */
     .measure-pop {
         position: absolute;
-        /* Intrinsic width — an abspos box near the right edge otherwise
-           shrink-to-fits into the leftover space and squishes the buttons. */
+        /* Intrinsic width — an abspos box near the right edge otherwise shrink-to-fits into the leftover space and squishes the buttons. */
         width: max-content;
         transform: translate(-50%, calc(-100% - 52px));
         z-index: 17;
@@ -1343,8 +1100,7 @@ $effect(() => {
     /* Flipped BELOW the snake (no room above) — hang downward from the anchor. */
     .measure-pop.measure-below { transform: translate(-50%, 52px); }
 
-    /* Share/Save stacked, ✕ beside them. Outline buttons matching the Inbox
-       toolbar style — gold Save (commit), terracotta Share + ✕ (context). */
+    /* Share/Save stacked, ✕ beside them — outline buttons matching the Inbox toolbar style: gold Save (commit), terracotta Share/✕ (context). */
     .measure-col {
         display: flex;
         flex-direction: column;
@@ -1365,10 +1121,7 @@ $effect(() => {
         letter-spacing: 0.03em;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
-        /* DARK WRITING SHADOW: the glass is translucent, so over a pale
-           satellite frame the coloured labels (Copy especially) washed out.
-           A tight dark drop + a soft dark halo keeps every label readable on
-           ANY background without touching the label colours themselves. */
+        /* DARK WRITING SHADOW — the glass is translucent, so labels washed out over a pale satellite frame; a dark drop+halo keeps them readable on ANY background without touching label colours. */
         text-shadow:
             0 1px 1px rgba(0, 0, 0, 0.95),
             0 0 3px rgba(0, 0, 0, 0.85),
@@ -1381,15 +1134,10 @@ $effect(() => {
         filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.9))
             drop-shadow(0 0 3px rgba(0, 0, 0, 0.6));
     }
-    /* Both webp icons sized by HEIGHT (the pin art is much taller than wide,
-       so a width cap let it inflate its button) — height caps keep every
-       button in the 2×2 grid the same rectangle. */
+    /* Both webp icons sized by HEIGHT — the pin art is much taller than wide, so a width cap let it inflate its button; height caps keep every 2×2 grid button the same rectangle. */
     .measure-pin-ic { height: 24px; width: auto; flex-shrink: 0; display: block; }
 
-    /* Single-point menu: a 2×2 grid — copy · ✕ (top) / save · plot (bottom).
-       FIXED width — must match POP_GRID_W in the clamp code, so the horizontal
-       clamp knows exactly where the edges land. Sized to read as one column
-       with the GPS readout pill beneath it (~160px), not a wide slab. */
+    /* Single-point 2×2 grid (copy·✕ / save·plot) — FIXED width, must match POP_GRID_W in the clamp code so the horizontal clamp knows where the edges land. */
     .measure-pop.measure-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -1397,22 +1145,15 @@ $effect(() => {
         gap: 0.25rem;
         align-items: stretch;
     }
-    /* Tighter buttons inside the narrow grid — the column is ~74px, so shed
-       the horizontal padding and let justify-content center the content.
-       FIXED height + no vertical padding: four equal rectangles — the icons
-       centre in the leftover space instead of padding stacking on top. */
+    /* Tighter buttons in the narrow grid (~74px column) — no horizontal padding; FIXED height + no vertical padding keeps four equal rectangles. */
     .measure-pop.measure-grid .measure-btn {
         padding: 0 0.2rem;
         height: 32px;
     }
-    /* "Plot" — the small quality icon. The killer-feature button: drop a
-       Quality 704 plot right where you tapped on the map. */
+    /* "Plot" — the small quality icon; drops a Quality 704 plot right where you tapped. */
     .measure-plot-ic { height: 24px; width: auto; flex-shrink: 0; display: block; }
 
-    /* Snap-to-self: a plot dropped from here is proof-of-presence. The badge
-       spans the full grid width above the four buttons; the Plot button picks up
-       a blue ring so the "you" action stands out from the gold/orange/white set.
-       Blue (#1da1f2) matches the user-location dot it snapped onto. */
+    /* Snap-to-self: proof-of-presence badge spans the full grid width; Plot picks up a blue ring (#1da1f2, matching the user-location dot) to stand out. */
     .measure-self-badge {
         grid-column: 1 / -1;
         display: flex;
@@ -1444,14 +1185,10 @@ $effect(() => {
         box-shadow: inset 0 0 0 1px color-mix(in srgb, #1da1f2 55%, transparent);
     }
     .measure-plot.at-self:active { background: color-mix(in srgb, #1da1f2 16%, transparent); }
-    /* The SharePicker wrapper is inline-flex by default, which would shrink
-       the Share button to its content — stretch it so Share fills the column
-       exactly like its Save sibling. */
+    /* SharePicker wrapper is inline-flex by default (shrinks Share to its content) — stretched so Share fills the column like its Save sibling. */
     .measure-col :global(.rt-sharepick) { display: flex; }
     .measure-col :global(.rt-sharepick .measure-btn) { flex: 1; }
-    /* Copy = orange, Save = gold, Plot = white (trees), ✕ = GHOST grey —
-       the ✕ is a dismiss (nothing saved is lost), and per the colour law a
-       red X is a mixed signal: red belongs to the trash glyph only. */
+    /* Copy=orange, Save=gold, Plot=white, ✕=ghost grey — per the colour law, red is reserved for the trash glyph only (✕ is a dismiss, nothing lost). */
     .measure-share { color: var(--color-accent-terracotta); }
     .measure-share:active { background: color-mix(in srgb, var(--color-accent-terracotta) 16%, transparent); }
     .measure-save { color: var(--color-accent); }
@@ -1469,9 +1206,7 @@ $effect(() => {
         color: #edefe2;
     }
 
-    /* The DOMINANT total/area readout now shares the draw tool's pill style
-       (.rt-line-label-total in mobile.css) so the ruler and the line-draw tool read
-       identically — only positioning (.measure-total) + number formatting stay local. */
+    /* Dominant total/area readout shares the draw tool's pill style (.rt-line-label-total in mobile.css) — only positioning + number formatting stay local. */
     /* Hand cursor grabbing each free end — the WHOLE sprite is the drag handle. */
     :global(.rt-measure-grab) {
         pointer-events: auto;
@@ -1481,10 +1216,7 @@ $effect(() => {
         -webkit-user-select: none;
     }
     :global(.rt-measure-grab:active) { cursor: grabbing; }
-    /* During a hand drag (dt-web): the app's OWN hand as a native cursor — composited
-       so it never lags / "gets left behind" the way the JS fake cursor does once
-       preventDefault kills mousemove. Hotspot 11,5 matches the fake cursor; hide the
-       fake one so there's a single hand. `grabbing` is just a fallback. */
+    /* Native hand cursor during drag (composited, never lags like the JS fake cursor once preventDefault kills mousemove); hotspot 11,5 matches the fake cursor, hidden so there's a single hand. */
     :global(body.rt-snake-grabbing),
     :global(body.rt-snake-grabbing *) {
         cursor: var(--rt-grab-cursor) 11 5, grabbing !important;
@@ -1501,7 +1233,5 @@ $effect(() => {
         filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 8px rgba(255, 215, 0, 0.5));
     }
 
-    /* Per-leg readout now shares the draw tool's .rt-line-label-leg style
-       (mobile.css) — see ../lineLabels.ts. Only the position (toward the leg's end,
-       nudged off the band) is computed locally. */
+    /* Per-leg readout shares the draw tool's .rt-line-label-leg style (mobile.css, see ../lineLabels.ts) — only the position is computed locally. */
 </style>

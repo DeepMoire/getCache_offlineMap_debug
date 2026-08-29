@@ -1,44 +1,16 @@
-// Overlay visibility — which of the user's drawn map overlays are shown.
-//
-// A worked map gets BUSY (dozens of plot pins, drawn shapes). This is the single
-// source of truth for show/hide per overlay TYPE, flipped by the Legend rows and
-// honoured by every render surface (pinMarkers.sync for pin/plot DOM markers, the
-// completed-feature GL layers for polygons + lines, overlayManager for the PDF
-// overlay layers). Module-level singleton so all three runtime contexts + both
-// maps (online Sandbox, offline) read ONE state — no per-route fork.
-//
-// Persisted to localStorage so a decluttered map stays decluttered across reloads,
-// the same way the basemap key persists.
-//
-// NOTE — the snake-ruler is a LIVE measuring tool, not a saved layer, so it has no
-// visibility toggle here; it only exists while you're actively measuring. The Legend
-// still LISTS it (it's a real mark you make), it just isn't hideable.
+// NOTE — the snake-ruler is a LIVE measuring tool, not a saved layer, so it has no visibility toggle here (the Legend still lists it, just not as hideable).
 
-// 28 Aug 2026: a child may not import SvelteKit's app/environment — same test, inline.
+// A child may not import SvelteKit's app/environment — same browser check, inlined.
 const browser = typeof window !== "undefined";
 
-// NOTE — `fires` is NOT one of the user's own marks; it is the wildfire hotspot
-// layer, and it is the one kind here that is not really "yours to declutter".
-// It gets a toggle because every other legend row has one and a lone
-// un-toggleable row reads as a bug, but it defaults ON and RE-ARMS ITSELF: see
-// FIRE_HIDE_TTL_MS below. A planter who hides fires while working a block must
-// not silently still have them hidden a week later.
+// `fires` (wildfire hotspot layer) is not one of the user's own marks — it gets a toggle for legend-row consistency, but it defaults ON and RE-ARMS ITSELF (FIRE_HIDE_TTL_MS below) so hiding it can never become a silent standing preference.
 export type OverlayKind = "pins" | "plots" | "shapes" | "pdf" | "fires";
 
 const STORAGE_KEY = "retreever-overlay-visibility";
-/** When the fire layer was hidden (epoch ms), or 0. Separate key so the
- *  visibility blob keeps its shape. */
+/** When the fire layer was hidden (epoch ms), or 0; a separate key so the visibility blob keeps its shape. */
 const FIRE_HIDDEN_AT_KEY = "retreever-fires-hidden-at";
 
-/**
- * How long "hide fires" lasts before it expires back to ON.
- *
- * Hiding hazard information is a MOMENTARY act ("I'm reading my plot numbers
- * and the flames are in the way"), never a standing preference. Every other
- * overlay here is the user's own drawing, so hiding it forever is fine; fire is
- * someone else's ground truth, and a toggle they flipped once in July must not
- * be why they don't see a fire in August. 12 h ≈ one working day.
- */
+// 12h ≈ one working day — long enough to work a block, short enough that a toggle flipped in July can't still be hiding fires in August.
 export const FIRE_HIDE_TTL_MS = 12 * 60 * 60 * 1000;
 
 type VisState = Record<OverlayKind, boolean>;
@@ -51,10 +23,7 @@ const DEFAULTS: VisState = {
 	fires: true,
 };
 
-/**
- * Has a "fires hidden" stamp aged out? Any unreadable/absent//garbage stamp
- * counts as expired, so every failure path lands on SHOWING fires.
- */
+/** Any unreadable/absent/garbage stamp counts as expired — every failure path lands on SHOWING fires (fail open, not closed). */
 function fireHideExpired(): boolean {
 	try {
 		const at = Number(localStorage.getItem(FIRE_HIDDEN_AT_KEY));
@@ -76,9 +45,7 @@ function load(): VisState {
 			plots: parsed.plots ?? true,
 			shapes: parsed.shapes ?? true,
 			pdf: parsed.pdf ?? true,
-			// Fires re-arm on their own — a stale "hidden" older than the TTL is
-			// ignored rather than honoured ([[no-silent-fallbacks]] in spirit: the
-			// safe direction is loud, not quiet).
+			// A stale "hidden" older than the TTL is ignored, not honoured — the safe direction is loud, not quiet. [[no-silent-fallbacks]]
 			fires: (parsed.fires ?? true) || fireHideExpired(),
 		};
 	} catch {
@@ -88,11 +55,7 @@ function load(): VisState {
 
 const state = $state<VisState>(load());
 
-// If the fire hide expired during load(), heal DISK too — not just memory.
-// Leaving `fires:false` on disk with the layer visible means the stored state
-// and the screen disagree, and the next reader (a test, a devtools poke, a
-// future migration) sees a lie. Clearing the stamp is what actually ends the
-// hide; the value above only reflects it.
+// Heal DISK too, not just memory — leaving `fires:false` on disk while the layer shows visible means state and screen disagree and the next reader sees a lie.
 if (browser && state.fires) {
 	try {
 		if (localStorage.getItem(FIRE_HIDDEN_AT_KEY) !== null) {
@@ -138,8 +101,7 @@ export const overlayVisibility = {
 	},
 	set(kind: OverlayKind, visible: boolean): void {
 		state[kind] = visible;
-		// Stamp WHEN fires were hidden, so the TTL above can expire it back on.
-		// Showing them again clears the stamp.
+		// Stamp WHEN fires were hidden so the TTL can expire it back on; showing them again clears the stamp.
 		if (kind === "fires" && browser) {
 			try {
 				if (visible) localStorage.removeItem(FIRE_HIDDEN_AT_KEY);

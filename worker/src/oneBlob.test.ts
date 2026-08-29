@@ -1,11 +1,3 @@
-/**
- * THE BLOB IS ONE TILE — and it must hold everything, inside 30 km, once.
- *
- * The failing-first test that matters: features from FOUR different source
- * tiles must all survive into ONE blob, in the right places. That is the whole
- * premise — if it loses features the spec ("everything") is broken, and if it
- * misplaces them the map is nonsense.
- */
 import { describe, expect, it } from "vitest";
 import {
 	BLOB_EXTENT,
@@ -19,13 +11,7 @@ import { readVarint, skipField, unzigzag } from "./mvtBytes";
 
 const SRC_EXTENT = 4096;
 
-/**
- * Build a one-layer source tile holding `lines` in ITS OWN 0..4096 grid.
- *
- * `kinds` (one per line) become a real `kind` tag, with a keys/values table
- * whose ORDER differs per tile — which is the whole point: a feature's tags are
- * indices into ITS OWN tile's tables, so merging tiles must remap them.
- */
+/** Builds a one-layer source tile holding `lines` in its own 0..4096 grid; kinds' keys/values order deliberately differs per tile since a feature's tags index its own tile's tables. */
 function makeTile(
 	name: string,
 	lines: Array<Array<[number, number]>>,
@@ -265,9 +251,6 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 	it("the frame IS the cell's box — no centre, no radius", () => {
 		const frame = tileFrame(CELL_TILE);
 		const box = cellBox(CELL);
-		// The frame is exactly the cell in normalised mercator, so the blob's grid
-		// spans the cell and nothing else. A square needs no centre and no radius —
-		// those fields are DELETED along with the clip that used them.
 		expect(frame.x1).toBeGreaterThan(frame.x0);
 		expect(frame.y1).toBeGreaterThan(frame.y0);
 		expect(frame).not.toHaveProperty("r");
@@ -281,8 +264,6 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 	it("KEEPS EVERY FEATURE from EVERY source tile — this is 'everything'", () => {
 		const tile = CELL_TILE;
 		const frame = tileFrame(CELL_TILE);
-		// Four z13 tiles right at the disc centre, each with 3 short roads next to
-		// the centre point so nothing is clipped away.
 		const n13 = 2 ** 13;
 		const cxT = Math.floor(((LNG + 180) / 360) * n13);
 		const s = Math.sin((LAT * Math.PI) / 180);
@@ -335,8 +316,6 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 
 	it("TRIMS AT THE CELL EDGE — a road in the next cell is not included", () => {
 		const frame = tileFrame(CELL_TILE);
-		// A z13 tile ~100 km east: entirely inside a DIFFERENT cell, which has its
-		// own blob. Nothing of it belongs here.
 		const n13 = 2 ** 13;
 		const farLng = LNG + 1.3; // ~100 km at this latitude
 		const fx = Math.floor(((farLng + 180) / 360) * n13);
@@ -362,11 +341,6 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 	});
 
 	it("⛔ NO SEAM — neighbours cut the same road on the SAME line", () => {
-		// THE TEST THE DISC COULD NEVER PASS. A road crossing a cell boundary is
-		// built into BOTH neighbouring blobs. Under the old disc the two cuts were
-		// at different arcs (two pins, two circles) and the halves did not meet —
-		// the user photographed the result. Under the grid both sides cut at the
-		// shared edge, so the pieces are complementary.
 		const west = CELL;
 		const east = { ix: CELL.ix + 1, iy: CELL.iy , z: BLOB_TILE_Z };
 		const wBox = cellBox(west);
@@ -394,21 +368,11 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 			tileFrame({ z: BLOB_TILE_Z, x: c.ix, y: c.iy });
 		const inWest = buildBlobTile(src, fr(west));
 		const inEast = buildBlobTile(src, fr(east));
-		// The road is present on at least one side, and NEITHER side silently
-		// swallowed the whole thing — together they hold it.
 		expect(inWest.features + inEast.features).toBeGreaterThan(0);
 	});
 
 	it("⛔ A HIGHWAY STAYS A HIGHWAY — tag indices are remapped", () => {
-		// THE BUG THIS REPRODUCES, seen on screen: an interstate rendered as a
-		// FOOT TRAIL. A feature's `tags` are pairs of indices into ITS OWN tile's
-		// keys/values tables. Merging tiles while keeping only the FIRST tile's
-		// tables makes every other tile's features resolve to the wrong string —
-		// silent, and it corrupts MEANING, not geometry, so every geometry test
-		// still passed.
-		//
-		// The two tiles below declare their values in OPPOSITE order, so a naive
-		// merge swaps highway ↔ path exactly as it did in the real archive.
+		// THE BUG THIS GUARDS: merging kept only the first tile's tables, so other tiles' features silently resolved to the wrong kind (highway → foot trail) while geometry tests still passed.
 		const frame = tileFrame(CELL_TILE);
 		const n13 = 2 ** 13;
 		const cxT = Math.floor(((LNG + 180) / 360) * n13);
@@ -426,11 +390,7 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 					tile: { z: 13, x: cxT, y: cyT },
 					data: makeTile("roads", [line, line], ["highway", "highway"]),
 				},
-				// tile B: values = ["track", "path", "highway"] → highway is index 2.
-				// Merged, "highway" is already index 0 from tile A, so tile B's
-				// features MUST be remapped 2 → 0. Without the remap they resolve
-				// to whatever sits at index 2 — the real bug: a highway drawn as a
-				// foot trail.
+				// tile B: values = ["track", "path", "highway"] → highway is index 2; merged, it must remap to tile A's index 0 or resolve to the wrong kind.
 				{
 					tile: { z: 13, x: cxT + 1, y: cyT },
 					data: makeTile("roads", [line, line, line], ["track", "path", "highway"]),
@@ -439,11 +399,7 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 			frame,
 		);
 
-		// ⚠️ ORDER MATTERS — counting totals is NOT enough. With the remap
-		// removed the buggy output is ["highway","highway","highway","track",
-		// "path"]: tile B's TRACK became a HIGHWAY and its HIGHWAY became a PATH.
-		// The totals still summed to 3/1/1, so a count-only assertion passed on
-		// the broken code. Each feature must keep ITS OWN kind, in order.
+		// ⚠️ ORDER MATTERS, not just totals — without the remap, tile B's TRACK becomes HIGHWAY and its HIGHWAY becomes PATH, yet counts still sum to 3/1/1.
 		const kinds = readKinds(res.bytes, "roads");
 		expect(kinds).toEqual([
 			"highway",

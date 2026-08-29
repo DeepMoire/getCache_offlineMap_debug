@@ -1,27 +1,7 @@
-/**
- * THE OFFLINE TRIPWIRES — the rules that must hold or the app is "worse than
- * useless" (you think you have your data offline and you don't). Each test here
- * encodes ONE law of the bake service so a future change that breaks it goes RED
- * instead of silently shipping. These are the entrenched golden rules, in code:
- *
- *   1. A touched feature bakes its blob HEADLESSLY — no Mapbox map, without ever
- *      opening /mobile/offlinev4. (The viewer only views; the service bakes.)
- *   2. A blob is COMPLETE = satellite AND wall-map tiles (roads). A photo alone is
- *      NOT "done" — the pin keeps getting its roads re-fetched until they're there.
- *      (The exact bug: onDisk = satKeys.has(k) marked photo-only pins complete.)
- *   3. Under the 1 GB budget, NOTHING is ever evicted — blobs persist forever.
- *      (The exact bug: every pass deleted blobs not anchored to a current feature.)
- *   4. Over budget, the OLDEST-touched fall off the back, newest survive. The
- *      milk-shelf conveyor — the ONLY way a blob ever disappears.
- *
- * If you're here because a test failed: the failure IS the point. Don't loosen the
- * test to make it pass — the offline guarantee just regressed. Fix the service.
- */
+/** ⚠️ If a test here fails, the failure IS the point — don't loosen the test, fix the service. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Seedable in-memory disk + a mutable budget, shared between the mock factories and
-// the assertions. satStore: areaKey -> photo byte size. tiles: areaKeys whose
-// wall-map tiles are present. cov: the coverage registry. budget: the live cap.
+// Seedable in-memory disk + mutable budget shared by the mock factories and assertions (satStore/tiles/cov/budget).
 const h = vi.hoisted(() => {
 	const satStore = new Map<string, number>();
 	const tiles = new Set<string>();
@@ -48,9 +28,7 @@ const h = vi.hoisted(() => {
 		deleteSatImage: vi.fn(async (k: string) => void satStore.delete(k)),
 		deleteVectorAt: vi.fn(async () => undefined),
 		deleteFireCache: vi.fn(async () => undefined),
-		// Live position. Null by default = "location off / unknown", which is the
-		// right baseline: the older tripwires all describe FEATURE-anchored
-		// behaviour and must not silently gain an extra area.
+		// gps() defaults to null (location off/unknown) — tripwires assume feature-anchored behavior only.
 		getLiveFix: vi.fn(async (): Promise<[number, number] | null> => null),
 		// The fire fetch, reached through the PORT rather than a module mock.
 		fetchAreaFires: vi.fn(async (_lng: number, _lat: number) => ({
@@ -59,12 +37,9 @@ const h = vi.hoisted(() => {
 			sourcesOk: 3,
 			bytes: 0,
 		})),
-		// The bake reader's arrival debt. The real one is a consume-once Set with
-		// one entry per reader; here a single boolean, because the bake reader is
-		// the only reader that exists in these tests.
+		// Arrival debt: real code uses a consume-once Set (per reader); here a single boolean since there's only one reader in tests.
 		fireArrivalOwed: true,
-		// The fire cache READ, as a spy — tripwire 5 makes it throw to prove a
-		// broken fire DB degrades the OVERLAY only and never kills the pass.
+		// fireRead spy — tripwire 5 throws it to prove a broken fire DB degrades only the overlay, never the pass.
 		fireRead: vi.fn(async (_key: string) => null as FireRecord | null),
 	};
 });
@@ -75,10 +50,7 @@ let features: Array<{
 	lastTouched: string;
 	anchors: [number, number][];
 }> = [];
-// NO mapStore / anchors / liveFix / fireFetch MOCKS ANY MORE. The engine imports
-// none of them — it asks the HOST PORT (getCache_OfflineMap/lib/shared/hostPorts.ts), and these tests
-// supply that port themselves via `testPorts` below. That is the point of the
-// seam: were it fake, every tripwire here would bake nothing and go red.
+// The engine reaches only the HOST PORT (testPorts below), never mapStore/anchors/liveFix directly — a fake port would make every tripwire here bake nothing and fail.
 
 vi.mock("../../r2Worker/local_dev/roads/packDownload", () => ({
 	downloadV4Area: h.downloadV4Area,
@@ -88,16 +60,12 @@ vi.mock("../../r2Worker/local_dev/roads/packDownload", () => ({
 	areaTilesPresent: vi.fn(async (lng: number, lat: number) =>
 		h.tiles.has(h.key(lng, lat)),
 	),
-	// Batched probe path: getAllTileKeys snapshots the set; areaTilesPresentIn reads
-	// the live tiles set (so a download earlier in the same pass is reflected) — same
-	// semantics as the per-area probe, just no per-area I/O.
+	// getAllTileKeys snapshots tiles; areaTilesPresentIn reads live tiles (reflects same-pass downloads) — same semantics as the per-area probe, no per-area I/O.
 	getAllTileKeys: vi.fn(async () => new Set(h.tiles)),
 	areaTilesPresentIn: (_stored: Set<string>, lng: number, lat: number) =>
 		h.tiles.has(h.key(lng, lat)),
 	PACK_FORMAT_VERSION: 6,
-	// MUST mirror the real outer ring (40 km): liveAnchor derives MAP_TRIGGER_KM
-	// from it, so a smaller mock would silently test containment at a couple of
-	// kilometres and let a genuine thrash regression through green.
+	// MUST mirror the real outer ring (40 km) — a smaller mock would silently hide a containment/thrash regression.
 	RINGS: [
 		{ km: 3, z: 15 },
 		{ km: 40, z: 12 },
@@ -105,8 +73,7 @@ vi.mock("../../r2Worker/local_dev/roads/packDownload", () => ({
 }));
 
 vi.mock("../store/tombstones/purgeRoadRasters", () => ({
-	// One-shot IndexedDB drop of the DELETED road raster's leftover PNGs — no
-	// indexedDB in the node test env, so it is stubbed like every other store.
+	// One-shot IndexedDB drop of the deleted road raster's leftover PNGs — stubbed (no indexedDB in the node test env).
 	purgeDeadRoadRasters: vi.fn(() => undefined),
 }));
 
@@ -116,8 +83,7 @@ vi.mock("../offlineDownloadGate", () => ({
 	noteDownloadedBytes: () => undefined,
 }));
 
-// NO fireCache MOCK. The engine reaches fire STORAGE through the port too, so
-// the stubs live in `testPorts` below — same door production uses.
+// No fireCache mock — fire storage goes through the port too; stubs live in testPorts below (same door production uses).
 
 
 vi.mock("../satellite/satelliteImage", () => ({
@@ -142,9 +108,7 @@ vi.mock("../satellite/satelliteImage", () => ({
 			img: { blob: { size }, bounds: [0, 0, 1, 1], bakeVersion: 3 },
 		})),
 	),
-	// METADATA ONLY — what the bake service actually calls. Deliberately returns
-	// no `blob`, so a future caller that reaches for pixels on this hot path fails
-	// loudly in tests instead of silently reintroducing the 613 MB allocation.
+	// METADATA ONLY — deliberately omits blob so a future pixel-reaching caller fails loudly instead of silently reintroducing the 613 MB allocation.
 	satImageMeta: vi.fn(async () =>
 		[...h.satStore.entries()].map(([key, bytes]) => ({
 			key,
@@ -194,14 +158,6 @@ import type {
 import { configureTilesHost } from "../../r2Worker/local_dev/tilesHost";
 import { reconcileOnceForTest } from "./bakeService.svelte";
 
-/**
- * THE HOST, as these tests play it — the same job `retreeverPorts()` does for
- * the real app (flatten features into anchored places), but from the plain
- * `features` array above: no store, no TinyBase, no Capacitor.
- *
- * EVERY feature is a place. That mirrors the real `isBlobAnchor`: plots included,
- * because they dedup into their block's disc downstream via satImageKey.
- */
 const testPorts: HostPorts = {
 	places: () =>
 		features.map((f) => ({
@@ -211,9 +167,7 @@ const testPorts: HostPorts = {
 				f.geometry?.geometry?.type === "LineString" ||
 				f.geometry?.geometry?.type === "MultiLineString",
 		})),
-	// Always hydrated: these tests set `features` synchronously, so there is no
-	// loading window. Distinct from "has places" — tripwire 4 seeds ORPHANS with
-	// zero features and still expects the conveyor to evict.
+	// ready() always true here (features set synchronously); distinct from "has places" — tripwire 4 needs eviction with zero features.
 	ready: () => true,
 	onPlacesChanged: () => () => {},
 	fires: {
@@ -226,10 +180,7 @@ const testPorts: HostPorts = {
 			h.fireArrivalOwed = false;
 			return owed;
 		},
-		// The fire STORE. IndexedDB-backed in the real host — none here, so these
-		// are the stubs the old vi.mock used to provide. Empty + never-fresh keeps
-		// the default "nothing covers us, go fetch", which is what every fire
-		// tripwire below asserts against.
+		// Fire store stub (IndexedDB-backed in the real host) — empty + never-fresh, the default every fire tripwire below asserts against.
 		read: (key: string) => h.fireRead(key),
 		write: async () => undefined,
 		delete: h.deleteFireCache,
@@ -237,9 +188,7 @@ const testPorts: HostPorts = {
 		coverage: async () => [],
 		isCoverageFresh: () => false,
 	},
-	// Live position. Null by default = location off / unknown — the right baseline,
-	// since the older tripwires describe FEATURE-anchored behaviour and must not
-	// silently gain an extra area. Tests that want a fix opt in.
+	// gps() defaults to null (location off/unknown) — tripwires assume feature-anchored behavior only; tests opt in to a fix.
 	gps: () => h.getLiveFix(),
 };
 
@@ -249,8 +198,7 @@ const point = (anchor: [number, number]) => ({
 	lastTouched: "2026-06-17T12:00:00Z",
 	anchors: [anchor],
 });
-/** A point feature with an explicit human last-touched (ISO), so tests can order
- *  pins by recency the way the conveyor does. */
+/** Point feature with an explicit last-touched ISO, for ordering pins by recency like the conveyor does. */
 const pointAt = (anchor: [number, number], iso: string) => ({
 	geometry: { geometry: { type: "Point" } },
 	overlayBounds: null as null,
@@ -278,11 +226,7 @@ function seedOrphan(lng: number, lat: number, lastTouched: number): void {
 }
 
 beforeEach(() => {
-	// THIS CHILD HAS NO HOST UNTIL AN APP GIVES IT ONE. `firesUrl()` answers
-	// null until configureTilesHost() runs, so the two fire tripwires below
-	// throw "no tiles host configured" without it. A FIXTURE origin, never a
-	// real one: naming a parent's host here is what noParentNames.test.ts
-	// exists to catch, and nothing is fetched — the tests stub fetch.
+	// configureTilesHost needed or fire tripwires throw "no tiles host configured"; uses a FIXTURE origin only — never a real one (see noParentNames.test.ts).
 	configureTilesHost("https://tiles.example.test");
 	h.satStore.clear();
 	h.tiles.clear();
@@ -315,8 +259,7 @@ describe("offline tripwire 1 — bakes headlessly the moment a feature is touche
 
 describe("offline tripwire 2 — a photo alone is NOT complete; roads are always fetched", () => {
 	it("satellite present but tiles MISSING → STILL downloads the roads (never 'done' on the photo)", async () => {
-		// The dangerous regression: pin has its photo, no roads, and the service
-		// marks it complete forever. Seed exactly that state.
+		// Regression guard: pin has photo but no roads must never be marked complete.
 		h.satStore.set(h.key(50, 60), 1000); // photo on disk
 		// tiles NOT present for (50,60)
 		features = [point([50, 60])];
@@ -335,17 +278,8 @@ describe("offline tripwire 2 — a photo alone is NOT complete; roads are always
 });
 
 describe("offline tripwire — ONE pass has a TIME BUDGET", () => {
-	// THE BUG THIS LOCKS: the conveyor loop used to download every incomplete
-	// area in one pass. Measured on a real map: 81 s of continuous
-	// decode-and-clone for a single pass, with the next already queued, so the
-	// tab never idled and the heap never got a quiet GC — 87% of all allocation
-	// was this loop. A pass must now stop cleanly after its slice and let the
-	// next tick continue; progress is durable, so nothing is lost but latency.
-	/** Run one pass with a fake clock that advances `msPerArea` on every
-	 *  download, then put the shared mock back exactly as it was. The default
-	 *  impl must be restored by hand: `mockClear()` in `beforeEach` resets CALLS
-	 *  but keeps a `mockImplementation`, so leaving ours installed would silently
-	 *  break every later test in the file. */
+	// A pass MUST stop cleanly after its time slice (not download everything) — an unbudgeted pass measured 81s of continuous work and starved GC/idle.
+	/** ⚠️ Must restore the mockImplementation by hand — mockClear() resets calls but not the implementation, so leaving it would silently break later tests. */
 	async function passWithSlowDownloads(msPerArea: number): Promise<number> {
 		let clock = 0;
 		const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
@@ -369,8 +303,7 @@ describe("offline tripwire — ONE pass has a TIME BUDGET", () => {
 	}
 
 	it("stops early instead of walking every area when the slice is used up", async () => {
-		// 12 areas needing work, each "taking" 2 s. An unbudgeted pass does all
-		// 12; a budgeted one stops once the 5 s slice is gone.
+		// 12 areas × 2s each — an unbudgeted pass would do all 12; a budgeted one stops once the 5s slice is gone.
 		features = Array.from({ length: 12 }, (_, i) => point([100 + i, 60]));
 		const n = await passWithSlowDownloads(2000);
 		expect(n).toBeGreaterThan(0); // a pass ALWAYS makes progress…
@@ -378,8 +311,7 @@ describe("offline tripwire — ONE pass has a TIME BUDGET", () => {
 	});
 
 	it("ALWAYS lands at least one area, however slow the device", async () => {
-		// The budget must never starve progress: even when a single download
-		// blows the entire slice, that first area still completes.
+		// The budget must never starve progress — even a download that blows the whole slice still completes its first area.
 		features = [point([200, 60]), point([201, 60])];
 		const n = await passWithSlowDownloads(60_000); // 12× the budget, in one area
 		expect(n).toBe(1);
@@ -388,8 +320,7 @@ describe("offline tripwire — ONE pass has a TIME BUDGET", () => {
 
 describe("offline tripwire 3 — under budget, NOTHING is ever evicted", () => {
 	it("an orphan blob (no live feature) survives every pass while under the 1 GB budget", async () => {
-		// This is the 578→206 swing bug: orphans (incl. the live map's shared photo
-		// cache) were deleted on sight. Under budget they must persist forever.
+		// Regression (578→206 swing bug): orphans must persist forever under budget, never deleted on sight.
 		seedOrphan(99, 99, 1);
 		features = []; // nothing references the orphan
 		await reconcileOnceForTest(testPorts);
@@ -410,9 +341,7 @@ describe("offline tripwire 3b — a kept pin gets BOTH halves; roads top up a ph
 
 describe("offline tripwire 3c — a NEW pin gets its satellite even at the cap (displaces oldest)", () => {
 	it("disk full of OLDER photos → the newest pin still bakes its photo; an old one is evicted", async () => {
-		// THE stuck-at-1GB bug: the gate measured TOTAL bytes on disk, so a full disk
-		// blocked every new pin's photo and nothing was displaced. The conveyor must
-		// rank by touch — newest wins, oldest falls off.
+		// Regression (stuck-at-1GB bug): the conveyor must rank by touch (newest wins) — measuring total disk bytes blocked every new pin's photo.
 		h.budget.bytes = 2000; // demo(1000) + ONE more pin fits; the rest evict
 		// Two OLDER pins already have their photos on disk (disk is "full").
 		h.satStore.set(h.key(10, 10), 1000);
@@ -447,8 +376,7 @@ describe("offline tripwire 4 — over budget, oldest falls off, newest survives"
 	});
 
 	it("a blob is ONE unit — eviction drops the photo AND the roads together (same areaKey)", async () => {
-		// "last touched" = one clock per area; the satellite + roads share it and fall
-		// off the conveyor as a pair. Never one without the other.
+		// "last touched" is one clock per area — satellite + roads share it and evict as a pair, never one without the other.
 		h.budget.bytes = 2500; // demo(1000) + new(1000) keep; old(1000) over
 		seedOrphan(11, 11, 1); // OLDEST — gets evicted
 		seedOrphan(22, 22, 100); // newest — survives
@@ -465,34 +393,27 @@ describe("offline tripwire 4 — over budget, oldest falls off, newest survives"
 		seedOrphan(22, 22, 100);
 		features = [];
 		await reconcileOnceForTest(testPorts);
-		// Otherwise hotspots orphan in rt-fire-cache with no coverage record
-		// pointing at them — invisible, un-evictable, growing forever.
+		// Otherwise hotspots orphan in rt-fire-cache with no coverage record pointing at them — invisible, un-evictable, growing forever.
 		expect(h.deleteFireCache).toHaveBeenCalledWith(h.key(11, 11));
 	});
 });
 
 describe("offline tripwire 6 — an active user with location gets covered, feature or not", () => {
 	it("a user standing NOWHERE NEAR a feature bakes a blob at their position", async () => {
-		// THE POINT OF THE WHOLE FEATURE: install the app, walk onto a block, make
-		// nothing. Before this, mapStore.allMaps was the only anchor source, so a
-		// user with no features got no photo, no roads and no fires — on the one
-		// screen that must work without signal.
+		// The point of the feature: a user with no features still gets a blob at their live position — the one screen that must work without signal.
 		h.getLiveFix.mockResolvedValue([100, 60]);
 		await reconcileOnceForTest(testPorts);
 		expect(h.bakeSatelliteImage).toHaveBeenCalledWith([100, 60]);
 	});
 
-	// The permanent demo blob (MAP_HOME_CENTER) bakes in EVERY pass by design, so
-	// these assertions name the coordinate they care about rather than counting
-	// calls — a count would be asserting on the demo blob by accident.
+	// Demo blob (MAP_HOME_CENTER) bakes every pass by design — assertions name a coordinate rather than count calls, or they'd accidentally assert on the demo.
 	const bakedAt = (c: [number, number]): boolean =>
 		h.bakeSatelliteImage.mock.calls.some(
 			([arg]) => arg[0] === c[0] && arg[1] === c[1],
 		);
 
 	it("does NOT bake anything extra when location is off", async () => {
-		// Permission is never assumed and never asked for. No fix = feature
-		// anchors only, exactly as before.
+		// Permission is never assumed/requested — no fix means feature anchors only.
 		h.getLiveFix.mockResolvedValue(null);
 		features = [point([10, 20])];
 		await reconcileOnceForTest(testPorts);
@@ -505,9 +426,7 @@ describe("offline tripwire 6 — an active user with location gets covered, feat
 	});
 
 	it("does NOT re-bake for a user standing beside their own pin", async () => {
-		// The 11 m thrash. satImageKey rounds to 4 decimals, so a raw live fix
-		// would mint a new area — and a new 2 km photo — every few paces. The
-		// containment test must see the feature's own coverage and stay quiet.
+		// The 11m thrash: satImageKey rounds to 4 decimals, so a raw live fix would mint a new area every few paces unless containment sees the feature's own coverage.
 		features = [point([10, 20])];
 		h.getLiveFix.mockResolvedValue([10.0001, 20.0001]); // ~11 m away
 		await reconcileOnceForTest(testPorts);
@@ -516,8 +435,7 @@ describe("offline tripwire 6 — an active user with location gets covered, feat
 	});
 
 	it("does not re-bake while pacing a block all day", async () => {
-		// ~1 km of wandering, well inside the 40 km blob. Every one of these
-		// positions is a distinct satImageKey; none may produce a download.
+		// ~1km of wandering inside the 40km blob — every position is a distinct satImageKey; none may produce a download.
 		features = [point([10, 20])];
 		await reconcileOnceForTest(testPorts); // the pin's own blob lands first
 		for (const dLat of [0.001, 0.003, 0.006, 0.009]) {
@@ -529,8 +447,7 @@ describe("offline tripwire 6 — an active user with location gets covered, feat
 	});
 
 	it("DOES bake once the user leaves coverage", async () => {
-		// Past MAP_TRIGGER_KM (1.5 km — the photo radius, not the road ring):
-		// leaving the imagery you have earns exactly one new blob.
+		// Past MAP_TRIGGER_KM (1.5km photo radius, not the road ring) — leaving coverage earns exactly one new blob.
 		features = [point([10, 20])];
 		h.getLiveFix.mockResolvedValue([10, 20.5]); // ~55 km north
 		await reconcileOnceForTest(testPorts);
@@ -538,10 +455,7 @@ describe("offline tripwire 6 — an active user with location gets covered, feat
 	});
 
 	it("fetches fires at the SNAPPED position, never the raw fix", async () => {
-		// refreshFires keys its cache by satImageKey — the same ~11 m round that
-		// makes a moving anchor dangerous for the map blob. A raw fix here would
-		// mint a new fire record every few paces even though containment spared
-		// the photo. Regression: liveFix was pushed into the fire pass unsnapped.
+		// Regression: liveFix must be SNAPPED before the fire pass — raw fix would mint a new fire record every few paces (same 11m round as the map blob).
 		h.fetchAreaFires.mockClear();
 	h.fireRead.mockClear();
 	h.fireRead.mockResolvedValue(null);
@@ -555,8 +469,7 @@ describe("offline tripwire 6 — an active user with location gets covered, feat
 	});
 
 	it("a failing geolocation read never aborts the pass", async () => {
-		// Same law as the fire layer: the live anchor is a BONUS. A geolocation
-		// throw must not starve the features the user explicitly created.
+		// The live anchor is a BONUS — a geolocation throw must not starve the user's actual features.
 		h.getLiveFix.mockRejectedValueOnce(new Error("geolocation exploded"));
 		features = [point([10, 20])];
 		await reconcileOnceForTest(testPorts);
@@ -566,11 +479,7 @@ describe("offline tripwire 6 — an active user with location gets covered, feat
 
 describe("offline tripwire 7 — fires are PERISHABLE and must keep refreshing", () => {
 	it("refreshes fires for an area whose photo and tiles are ALREADY on disk", async () => {
-		// THE BUG: fireTask lived inside ensureAreaData, which the pass SKIPS once
-		// an area is complete ("if (satOnDisk && tilesOnDisk) continue"). That
-		// contract is right for tiles and photos — they're immutable, so once
-		// downloaded there is nothing to do — and catastrophic for fires, which go
-		// stale hourly. A settled camp would show yesterday's hotspots forever.
+		// Regression: fires must refresh even when photo+tiles are complete — fireTask used to live inside the completion-gated ensureAreaData and never re-ran.
 		h.fetchAreaFires.mockClear();
 	h.fireRead.mockClear();
 	h.fireRead.mockResolvedValue(null);
@@ -591,10 +500,7 @@ describe("offline tripwire 7 — fires are PERISHABLE and must keep refreshing",
 
 describe("offline tripwire 5 — the fire layer can never break the map", () => {
 	it("a THROWING fire cache does not abort the area (satellite + tiles still run)", async () => {
-		// The map is the primary tool; fires are an overlay. A corrupt fire DB,
-		// exhausted storage, or a missing indexedDB must degrade the OVERLAY only.
-		// Regression: an unwrapped readFireCache threw here and killed the whole
-		// pass — no photo, no roads, no eviction, silently.
+		// Regression: a corrupt fire DB (readFireCache throwing) must degrade the overlay only — it used to kill the whole pass silently.
 		h.fireRead.mockRejectedValueOnce(
 			new ReferenceError("indexedDB is not defined"),
 		);
@@ -608,21 +514,7 @@ describe("offline tripwire 5 — the fire layer can never break the map", () => 
 	});
 });
 
-// ── THE RE-DOWNLOAD TRIPWIRE ────────────────────────────────────────────────
-// A completed area must never be downloaded again on a later pass.
-//
-// The bug (2026-08-10, found from a live coverage record reading
-// `hasLines:false, lineCount:188` — i.e. 188 tiles really on disk but the
-// ledger denying it): the MIRROR step derived `hasLines` from
-// `getVectorKeys()`, which reads the LEGACY `rt-vectors` store. Nothing has
-// written there since the Overpass bake was removed, so on every modern
-// install it is empty → the mirror stamped hasLines:false over each freshly
-// downloaded record → the next pass failed its skip check and re-downloaded
-// the identical area. Every 20 s, forever, until the session pack budget
-// tripped the download circuit breaker.
-//
-// The test harness already mocks getVectorKeys as empty, so these fail on the old
-// code and pass on the fix (presence now read from the v4 tile pile).
+// A completed area must never be re-downloaded — regression: the MIRROR step derived hasLines from the empty legacy getVectorKeys(), causing endless re-download until the circuit breaker tripped.
 describe("offline tripwire — a completed area is NEVER re-downloaded", () => {
 	it("second pass does NOT re-download an area whose tiles are already on disk", async () => {
 		features = [point([10, 20])];

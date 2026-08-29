@@ -1,19 +1,6 @@
 <script lang="ts">
 import "../shared/devCard.css";
-/**
- * CONFIG — Workers and layers. The right-hand rail of the offline-map
- * debugger.
- *
- * WHAT BELONGS HERE: switches that change what the map TALKS TO or DRAWS.
- * Nothing else. The pin picker is not config — it is part of the map's own
- * library (see PinLibrary.svelte).
- *
- * DEV-ONLY BY CONSTRUCTION: the worker override lives behind
- * `import.meta.env.DEV` in tilesHost.ts — a compile-time constant — so a
- * shipped build drops the branch entirely and cannot be switched. That is why
- * this panel is safe to publish at a public URL: it renders, it reads, and it
- * points at production with no way to move it.
- */
+/** CONFIG — the right-hand rail's Workers/layers switches (only things that change what the map talks to or draws; the pin picker is not config, see PinLibrary.svelte). ⚠️ DEV-ONLY BY CONSTRUCTION — the worker override lives behind `import.meta.env.DEV` in tilesHost.ts (compile-time), so a shipped build cannot switch it; that's what makes this panel safe to publish at a public URL. */
 import { onMount } from "svelte";
 import {
 	getWorkerTarget,
@@ -33,50 +20,23 @@ import { LAYER_TOGGLES } from "../onPhone/render/wallLegend";
 let {
 	layers = [],
 }: {
-	/** Layer switches, independent of each other — the point is to turn things
-	 *  off one at a time and watch the heap. `disabled` renders the row greyed
-	 *  out and unclickable — for a layer that exists in the list but isn't
-	 *  safe to flip yet (see the online map's Fires row, held behind a
-	 *  compile-time bisect until fires v2 ships). */
+	/** Layer switches, independent of each other, to turn things off one at a time and watch the heap. `disabled` greys a row out for one that exists but isn't safe to flip yet. */
 	layers?: {
 		key: string;
 		label: string;
 		on: boolean;
 		toggle: () => void;
-		/** HOW the layer draws — "always on" / "pyramid" / "cluster" — shown
-		 *  greyed beside the label. Not what the layer IS (the label says
-		 *  that) but the MECHANISM, because that is what you compare when a
-		 *  feature is missing: "always on" cannot be the cause, "cluster" and
-		 *  "pyramid" can, and they fail differently. See LayerToggle.hint. */
+		/** HOW the layer draws ("always on" / "pyramid" / "cluster"), shown greyed beside the label — the mechanism you compare when a feature is missing. See LayerToggle.hint. */
 		hint?: string;
 		disabled?: boolean;
 		disabledHint?: string;
 	}[];
 } = $props();
 
-// ── WORKER TARGET ───────────────────────────────────────────────────────
-// THREE tiers — r2_prod and r2_dev in the cloud, local_dev on the developer's
-// own machine. See the WorkerTarget block in tilesHost.ts for what each is.
-//
-// local_dev was removed earlier on 27 Aug ("delete the local one, it's too
-// much work" — a row that only works while a terminal is open is usually dead,
-// and a dead switch reads as a broken app) and RESTORED the same day, because
-// removing it removed the only target an outside contributor can reach.
-// r2_prod and r2_dev both live on Chris's Cloudflare account; the key for them
-// is in Bitwarden and is never shared. A contributor runs `wrangler dev
-// --remote` against THEIR OWN free account and THEIR OWN bucket, which is what
-// local_dev points at. Without this row there is no way to test a Worker change
-// without Chris deploying it for you — which is not a contribution loop.
-//
-// The "dead switch reads as broken" worry is answered by the hint text and the
-// greyed-out state, not by hiding the row: absent looks like impossible,
-// greyed-out looks like not-running-yet, and only one of those is true.
-//
-// This list is the ONLY place a row is declared — probing, greying-out and
-// the fallback all read from it, so adding a tier is one entry, not four.
-//
-// Changing the target re-points the NEXT request; in-flight ones finish
-// where they started.
+// THREE tiers: r2_prod / r2_dev (cloud, Chris's Cloudflare account) and local_dev (developer's own machine) — see WorkerTarget in tilesHost.ts.
+// ⚠️ Don't remove local_dev — it's the only tier an outside contributor can reach without the Bitwarden-only Cloudflare key (removed 27 Aug, restored same day).
+// This list is the ONLY place a row is declared — probing, greying-out, and fallback all read from it; adding a tier is one entry.
+// Changing the target re-points the NEXT request; in-flight ones finish where they started.
 let target = $state<WorkerTarget>("production");
 
 const TARGETS: {
@@ -97,28 +57,18 @@ const TARGETS: {
 	{
 		id: "localDev",
 		label: "local_dev",
-		// Interpolated, never retyped. A hand-copied hostname in a hint is a
-		// fourth spelling waiting to happen — this row said "127.0.0.1:8787"
-		// for a day after the constant had moved on.
+		// ⚠️ Interpolated, never retyped — a hardcoded hostname here drifts from the constant (this row said "127.0.0.1:8787" stale for a day).
 		hint: `${LOCAL_DEV_HOST} — \`npm run dev:local\` in workers/offline-tiles. THE ONLY TARGET A CONTRIBUTOR CAN REACH: that script seeds wrangler's local R2 with a public sample archive, so it needs no Cloudflare account and no key. Greyed out until that terminal is running, which is expected, not broken.`,
 	},
 ];
 
-// REACHABILITY LIVES IN THE WORK METER, NOT HERE. probeTarget() records its
-// result in workMeter.svelte.ts; this panel only reads it, and ONLY to grey a
-// row out and offer retry. Before the first probe a tier is undefined — shown
-// neutral, still clickable: a slow probe must never make a Worker look dead.
+// Reachability lives in the work meter (probeTarget() in workMeter.svelte.ts), not here — this panel only reads it. Before the first probe a tier is undefined (neutral, still clickable): a slow probe must never look like a dead Worker.
 function reach(t: WorkerTarget): "ok" | "err" | "wait" {
 	const p = probeOf(t);
 	return p === undefined ? "wait" : p ? "ok" : "err";
 }
 
-// THE CIRCLE — one per row, the CURRENT state of that row's last real call.
-// grey = never asked · yellow = in transit · green = arrived · red = broke.
-// A worker row shows its circle only while SELECTED (the others are blank —
-// nothing is being asked of them). A layer row shows the circle of the
-// download it draws from (LayerToggle.feed). "Port open" is never a colour —
-// see the CIRCUITS note in workMeter.svelte.ts.
+// THE CIRCLE — current state of that row's last real call: grey=never asked · yellow=in transit · green=arrived · red=broke. Worker rows show it only while selected; layer rows show the download they draw from (LayerToggle.feed).
 const circuits = $derived(allCircuits());
 function circ(key: string | undefined): CircuitState {
 	void circuits; // read so this re-runs when any circuit changes
@@ -143,22 +93,7 @@ const CIRC_WORDS: Record<CircuitState, string> = {
 let retrying = $state<WorkerTarget | null>(null);
 
 async function pickTarget(t: WorkerTarget) {
-	// A DEAD ROW RE-PROBES INSTEAD OF DOING NOTHING.
-	//
-	// ⛔ THE ROW USED TO BE `disabled`, WHICH IS WHY YOU COULD LEAVE A TIER AND
-	// NOT GET BACK. MEASURED 27 Aug 2026, Chris: "I went from production to
-	// local but I couldn't get back on to production again." Every reachable
-	// light was set by ONE probe at mount. The tiles-prod DNS record was minutes
-	// old and its negative cache had not expired, so that single probe failed
-	// and the row was `disabled` from then on — the click that would have
-	// re-tested it could not fire, because a disabled button has no click.
-	//
-	// A transient network result was being stored as permanent state. The
-	// deploy fixed the Worker and the panel had no way to notice. Now a click
-	// on a dead row means "try again": we re-probe THAT tier and select it if
-	// it answers. Refusing a dead target is still right — silently switching to
-	// a Worker that isn't there gives a map that never fills and no error
-	// [[no-silent-fallbacks]] — but refusing must not be permanent.
+	// ⛔ A dead row RE-PROBES on click, never `disabled` — a disabled row can trap you on a dead tier permanently (measured 27 Aug 2026: Chris got stuck off production after one stale probe). Refuse a dead target, but never permanently.
 	if (reach(t) === "err") {
 		retrying = t;
 		const alive = await probeTarget(t);
@@ -179,21 +114,7 @@ async function probeAll() {
 	for (const t of TARGETS) {
 		await probeTarget(t.id);
 	}
-	// If the CURRENT target turned out to be gone, move to ANY tier that is
-	// actually answering rather than sit there pointed at nothing.
-	//
-	// ⛔ THIS USED TO READ `reachable.production !== false`, WHICH MADE THE
-	// FALLBACK IMPOSSIBLE IN THE ONE CASE IT EXISTED FOR. production is the
-	// default target, so the branch only runs when production is the dead one —
-	// and then the guard is false and nothing happens. MEASURED 27 Aug 2026:
-	// production NXDOMAIN, r2Dev unconfigured, localDev not running, so all
-	// three rows disabled themselves and the panel showed r2_prod lit green AND
-	// greyed out simultaneously. Selected-and-unreachable is a state the user
-	// cannot leave: every row refuses the click that would fix it.
-	//
-	// Try the others in preference order instead. If NOTHING answers we stay
-	// put and say so — the greying is then honest, and the log names the
-	// hostname so "no blobs" is one glance from being explained.
+	// If the CURRENT target is gone, fall back to any tier that IS answering rather than sit pointed at nothing. ⛔ A guard of `reachable.production !== false` made this impossible in the one case it existed for (measured 27 Aug 2026: all three tiers down, selected-and-unreachable, no row's click could fix it) — try tiers in preference order instead, and if nothing answers, stay put and say so.
 	if (reach(target) === "err") {
 		const alive = (["production", "r2Dev", "localDev"] as WorkerTarget[]).find(
 			(t) => reach(t) === "ok",
@@ -215,8 +136,7 @@ async function probeAll() {
 
 onMount(() => {
 	target = getWorkerTarget();
-	// Unlike the ⚙ this panel is always visible, so probe on mount rather than
-	// on open.
+	// Unlike the ⚙, this panel is always visible, so probe on mount rather than on open.
 	void probeAll();
 });
 </script>
@@ -297,13 +217,9 @@ onMount(() => {
 </div>
 
 <style>
-/* Shell + title come from devCard.css (.dev-card) — the same look as MAP
-   DEBUGGER and OFFLINE BLOBS. This card used to carry its own translucent
-   brown body, 10px radius and a centred 1.6rem title; all deleted 28 Aug 2026
-   so the three cards read as one instrument. */
+/* Shell + title come from devCard.css (.dev-card) — same look as MAP DEBUGGER and OFFLINE BLOBS. */
 .cfg-title {
-	/* A section head under the card title: same family as the title, one
-	   step smaller and dimmer, caps so it reads as a label not a row. */
+	/* Section head under the card title — same family, one step smaller/dimmer, caps so it reads as a label not a row. */
 	font-family: "Inter", -apple-system, sans-serif;
 	font-weight: 800;
 	font-size: 11px;
@@ -327,10 +243,7 @@ onMount(() => {
 	text-align: left;
 }
 .cfg-label {
-	/* Does NOT grow: the hint sits immediately after it, and a growing label
-	   would push the hint to the far right where it reads as a second column
-	   instead of an annotation. `.cfg-hint` and `.dead-tag` take the slack so
-	   every .sw switch still lands on the same right edge. */
+	/* Does NOT grow — a growing label would push the hint to the far right as a second column; .cfg-hint/.dead-tag take the slack so every .sw switch lands on the same right edge. */
 	flex: 0 0 auto;
 	min-width: 0;
 	overflow: hidden;
@@ -338,25 +251,19 @@ onMount(() => {
 	white-space: nowrap;
 }
 .cfg-row.sel {
-	/* GOLD, not off-white. At #e8e8e8 the selected row sat one shade off the
-	   unselected ones and the whole group read as greyed-out/disabled — the
-	   switch looked broken when it was working. The colour has to carry the
-	   state as loudly as the pill does. */
+	/* GOLD, not off-white — #e8e8e8 read as one shade off unselected rows, making the whole group look greyed-out/disabled while it was working. */
 	color: #ffd24a;
 	font-weight: 600;
 }
 .cfg-row.dead {
-	/* Dimmed but CLICKABLE — the click is the retry. `cursor: not-allowed`
-	   here told the user the row was a dead end, which is what it used to be. */
+	/* Dimmed but CLICKABLE — the click is the retry; `cursor: not-allowed` here used to tell the user it was a dead end. */
 	opacity: 0.55;
 	cursor: pointer;
 }
 .cfg-row.retrying {
 	opacity: 0.8;
 }
-/* THE MECHANISM HINT — grey, beside the label, never competing with it.
-   Reads as an annotation on the row rather than a second label: same size
-   family, no weight, and it inherits the row's dimming when a row is dead. */
+/* THE MECHANISM HINT — grey, beside the label, reads as an annotation not a second label; inherits the row's dimming when dead. */
 .cfg-hint {
 	flex: 1 1 auto;
 	min-width: 0;
@@ -383,17 +290,13 @@ onMount(() => {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
-/* THE CIRCLE — sits just left of the switch. Grey until asked, then the
-   current state of the last real call. Muted grey, not black, so "never
-   asked" reads as blank-ish rather than as a failure. */
+/* THE CIRCLE — sits left of the switch; grey until asked, then the last call's state. Muted grey (not black) so "never asked" doesn't read as failure. */
 .circ {
 	flex: 0 0 auto;
 	width: 10px;
 	height: 10px;
 	border-radius: 50%;
-	/* Right-aligned beside the switch on EVERY row. Layer rows already push
-	   it there with their hint; worker rows have no hint, so the circle
-	   takes the slack itself. */
+	/* Right-aligned beside the switch on every row — layer rows push it there via their hint; worker rows (no hint) let the circle take the slack itself. */
 	margin-left: auto;
 	margin-right: 8px;
 	background: #4a4a4a;

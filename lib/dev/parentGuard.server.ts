@@ -1,23 +1,7 @@
 /**
- * THE PARENT-GUARD LIGHT'S DATA SOURCE — a dev-only endpoint that RUNS the
- * real test rather than re-implementing it.
+ * THE PARENT-GUARD LIGHT'S DATA SOURCE — a dev-only endpoint that runs the real test rather than re-implementing it.
  *
- * Every child carries `lib/noParentNames.test.ts`: "a child may not name a
- * parent as a location". It is a vitest test, so the browser cannot run it and
- * the only way to know its colour was to remember to run `npm test`. This
- * runs it on request — once per child, in parallel — and reports pass / fail
- * plus the offending `file:line`s parsed straight from the assertion message.
- *
- * WHY RUN THE TEST INSTEAD OF SHARING ITS REGEX. The light must show the SAME
- * thing that goes red in CI. A second copy of the pattern drifts the day the
- * test is tightened (it was, twice, on 28 Aug 2026 — see the test's own
- * notes), and a light that is green while the test is red is worse than no
- * light. Slower, honest.
- *
- * WHERE THE CHILDREN ARE. Found by SHAPE, never by name: every folder beside
- * this one that carries the guard file IS a child. On a dev machine that is
- * all four; in a solo clone it is just this one. Names of parents appear
- * nowhere here, which is the rule this file reports on.
+ * Children are found by SHAPE, never by name — this file must not hardcode parent/child names itself.
  *
  * `.server.ts` so no page can import it by accident — it spawns processes.
  */
@@ -82,9 +66,7 @@ function runGuard(dir: string): Promise<ChildReport> {
 						});
 					}
 				}
-				// Red with no parsed offenders = the test could not even run
-				// (missing vitest, timeout). Yellow, and say why, rather than a
-				// red that points at nothing.
+				// no parsed offenders = the test couldn't run (missing vitest, timeout) — report yellow, not a red pointing at nothing
 				if (offenders.length === 0) {
 					const note = /timed out|ETIMEDOUT/i.test(String(err))
 						? "guard timed out"

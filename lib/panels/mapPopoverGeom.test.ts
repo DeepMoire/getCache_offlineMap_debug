@@ -34,8 +34,6 @@ function pinAt(y: number) {
 
 describe("placePopover — the card never leaves the viewport", () => {
 	it("keeps a pin card fully inside the usable band when the pin is near the bottom", () => {
-		// THE BUG (screenshot, 2026-08-10): pin low on screen, card rendered
-		// below it, running off the bottom under the tab bar.
 		const p = place({ bbox: pinAt(700) });
 		expect(p.top + Math.min(ESTIMATED_HEIGHT, p.maxH)).toBeLessThanOrEqual(
 			H - BOTTOM,
@@ -46,7 +44,6 @@ describe("placePopover — the card never leaves the viewport", () => {
 	it("flips a pin card ABOVE the pin when there is no room below", () => {
 		const p = place({ bbox: pinAt(700) });
 		expect(p.side).toBe("above");
-		// And it sits clear of the pin, not on top of it.
 		expect(p.top + ESTIMATED_HEIGHT).toBeLessThanOrEqual(pinAt(700).minY);
 	});
 
@@ -65,7 +62,6 @@ describe("placePopover — the card never leaves the viewport", () => {
 	});
 
 	it("respects a measured height taller than the estimate", () => {
-		// A tall card that fits neither side lands clamped at the top reserve.
 		const p = place({ bbox: pinAt(500), measuredHeight: 600 });
 		expect(p.top).toBe(TOP);
 		expect(p.maxH).toBe(H - BOTTOM - TOP);
@@ -76,9 +72,7 @@ describe("placePopover — the card never leaves the viewport", () => {
 		const tall = place({ bbox, measuredHeight: 500 });
 		const short = place({ bbox, measuredHeight: 120 });
 		expect(short.side).toBe("above");
-		// The short card clears the pin entirely.
 		expect(short.top + 120).toBeLessThanOrEqual(bbox.minY);
-		// The tall one can't fit above either, so it stays clamped in-band.
 		expect(tall.top).toBeGreaterThanOrEqual(TOP);
 	});
 
@@ -93,8 +87,6 @@ describe("placePopover — the card never leaves the viewport", () => {
 		const CARD = 240;
 		for (let y = TOP; y < H; y += 25) {
 			const p = place({ bbox: pinAt(y), measuredHeight: CARD });
-			// Either it fits entirely in the band, or it is clamped to the top
-			// and scrolls (maxH), which is the documented too-tall behaviour.
 			const bottom = p.top + CARD;
 			const fits = bottom <= H - BOTTOM;
 			expect(fits || p.top === TOP).toBe(true);
@@ -112,18 +104,8 @@ describe("placePopover — horizontal placement", () => {
 		expect(right.left + right.width).toBeLessThanOrEqual(W - 8);
 	});
 
-	// THE ANTI-LOOP INVARIANT. Width is fed to the DOM as the card's `width`,
-	// which sets the content wrapper's width, which re-wraps text and changes
-	// its height, which is what we measure. So if width depended on the measured
-	// height, measuring would change the thing being measured — a real
-	// ResizeObserver feedback loop (seen 2026-08-10 on the LINE popover).
-	// Width may depend on the container and the crow tile; never on height.
+	// ANTI-LOOP INVARIANT: width must depend only on the container and the crow tile, never on measured height — otherwise measuring creates a real ResizeObserver feedback loop.
 	it("never lets width depend on the measured height", () => {
-		// Crow band sits LOW, so with the old height-dependent overlap test a
-		// short card (ends above 600) missed it while a tall one (reaches past
-		// 600) hit it — same anchor, two different widths. That divergence is
-		// exactly the loop; the band must be judged on the usable area, not the
-		// card, so both give one width.
 		const crow = { left: 320, top: 600, bottom: 700 };
 		for (const bbox of [pinAt(200), pinAt(300), pinAt(400)]) {
 			const widths = new Set<number>();
@@ -133,29 +115,21 @@ describe("placePopover — horizontal placement", () => {
 				widths.add(p.width);
 				lefts.add(p.left);
 			}
-			// One width and one left for every possible content height.
 			expect(widths.size).toBe(1);
 			expect(lefts.size).toBe(1);
 		}
 	});
 
 	it("holds clear of the crow tile when their bands overlap", () => {
-		// Card lands at top ~233 for a pin at y=200, so give the tile a band
-		// that genuinely reaches it.
 		const crow = { left: 320, top: 150, bottom: 300 };
 		const p = place({ bbox: pinAt(200), crow });
 		expect(p.left + p.width).toBeLessThanOrEqual(crow.left - 10);
 	});
 
 	it("ignores the crow tile when it sits outside the usable band entirely", () => {
-		// Overlap is judged against the usable band (TOP..H-BOTTOM), never the
-		// card's own height — see the anti-loop test above. So a tile only counts
-		// as "no overlap" when it is fully outside that band, e.g. tucked under
-		// the tab bar. A tile anywhere inside the band is always respected,
-		// whatever the card's height happens to be.
+		// Overlap is judged against the usable band (TOP..H-BOTTOM), never the card's own height — see the anti-loop test above.
 		const crow = { left: 320, top: H - 40, bottom: H };
 		const p = place({ bbox: pinAt(400), crow, measuredHeight: 200 });
-		// Free to centre on the pin, overlapping the tile's column.
 		expect(p.left + p.width).toBeGreaterThan(crow.left - 10);
 	});
 });
@@ -176,7 +150,6 @@ describe("leaderLine — the dotted trail follows the card", () => {
 		expect(p.side).toBe("above");
 		const l = leaderLine(bbox, p, { measuredHeight: 200 });
 		expect(l).not.toBeNull();
-		// y0 (at the pin) is BELOW y1 (at the card) on screen.
 		expect(l?.y0).toBeGreaterThan(l?.y1 ?? 0);
 		expect(l?.y1).toBe(p.top + 200);
 	});

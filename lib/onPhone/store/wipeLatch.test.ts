@@ -1,22 +1,4 @@
-/**
- * A WIPE MUST NOT BE DEFEATED BY A READ.
- *
- * ── THE BUG THIS PINS, MEASURED LIVE ──────────────────────────────────────
- *
- * The wipe closed every cached IndexedDB handle and `gc-offlineTiles` STILL
- * came back `blocked` — while `gc-offlineSatellite` and `rt-mapRegistry`
- * deleted cleanly every time.
- *
- * The difference is that the map never stops. MapLibre requests tiles
- * continuously, and `idbGetTile` reopens the database on demand, so a read
- * landing microseconds after the closer re-established the very connection
- * that blocks `deleteDatabase`. Closing a handle cannot win a race against
- * something that reopens it.
- *
- * ⛔ THE LATCH IS THE FIX, AND IT MUST BE SEPARATE FROM `resetOfflineDbHandles`.
- * That reset is also used by sandbox toggling, where reopening is REQUIRED.
- * Merging them would break sandbox switching to fix the wipe.
- */
+/** ⛔ The latch must stay separate from resetOfflineDbHandles — that reset is also used by sandbox toggling, where reopening is required; merging them would break sandbox switching to fix the wipe. */
 import "fake-indexeddb/auto";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -35,9 +17,7 @@ describe("the wipe latch", () => {
 	});
 
 	it("⛔ the LATCH and the HANDLE RESET are separate registries", () => {
-		// Sandbox toggling calls the reset and REQUIRES reads to reopen against
-		// the other database name. If the latch fired there, switching into the
-		// sandbox would leave the map permanently unable to read.
+		// ⛔ Sandbox toggling calls the reset and requires reads to reopen — if the latch fired there too, switching into the sandbox would leave the map permanently unable to read.
 		const latch = vi.fn();
 		const reset = vi.fn();
 		registerWipeLatch({ latch, unlatch: () => {} });
@@ -51,8 +31,7 @@ describe("the wipe latch", () => {
 	});
 
 	it("a throwing latch does not stop the others", () => {
-		// Best-effort: one module failing must not leave the rest holding the DB
-		// open, which would block the delete for a different reason.
+		// Best-effort: one module failing must not leave the rest holding the DB open.
 		const bad = vi.fn(() => {
 			throw new Error("boom");
 		});
@@ -65,22 +44,7 @@ describe("the wipe latch", () => {
 	});
 
 	it("⛔ THE READ PATH IS UNCONDITIONAL — a latch must never gate reads", async () => {
-		// THE REGRESSION THIS PINS, and it is the worse of the two failures.
-		//
-		// The latch originally made `idbGetTile` return null while set, to stop a
-		// wipe being defeated by a reopen. It worked — and if the latch ever
-		// survives (a wipe that fails on a path without an unlatch, a reload that
-		// does not happen), EVERY read becomes a miss. The map then draws nothing
-		// while the data sits on disk: the user hit exactly that with 6.4 MB of
-		// roads stored, downloaded four minutes earlier, rendering nothing.
-		//
-		// A stuck wipe is recoverable — press it again. A map that silently reads
-		// nothing is not: it is indistinguishable from "the download never came",
-		// which cost hours of chasing the wrong layer.
-		//
-		// So the wipe closes the cached handle (cheap, correct) and reloads. If a
-		// delete blocks again, fix it in wipe.ts — never by making the read path
-		// conditional.
+		// ⛔ Never make idbGetTile conditional on the latch — if it ever survives (a failed wipe, a reload that doesn't happen), every read becomes a silent miss indistinguishable from "never downloaded". Fix a stuck delete in wipe.ts instead.
 		const { readFileSync } = await import("node:fs");
 		const { fileURLToPath } = await import("node:url");
 		const src = readFileSync(

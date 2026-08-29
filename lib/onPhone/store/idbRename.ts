@@ -1,34 +1,4 @@
-/**
- * idbRename.ts — one-time copy-forward when an IndexedDB database is RENAMED.
- *
- * Renaming an IndexedDB database is not a real operation: a new name is a new,
- * empty database. So every offline box we rename (`retreever-v3-satimg` →
- * `rt-satellite`, etc.) would otherwise look EMPTY to an existing user the first
- * time they launch the renamed build — their baked photos / tiles / coverage
- * "gone". For the offline boxes that's unrecoverable (the data only lives
- * on-device; it never syncs to the cloud).
- *
- * `migrateIdbDatabase` copies a single-objectStore, explicitly-keyed database
- * from its old name into the new name ONCE, on first boot of the renamed build,
- * then leaves the old database in place as a safety net (a later release can
- * sweep it). It is idempotent and best-effort:
- *   • if the new DB already has data → skip (already migrated).
- *   • if the old DB is missing/empty → nothing to do, create the new one clean.
- *   • any error → swallow; the box just starts empty (same as a brand-new user).
- *
- * Shape assumption (true for every offline box here — verified): a SINGLE object
- * store, NO keyPath, keyed by an explicit key argument. The copy preserves each
- * record's key exactly.
- */
-
-/**
- * Does a database of this name ALREADY EXIST on disk? Crucially this must NOT
- * create it — `indexedDB.open(name)` with no version silently CREATES an empty,
- * store-less database, which is exactly the bug that poisoned the renamed boxes
- * (the real module then can't open its object store). `indexedDB.databases()`
- * only lists existing databases, so we probe that first and never open a name
- * that isn't already there.
- */
+/** ⚠️ Must NOT create the DB if it doesn't exist — `indexedDB.open(name)` with no version silently creates an empty, store-less DB (the bug that poisoned the renamed boxes). */
 async function dbExists(name: string): Promise<boolean> {
 	try {
 		if (typeof indexedDB.databases === "function") {
@@ -36,11 +6,8 @@ async function dbExists(name: string): Promise<boolean> {
 			return dbs.some((d) => d.name === name);
 		}
 	} catch {
-		/* fall through to the conservative default below */
 	}
-	// No indexedDB.databases() support (older Firefox): we cannot check without
-	// creating. Bias to "exists" so we never accidentally CREATE a store-less DB;
-	// the readers below tolerate a missing store and return empty.
+	// No indexedDB.databases() support (older Firefox) — bias to true so we never accidentally create a store-less DB.
 	return true;
 }
 
@@ -151,15 +118,6 @@ async function writeAll(
 	});
 }
 
-/**
- * Copy a single-objectStore, explicitly-keyed IndexedDB database from `oldName`
- * to `newName`, ONCE. Safe to call on every boot — it no-ops once the new DB has
- * data, and the old DB is left untouched as a fallback.
- *
- * @param oldName  pre-rename database name (e.g. "retreever-v3-satimg")
- * @param newName  post-rename database name (e.g. "rt-satellite")
- * @param store    the single objectStore name inside both (e.g. "images")
- */
 /** Delete `name` IF it exists but does NOT contain `store` (a poisoned shell). */
 async function deleteIfShell(name: string, store: string): Promise<void> {
 	if (!(await dbExists(name))) return;
@@ -193,16 +151,10 @@ export async function migrateIdbDatabase(
 ): Promise<void> {
 	if (typeof indexedDB === "undefined") return;
 	try {
-		// Heal a poisoned SHELL: a destination DB that exists but lacks the expected
-		// object store (created store-less by an earlier versionless open). Left in
-		// place it blocks the real module from ever creating its store. Delete it so
-		// the migration — or the module's own openDb — can rebuild it cleanly.
+		// Heals a poisoned SHELL (dest DB exists but lacks its store) — left alone it blocks the module from ever creating its store.
 		await deleteIfShell(newName, store);
 
-		// Already migrated (or a fresh user already writing to the new name) → done.
 		if (await dbHasData(newName, store)) return;
-		// Nothing in the old box → nothing to carry; the new box gets created
-		// lazily by the module's own openDb on first write.
 		if (!(await dbHasData(oldName, store))) return;
 
 		const rows = await readAll(oldName, store);
@@ -214,9 +166,7 @@ export async function migrateIdbDatabase(
 			);
 		}
 	} catch {
-		// Best-effort: a failed migration just means the box starts empty for this
-		// user (offline data re-bakes; tree data re-pulls from cloud). Never throw —
-		// a rename must not be able to break boot.
+		// Best-effort — never throw; a failed migration must not be able to break boot.
 	}
 }
 
@@ -241,26 +191,13 @@ function anyStoreHasData(db: IDBDatabase): Promise<boolean> {
 	});
 }
 
-/**
- * Clone an ENTIRE multi-objectStore IndexedDB database (every store, preserving
- * each store's keyPath / autoIncrement and every record's key) from `oldName`
- * into `newName`, ONCE. This is the variant for the TinyBase persister database
- * (`retreever` → `rt-treeStuff`), whose internal layout (stores `t` / `v`, keyed
- * by keyPath) we must not assume away.
- *
- * Idempotent + best-effort, same contract as migrateIdbDatabase: no-ops once the
- * destination has any data; never throws (a failed clone just means the new DB
- * starts empty and the TinyBase store re-pulls from the cloud on sign-in).
- */
 export async function cloneEntireIdbDatabase(
 	oldName: string,
 	newName: string,
 ): Promise<void> {
 	if (typeof indexedDB === "undefined") return;
 
-	// Open WITHOUT creating: only ever open a name that already exists, so we
-	// never leave a store-less shell behind (the bug that broke the renamed
-	// boxes). The TinyBase persister creates `newName` itself on first load.
+	// Open WITHOUT creating — only open a name that already exists, or leave a store-less shell (the bug that broke renamed boxes).
 	const openPlain = async (name: string): Promise<IDBDatabase | null> => {
 		if (!(await dbExists(name))) return null;
 		return new Promise((resolve) => {
@@ -272,7 +209,6 @@ export async function cloneEntireIdbDatabase(
 	};
 
 	try {
-		// Destination already populated → migrated already (or fresh user). Done.
 		const dest0 = await openPlain(newName);
 		if (dest0) {
 			const has = await anyStoreHasData(dest0);
@@ -292,7 +228,6 @@ export async function cloneEntireIdbDatabase(
 			return;
 		}
 
-		// Read the full layout + contents of every source store.
 		type StoreDump = {
 			name: string;
 			keyPath: string | string[] | null;
@@ -316,9 +251,7 @@ export async function cloneEntireIdbDatabase(
 				cur.onsuccess = () => {
 					const c = cur.result;
 					if (c) {
-						// With an inline keyPath the key travels inside the value; with
-						// an out-of-line key we must carry it explicitly. Capture the key
-						// only when there's no keyPath (explicit-key store).
+						// Inline keyPath → key travels inside value; out-of-line key → must capture it explicitly.
 						dump.rows.push({ key: c.key, value: c.value });
 						c.continue();
 					} else if (--pending === 0) {
@@ -332,7 +265,6 @@ export async function cloneEntireIdbDatabase(
 		});
 		src.close();
 
-		// Create the destination DB with the same store layout, then fill it.
 		const ok = await new Promise<boolean>((resolve) => {
 			const req = indexedDB.open(newName, 1);
 			req.onupgradeneeded = () => {
@@ -384,26 +316,8 @@ export async function cloneEntireIdbDatabase(
 	}
 }
 
-/**
- * One-time table rename INSIDE the TinyBase persister database: the `t`
- * object store holds one record per table (`{k: <tableId>, v: <rows>}`, inline
- * keyPath `k`).
- *
- * ⛔ THE TABLE NAMES ARE THE CALLER'S, NOT THIS CHILD'S.
- * They used to be hardcoded here — `quality704Table` → `qaSurveyTable` and so
- * on. Those are Tiny-schema names: ReTreever's private data model, sitting in a
- * child that is meant to be published and installed by strangers. A map package
- * has no business knowing what a survey table is called.
- *
- * So the child owns the MECHANISM (walk `t`, move records, never clobber a
- * populated destination, rename an FK cell in passing) and the caller owns the
- * FACTS. Pass nothing and it is a no-op. See RULE 7 in childBoundary.test.ts.
- *
- * MUST run before the persister loads: the store's TablesSchema no longer
- * declares the old names, so an un-migrated load would silently drop both
- * tables. Idempotent (no old records → no-op) and best-effort (a failure
- * leaves the old records in place for the next boot to retry).
- */
+/** ⛔ Table names are the caller's, not this child's — never hardcode ReTreever-specific names here. */
+/** ⚠️ Must run before the persister loads — the schema no longer declares old names, so running late silently drops both tables. */
 export interface TableRename {
 	/** Old table id in the persister's `t` store. */
 	from: string;
@@ -446,8 +360,7 @@ export async function renameQaTablesInIdb(
 					if (!rec) return;
 					const existing = os.get(to);
 					existing.onsuccess = () => {
-						// A populated destination record wins (never clobber newer data);
-						// just drop the stale old-name record.
+						// A populated destination record wins (never clobber newer data) — drop the stale old-name record.
 						if (!existing.result) {
 							const rows = rec.v ?? {};
 							if (cell) {

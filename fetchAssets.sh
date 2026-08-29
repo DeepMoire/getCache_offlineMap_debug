@@ -6,22 +6,10 @@ set -euo pipefail
 DEST="${1:-static/mobileAssets}"
 NEEDED=(worldBase getcache_DT_bg.webp pin_library_small hand_phoneV3.webp fire_icon.webp fire_intensity)
 
-# Candidates derive from THIS SCRIPT's location — never from the caller's
-# working directory, never from a home directory. Two things were wrong before:
-#
-#   "../../../../../../static/mobileAssets"  was relative to $PWD, not to this
-#       file, so what it resolved to depended entirely on where you stood. It is
-#       also a relic of the layout where children lived under rapper/src/lib/.
-#   "$HOME/DEV/fetch/ReTreever/static/mobileAssets"  exists on one machine.
-#
-# ReTreever and this child are FLAT SIBLINGS in the same parent folder, which
-# holds both in the fetch workspace and in anything `npm create` scaffolds — so
-# ReTreever is one level up and across from here.
+# ⚠️ HERE must derive from this script's location — never the caller's cwd or a home directory.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# RETREEVER_ASSETS is FIRST. It used to be checked LAST, so an explicit override
-# was only consulted after the guesses had already failed — the opposite of what
-# an override is for.
+# ⚠️ RETREEVER_ASSETS must be checked FIRST, or the override is only consulted after the guesses already failed.
 CANDIDATES=(
   "${RETREEVER_ASSETS:-}"
   "$HERE/../ReTreever/static/mobileAssets"
@@ -39,11 +27,7 @@ for guess in "${CANDIDATES[@]}"; do
   mkdir -p "$DEST"
   echo "Copying assets from $guess"
   for n in "${NEEDED[@]}"; do
-    # The repo ships these paths as symlinks into a ReTreever checkout. In a
-    # bare clone they DANGLE, and `cp -R` onto a dangling symlink fails with
-    # "Not a directory". Clear whatever is there (dead link or stale copy)
-    # first. SvelteKit walks static/ at build time and dies on a dangling
-    # link, so this is what makes a fresh clone buildable at all.
+    # ⚠️ clear dangling symlinks first — cp -R onto one fails, and SvelteKit dies on a dangling link at build time.
     unlink "$DEST/$n" 2>/dev/null || true
     cp -R "$guess/$n" "$DEST/"
     echo "  ✓ $n"
