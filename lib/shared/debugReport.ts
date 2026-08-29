@@ -42,7 +42,7 @@ import {
 	packShips,
 } from "../contract/packLayers";
 import { FIRE_REFRESH_ENABLED } from "./bakeFlags";
-import { circuitOf, type CircuitState } from "./workMeter.svelte";
+import { circuitOf, light, paintOf, type CircuitState } from "./workMeter.svelte";
 import { LAYER_TOGGLES } from "../onPhone/render/wallLegend";
 import { meterSnapshot } from "./workMeter.svelte";
 import { kmBetween } from "./kmGeo";
@@ -459,7 +459,8 @@ export async function collectFocusedBlobReport(
 			const on = live.layers?.find((l) => l.key === t.key)?.on ?? true;
 			const feed = t.feed ?? null;
 			const c = feed ? circuitOf(feed) : undefined;
-			const status: CircuitState = c?.state ?? "idle";
+			const lt = light(feed ?? undefined, [t.key]);
+			const status: CircuitState = lt.state;
 			const top = sorted[0];
 			// WHAT THE PACK IS MEANT TO HOLD FOR THIS LAYER — from the contract
 			// the Worker filters by (contract/packLayers.ts), checked read by
@@ -491,9 +492,28 @@ export async function collectFocusedBlobReport(
 			else if (status === "idle" && arrived) reason = "on disk from an earlier session — not requested since this page loaded";
 			else if (status === "idle") reason = `never requested — nothing has asked the ${feed} download yet`;
 			else if (!arrived) reason = `${feed} download landed (${c?.note || "ok"}) but the focused blob holds no ${t.label} data`;
-			else reason = `arrived — ${c?.note || "ok"}`;
+			else if (status === "ok")
+				reason = `on disk (${c?.note || "ok"}) for ${((Date.now() - (c?.arrivedAt ?? Date.now())) / 1000).toFixed(1)}s but NOT painted in the viewport yet — last idle counted ${paintOf(t.key)?.count ?? 0} ${t.label} features on screen`;
+			else reason = `on screen — ${lt.paint?.count ?? 0} drawn, ${((lt.paintLagMs ?? 0) / 1000).toFixed(1)}s after the bytes landed`;
 			const expects = expectsFor(t);
-			return { key: t.key, label: t.label, on, feed, status, arrived, reason, expects };
+			const iso = (ms: number | null | undefined) => (ms == null ? null : new Date(ms).toISOString());
+			return {
+				key: t.key,
+				label: t.label,
+				on,
+				feed,
+				status,
+				arrived,
+				onScreen: status === "drawn",
+				askedAt: iso(c?.askedAt),
+				arrivedAt: iso(c?.arrivedAt),
+				drawnAt: iso(lt.paint?.drawnAt),
+				transitMs: lt.transitMs,
+				paintLagMs: lt.paintLagMs,
+				paintedCount: lt.paint?.count ?? null,
+				reason,
+				expects,
+			};
 		}),
 		meter: meterSnapshot(),
 		disk: {

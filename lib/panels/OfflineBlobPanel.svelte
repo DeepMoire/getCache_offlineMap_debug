@@ -266,10 +266,10 @@ onMount(() => {
 	/* Title look from .dev-card__title. */
 	.sum {
 		margin-left: auto;
-		color: #8f8b80;
+		color: var(--muted);
 	}
 	.dim {
-		color: #8f8b80;
+		color: var(--muted);
 	}
 	/* Deliberately ugly and red: it must never be mistaken for a normal action. */
 	.wipe {
@@ -391,7 +391,7 @@ onMount(() => {
 	}
 	.layer {
 		display: contents;
-		color: #8f8b80;
+		color: var(--muted);
 	}
 	.layer > span {
 		padding: 0.18rem 0.3rem;
@@ -401,9 +401,9 @@ onMount(() => {
 	.layer:nth-child(even) > span { background: rgba(255, 255, 255, 0.06); }
 	.dir { color: #6fb3d9; font-weight: 700; text-align: right; }
 	.ico { text-align: center; }
-	.lname { color: #f3f1e9; }
-	.ldetail { color: #8f8b80; overflow: hidden; text-overflow: ellipsis; }
+	.lname { color: var(--text); }
+	.ldetail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 	.lbytes { color: #eab627; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
-	.layer.on .lname { color: #f3f1e9; }
+	.layer.on .lname { color: var(--text); }
 	.layer:not(.on) > span { opacity: 0.5; }
 </style>

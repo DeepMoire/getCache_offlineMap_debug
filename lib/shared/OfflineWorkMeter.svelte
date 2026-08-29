@@ -852,7 +852,7 @@ tr.hot .name {
 	font-family: "JetBrains Mono", ui-monospace, monospace;
 	font-size: 9.5px;
 	font-weight: 600;
-	color: var(--muted, #8b8b8b);
+	color: var(--muted);
 	padding: 0 2px 2px;
 }
 .em-opt {

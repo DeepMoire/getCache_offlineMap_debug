@@ -54,22 +54,41 @@ export interface PayloadStat {
 const stats = new SvelteMap<string, WorkStat>();
 const payloads = new SvelteMap<string, PayloadStat>();
 
-/** CIRCUITS: idle=nothing asked (grey), transit=request out (yellow), ok=data arrived (green), err=request broke (red). */
+/** CIRCUITS: idle=nothing asked (grey), transit=request out (yellow), ok=bytes on disk (STILL yellow — not on screen), drawn=features seen in the viewport (green), err=request broke (red). */
 /** ⛔ Probe reachability alone must never light green — only a real data call does; probes are used only to grey out / offer retry. */
+/** ⛔ `ok` is the DOWNLOAD boundary, not the paint boundary. Only paintWatch.ts (on map idle, counting rendered features) can turn a row green — a circuit writer never says "drawn". */
 /** Keys: worker:<tier> tile Worker per tier, sat satellite bake, pack roads/labels/places/hosp, fires hotspots — layers sharing a download share its circuit (see LayerToggle.feed in wallLegend.ts). */
-export type CircuitState = "idle" | "transit" | "ok" | "err";
+export type CircuitState = "idle" | "transit" | "ok" | "drawn" | "err";
 export interface CircuitStat {
 	key: string;
-	state: CircuitState;
+	/** Download-side state only — never `drawn`; see light(). */
+	state: Exclude<CircuitState, "drawn">;
 	/** Epoch ms of the last change. */
 	at: number;
 	/** What arrived, or why it broke — the call's own words. */
 	note: string;
+	/** Epoch ms the request went out (null = never asked since reset). */
+	askedAt: number | null;
+	/** Epoch ms the bytes landed on disk (null = not yet / broke). */
+	arrivedAt: number | null;
+}
+
+/** What the map ACTUALLY PAINTED for one layer row, counted on the last idle — the only witness that can turn a row green. */
+export interface PaintStat {
+	key: string;
+	/** Rendered features (or mounted photos) of this layer inside the viewport. */
+	count: number;
+	/** Epoch ms of the idle that counted them. */
+	at: number;
+	/** Epoch ms of the first idle that saw count > 0 AFTER the feed's current arrivedAt — the "drawn" moment. Reset when a newer arrival lands. */
+	drawnAt: number | null;
 }
 
 // SvelteMap, not $state(new Map()) — Svelte 5 doesn't proxy Map, so writes below REPLACE the entry rather than mutate in place.
 const circuits = new SvelteMap<string, CircuitStat>();
+const paints = new SvelteMap<string, PaintStat>();
 const probes = new SvelteMap<string, boolean>();
+const circuitListeners = new Set<(c: CircuitStat) => void>();
 
 /** Yellow (transit) is held at least TRANSIT_HOLD_MS — a settle landing inside the hold is DEFERRED until it's up; the latest settle wins. */
 const TRANSIT_HOLD_MS = 1000;
@@ -86,12 +105,26 @@ export function circuitFocus(): string | null {
 }
 export function noteCircuit(
 	key: string,
-	state: CircuitState,
+	state: Exclude<CircuitState, "drawn">,
 	note = "",
 	areaKey?: string,
 ): void {
 	if (focusArea && areaKey && areaKey !== focusArea) return;
-	const write = () => circuits.set(key, { key, state, at: Date.now(), note });
+	const write = () => {
+		const prev = circuits.get(key);
+		const now = Date.now();
+		const next: CircuitStat = {
+			key,
+			state,
+			at: now,
+			note,
+			askedAt: state === "transit" ? now : (prev?.askedAt ?? null),
+			// A new ask forgets the old arrival, or the row could stay green on last time's bytes.
+			arrivedAt: state === "ok" ? now : state === "transit" ? null : (prev?.arrivedAt ?? null),
+		};
+		circuits.set(key, next);
+		for (const fn of circuitListeners) fn(next);
+	};
 	const pend = pendingSettle.get(key);
 	if (pend) {
 		clearTimeout(pend);
@@ -121,6 +154,11 @@ export function noteCircuit(
 	transitSince.delete(key);
 	write();
 }
+/** Called on every circuit write — paintWatch uses it to force a repaint when bytes land, so an already-idle map still gets re-counted. */
+export function subscribeCircuits(fn: (c: CircuitStat) => void): () => void {
+	circuitListeners.add(fn);
+	return () => circuitListeners.delete(fn);
+}
 /** One circuit, or undefined = never called (render grey). */
 export function circuitOf(key: string): CircuitStat | undefined {
 	return circuits.get(key);
@@ -130,6 +168,49 @@ export function allCircuits(): CircuitStat[] {
 	return [...circuits.values()];
 }
 
+/** Record what the map painted for one layer row on this idle. `drawnAt` latches on the first non-zero count and is dropped when the feed's arrival is newer than it — light() does the "after arrival" comparison against whichever circuit is asking. */
+export function notePaint(layerKey: string, feedKey: string | undefined, count: number): void {
+	const now = Date.now();
+	const prev = paints.get(layerKey);
+	const arrivedAt = feedKey ? (circuits.get(feedKey)?.arrivedAt ?? null) : null;
+	const stillValid =
+		prev?.drawnAt != null && (arrivedAt == null || prev.drawnAt >= arrivedAt);
+	const drawnAt = stillValid ? prev!.drawnAt : count > 0 ? now : null;
+	paints.set(layerKey, { key: layerKey, count, at: now, drawnAt });
+}
+export function paintOf(layerKey: string): PaintStat | undefined {
+	return paints.get(layerKey);
+}
+export function allPaints(): PaintStat[] {
+	return [...paints.values()];
+}
+
+export interface Light {
+	state: CircuitState;
+	circuit?: CircuitStat;
+	/** The paint that earned `drawn`, when state is drawn. */
+	paint?: PaintStat;
+	/** ms from ask to bytes on disk. */
+	transitMs: number | null;
+	/** ms from bytes on disk to first sighting in the viewport — the gap this whole model exists to expose. */
+	paintLagMs: number | null;
+}
+/** THE COLOUR OF A ROW. The feed's download state, promoted to `drawn` (green) ONLY when at least one of `layerKeys` was painted after the feed's current arrival. `ok` stays yellow: bytes on disk are not pixels on screen. */
+export function light(circuitKey: string | undefined, layerKeys: readonly string[]): Light {
+	const circuit = circuitKey ? circuits.get(circuitKey) : undefined;
+	if (!circuit) return { state: "idle", transitMs: null, paintLagMs: null };
+	const transitMs =
+		circuit.askedAt != null && circuit.arrivedAt != null ? circuit.arrivedAt - circuit.askedAt : null;
+	if (circuit.state !== "ok") return { state: circuit.state, circuit, transitMs, paintLagMs: null };
+	let paint: PaintStat | undefined;
+	for (const k of layerKeys) {
+		const p = paints.get(k);
+		if (p?.drawnAt != null && circuit.arrivedAt != null && p.drawnAt >= circuit.arrivedAt && (!paint || p.drawnAt < paint.drawnAt!)) paint = p;
+	}
+	if (!paint) return { state: "ok", circuit, transitMs, paintLagMs: null };
+	return { state: "drawn", circuit, paint, transitMs, paintLagMs: paint.drawnAt! - circuit.arrivedAt! };
+}
+
 /** Back to grey — called the moment a pin is dropped, so circles describe THIS ask, not the last one; a drop that triggers nothing stays grey ("not even asking"). */
 export function resetCircuits(areaKey: string | null = null): void {
 	focusArea = areaKey;
@@ -137,6 +218,7 @@ export function resetCircuits(areaKey: string | null = null): void {
 	pendingSettle.clear();
 	transitSince.clear();
 	circuits.clear();
+	paints.clear();
 }
 
 /** Probe result per tier — reachability for greying/retry ONLY. */
@@ -155,7 +237,17 @@ export function meterSnapshot() {
 		work: workStats().map((s) => ({ ...s })),
 		payloads: payloadStats().map((p) => ({ ...p })),
 		focus: focusArea,
-		circuits: allCircuits().map((c) => ({ ...c })),
+		circuits: allCircuits().map((c) => ({
+			...c,
+			askedAtIso: c.askedAt == null ? null : new Date(c.askedAt).toISOString(),
+			arrivedAtIso: c.arrivedAt == null ? null : new Date(c.arrivedAt).toISOString(),
+			transitMs: c.askedAt != null && c.arrivedAt != null ? c.arrivedAt - c.askedAt : null,
+		})),
+		paints: allPaints().map((p) => ({
+			...p,
+			atIso: new Date(p.at).toISOString(),
+			drawnAtIso: p.drawnAt == null ? null : new Date(p.drawnAt).toISOString(),
+		})),
 		probes: Object.fromEntries(probes),
 	};
 }
@@ -294,4 +386,5 @@ export function resetWorkStats(): void {
 	}
 	// Circuits go back to grey so the NEXT call is what you watch; probes stay — they're a fact about the network, not a counter.
 	circuits.clear();
+	paints.clear();
 }

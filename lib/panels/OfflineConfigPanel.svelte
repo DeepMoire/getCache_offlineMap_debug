@@ -10,10 +10,12 @@ import {
 	type WorkerTarget,
 } from "../r2Worker/local_dev/tilesHost";
 import {
-	circuitOf,
 	allCircuits,
+	allPaints,
+	light,
 	probeOf,
 	type CircuitState,
+	type Light,
 } from "../shared/workMeter.svelte";
 import { LAYER_TOGGLES } from "../onPhone/render/wallLegend";
 
@@ -68,16 +70,14 @@ function reach(t: WorkerTarget): "ok" | "err" | "wait" {
 	return p === undefined ? "wait" : p ? "ok" : "err";
 }
 
-// THE CIRCLE — current state of that row's last real call: grey=never asked · yellow=in transit · green=arrived · red=broke. Worker rows show it only while selected; layer rows show the download they draw from (LayerToggle.feed).
+// THE CIRCLE — grey=never asked · yellow=asked OR on disk but NOT on screen · green=painted in the viewport after the bytes landed · red=broke. Green comes only from paintWatch.ts counting rendered features on map idle; a download landing can never turn a row green by itself. Worker rows show it only while selected and go green when ANY pack layer paints; layer rows show the download they draw from (LayerToggle.feed).
 const circuits = $derived(allCircuits());
-function circ(key: string | undefined): CircuitState {
-	void circuits; // read so this re-runs when any circuit changes
-	if (!key) return "idle";
-	return circuitOf(key)?.state ?? "idle";
-}
-function circNote(key: string | undefined): string {
+const paints = $derived(allPaints());
+const PACK_LAYERS = LAYER_TOGGLES.filter((t) => t.feed === "pack").map((t) => t.key);
+function lightOf(circuitKey: string | undefined, layerKeys: readonly string[]): Light {
 	void circuits;
-	return key ? (circuitOf(key)?.note ?? "") : "";
+	void paints;
+	return light(circuitKey, layerKeys);
 }
 const FEED_OF: Record<string, string | undefined> = Object.fromEntries(
 	LAYER_TOGGLES.map((t) => [t.key, t.feed]),
@@ -85,9 +85,23 @@ const FEED_OF: Record<string, string | undefined> = Object.fromEntries(
 const CIRC_WORDS: Record<CircuitState, string> = {
 	idle: "nothing asked for yet",
 	transit: "request out, nothing back yet",
-	ok: "arrived",
+	ok: "on disk — NOT on screen yet",
+	drawn: "on screen",
 	err: "broke",
 };
+const clock = (ms: number | null | undefined) =>
+	ms == null ? "" : new Date(ms).toLocaleTimeString(undefined, { hour12: false });
+const secs = (ms: number | null) => (ms == null ? "?" : `${(ms / 1000).toFixed(1)}s`);
+/** Hover text: the state, the note, and the three clocks so ask→disk→screen is readable without the JSON. */
+function circTitle(what: string, l: Light): string {
+	const c = l.circuit;
+	const bits = [`${what}: ${CIRC_WORDS[l.state]}${c?.note ? " — " + c.note : ""}`];
+	if (c?.askedAt != null) bits.push(`asked ${clock(c.askedAt)}`);
+	if (c?.arrivedAt != null) bits.push(`on disk +${secs(l.transitMs)}`);
+	if (l.state === "drawn") bits.push(`on screen +${secs(l.paintLagMs)} after disk (${l.paint?.count} drawn)`);
+	else if (l.state === "ok") bits.push("waiting for the map to paint it");
+	return bits.join(" · ");
+}
 
 /** A tier currently being re-probed, so its row can say so. */
 let retrying = $state<WorkerTarget | null>(null);
@@ -163,11 +177,8 @@ onMount(() => {
 				<span class="dead-tag">retry</span>
 			{/if}
 			{#if target === t.id}
-				{@const k = `worker:${t.id}`}
-				<span
-					class="circ {circ(k)}"
-					title={`last pack request: ${CIRC_WORDS[circ(k)]}${circNote(k) ? " — " + circNote(k) : ""}`}
-				></span>
+				{@const l = lightOf(`worker:${t.id}`, PACK_LAYERS)}
+				<span class="circ {l.state}" title={circTitle("last pack request", l)}></span>
 			{:else}
 				<span class="circ blank"></span>
 			{/if}
@@ -201,18 +212,15 @@ onMount(() => {
 					<span class="dead-tag">not yet</span>
 				{/if}
 				{#if FEED_OF[l.key]}
-					{@const k = FEED_OF[l.key]}
-					<span
-						class="circ {circ(k)}"
-						title={`${k} download: ${CIRC_WORDS[circ(k)]}${circNote(k) ? " — " + circNote(k) : ""}`}
-					></span>
+					{@const lt = lightOf(FEED_OF[l.key], [l.key])}
+					<span class="circ {lt.state}" title={circTitle(`${FEED_OF[l.key]} download`, lt)}></span>
 				{:else}
 					<span class="circ blank"></span>
 				{/if}
 				<span class="sw" class:sw-on={l.on}></span>
 			</button>
 		{/each}
-		<div class="cfg-note dim">any combination · heap updates each second</div>
+		<div class="cfg-note dim">any combination · heap updates each second · green = painted in the viewport, yellow = still on its way to the screen</div>
 	{/if}
 </div>
 
@@ -236,7 +244,7 @@ onMount(() => {
 	width: 100%;
 	background: none;
 	border: 0;
-	color: #b8b8b8;
+	color: var(--muted);
 	font: inherit;
 	padding: 3px 0;
 	cursor: pointer;
@@ -268,7 +276,7 @@ onMount(() => {
 	flex: 1 1 auto;
 	min-width: 0;
 	margin-left: 6px;
-	color: #7d7a6e;
+	color: var(--muted);
 	font-size: 0.85em;
 	white-space: nowrap;
 	overflow: hidden;
@@ -276,21 +284,21 @@ onMount(() => {
 }
 .cfg-row.sel .cfg-hint {
 	/* Selected rows go gold; the hint must NOT follow — it is not state. */
-	color: #7d7a6e;
+	color: var(--muted);
 }
 
 .dead-tag {
 	flex: 1 1 auto;
 	min-width: 0;
 	margin-left: auto;
-	color: #8f8a76;
+	color: var(--muted);
 	font-size: 0.85em;
 	text-align: right;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
-/* THE CIRCLE — sits left of the switch; grey until asked, then the last call's state. Muted grey (not black) so "never asked" doesn't read as failure. */
+/* THE CIRCLE — sits left of the switch; grey until asked, then the last call's state. Muted grey (not black) so "never asked" doesn't read as failure. `ok` (on disk) is deliberately the SAME yellow as transit — to the user it is still "not there yet". */
 .circ {
 	flex: 0 0 auto;
 	width: 10px;
@@ -306,10 +314,11 @@ onMount(() => {
 	background: transparent;
 	box-shadow: none;
 }
-.circ.transit {
+.circ.transit,
+.circ.ok {
 	background: #e0b428;
 }
-.circ.ok {
+.circ.drawn {
 	background: #35c759;
 }
 .circ.err {
@@ -320,7 +329,7 @@ onMount(() => {
 	margin: 7px 0 5px;
 }
 .cfg-note {
-	color: #8f8a76;
+	color: var(--muted);
 	margin-top: 5px;
 	line-height: 1.3;
 }
@@ -329,7 +338,7 @@ onMount(() => {
 }
 .cfg-note code {
 	font: inherit;
-	color: #b8b8b8;
+	color: var(--muted);
 }
 .sw {
 	flex: 0 0 auto;
