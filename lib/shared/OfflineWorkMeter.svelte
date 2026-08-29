@@ -6,7 +6,7 @@
   ⚠️ RUNNING + QUEUED permanently → RUNAWAY: passes chain forever, memory climbs.
 -->
 <script lang="ts">
-import "./devCard.css";
+import "$parent/retreeved/sharedComponents/effemeralCard/devCard.css";
 import { dev } from "$app/environment";
 import { onMount } from "svelte";
 import {

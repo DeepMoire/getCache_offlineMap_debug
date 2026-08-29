@@ -1,5 +1,9 @@
 // packBuilder — ring geometry + the three-ring routing.
-// ⚠️ Guards two silent-failure regressions: a mid-ring tile routed to the wrong keep-set, and its bytes folding into the roads budget.
+//
+// These guard the two things that broke while the z13 MID ring was being added, both
+// of which fail SILENTLY in production: a mid-ring tile routed to the wrong keep-set
+// (water vanishes across the default camera band) and the mid ring's bytes folded
+// into the roads budget (every area reads as dense → paths stripped, reach cut).
 
 import { describe, expect, it } from "vitest";
 import {
@@ -10,6 +14,7 @@ import {
   tilesForRing,
 } from "./packBuilder";
 import { BLOB_DETAIL_LEVEL } from "./blob";
+import { PACK_LAYER_NAMES } from "./packLayers";
 
 const HOME = { lng: -76.32622, lat: 45.25341 };
 
@@ -19,7 +24,9 @@ describe("RINGS", () => {
   });
 
   it("has NO gap wider than one zoom below the core", () => {
-    // MapLibre overzooms UP only — a gap between shipped levels has nothing to stretch.
+    // The whole point of the mid ring. MapLibre overzooms UP only, so a hole
+    // between two shipped levels is a band with nothing to stretch — which is
+    // what the phone's decoder existed to paper over.
     const zooms = RINGS.map((r) => r.z).sort((a, b) => a - b);
     for (let i = 1; i < zooms.length; i++) {
       expect(zooms[i] - zooms[i - 1]).toBeLessThanOrEqual(2);
@@ -28,32 +35,41 @@ describe("RINGS", () => {
 });
 
 describe("keepSetForZoom", () => {
-  it("does NOT put water on the z13 mid ring", () => {
-    expect([...keepSetForZoom(13, false)]).not.toContain("water");
-    expect([...keepSetForZoom(13, false)]).toContain("roads");
-  });
-
-  it("ROADS ONLY on the detail level — no water, no landuse", () => {
-    const keep = keepSetForZoom(15, false);
-    expect([...keep].sort()).toEqual(["pois", "roads"]);
-  });
-
-  it("does NOT ship landcover — it is empty in this archive", () => {
-    expect([...keepSetForZoom(15, false)]).not.toContain("landcover");
-  });
-
-  it("ONE threshold: detail level gets the basemap, every shallower level roads + places", () => {
-    expect([...keepSetForZoom(15, false)].sort()).toEqual([
-      "pois",
-      "roads",
-    ]);
-    // ⛔ Threshold must compare against BLOB_DETAIL_LEVEL (13), not BLOB_DETAIL_Z (15) — drift here silently dropped `pois` (the whole offline hospitals feature) from every pack while this test stayed green.
+  it("ships EXACTLY the contract's layers — roads, water, places, pois", () => {
+    // ⛔ THE LIST IS NOT DECLARED IN THE WORKER. `lib/contract/packLayers.ts` is
+    // the one table; the phone's debug report reads the same file to say what a
+    // blob is meant to hold. Three ring keep-sets routed by a zoom threshold
+    // used to live here and the threshold compared two constants that drifted,
+    // so the live pack shipped `roads` and nothing else (MEASURED 28 Aug 2026).
+    expect([...keepSetForZoom(BLOB_DETAIL_LEVEL, false)].sort()).toEqual(
+      [...PACK_LAYER_NAMES].sort(),
+    );
     expect([...keepSetForZoom(BLOB_DETAIL_LEVEL, false)].sort()).toEqual([
+      "places",
       "pois",
       "roads",
+      "water",
     ]);
-    for (const z of [12, 9, 5, 1]) {
-      expect([...keepSetForZoom(z, false)].sort()).toEqual(["places", "roads"]);
+  });
+
+  it("does NOT route by zoom — one blob, one read level, one list", () => {
+    // Every tile is read at BLOB_DETAIL_LEVEL, so a zoom-routed keep-set has
+    // exactly one live branch and N dead ones that look like coverage. Any z
+    // must answer the same.
+    for (const z of [1, 5, 9, 12, 13, 15]) {
+      expect([...keepSetForZoom(z, false)].sort()).toEqual(
+        [...keepSetForZoom(BLOB_DETAIL_LEVEL, false)].sort(),
+      );
+    }
+  });
+
+  it("does NOT ship landcover, landuse or earth", () => {
+    // landcover: MEASURED empty at every zoom in this archive. landuse: the
+    // v4-land-* fills that read it were deleted client-side. earth: coarse
+    // tile-square blocks on the download frontier.
+    const keep = keepSetForZoom(BLOB_DETAIL_LEVEL, false);
+    for (const dead of ["landcover", "landuse", "earth", "buildings", "boundaries"]) {
+      expect(keep.has(dead), `${dead} must not ship`).toBe(false);
     }
   });
 
@@ -66,11 +82,16 @@ describe("keepSetForZoom", () => {
 
 describe("MID_ROAD_KINDS", () => {
   it("drops paths — half the z13 road bytes, invisible at regional zoom", () => {
+    // MEASURED across 5 cities' z13 tiles: path 58.0 kB of ~136 kB total.
     expect(MID_ROAD_KINDS.has("path")).toBe(false);
   });
 
   it("KEEPS minor_road — in rural country it IS the road network", () => {
-    // ⚠️ REGRESSION GUARD — dropping minor_road blanked the regional view in sparse areas (46/193 z13 tiles came back with zero roads, including the tile under the pin).
+    // REGRESSION GUARD. minor_road was dropped as dead weight on city byte counts;
+    // a real pack then came back with 46 of 193 z13 tiles holding ZERO road
+    // features, the tile under the pin among them, because sparse areas have no
+    // major_road at all. Dropping this blanks the regional view exactly where the
+    // app is used.
     expect(MID_ROAD_KINDS.has("minor_road")).toBe(true);
   });
 
@@ -82,12 +103,22 @@ describe("MID_ROAD_KINDS", () => {
 });
 
 describe("countsTowardBudget", () => {
-  // ⛔ Budget must derive from the level buildPack actually reads — stale constants left roadsBytes=0 for every pack on earth (measured live: Wyoming, Washington, Toronto).
+  // ⛔ REWRITTEN 2026-08-21. These asserted the THREE-RING model (z15 core /
+  // z13 mid / z12 outer), where excluding z13 was correct because it was extra
+  // bytes over ground the other two rings already covered.
+  //
+  // `buildPack` no longer builds rings: it reads ONE grid box at
+  // `BLOB_DETAIL_LEVEL`. So "exclude the mid ring" excluded the only ring there
+  // is, and `roadsBytes` was 0 for every pack on earth — MEASURED live on
+  // Wyoming, Washington and Toronto, the last of which read 10.5 MB from R2 to
+  // report zero road bytes. See budgetZoomDrift.test.ts.
   it("counts the level the pack actually reads", () => {
     expect(countsTowardBudget(BLOB_DETAIL_LEVEL)).toBe(true);
   });
 
   it("still counts the shallow ring the threshold was calibrated on", () => {
+    // BUDGET_OUTER_Z (12) is still emitted and still carries real road weight,
+    // so the 2 MB threshold keeps seeing it.
     expect(countsTowardBudget(12)).toBe(true);
   });
 
@@ -106,7 +137,8 @@ describe("tilesForRing", () => {
   });
 
   it("returns a jagged disc, not the bounding rectangle", () => {
-    // Law 2: frontier must be real tile edges — a full rectangle means the radius filter broke.
+    // Law 2: the frontier is real tile edges. A full rectangle would mean the
+    // radius filter stopped working.
     const tiles = tilesForRing(HOME.lng, HOME.lat, 25, 13);
     const xs = new Set(tiles.map((t) => t.x));
     const ys = new Set(tiles.map((t) => t.y));

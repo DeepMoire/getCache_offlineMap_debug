@@ -39,8 +39,20 @@ export interface PayloadStat {
 	lastFeatures: number;
 }
 
-const stats = $state(new Map<string, WorkStat>());
-const payloads = $state(new Map<string, PayloadStat>());
+// ⛔ NOT `$state(new Map())`. Svelte 5 proxies arrays and plain objects only —
+// a Map wrapped in $state is the SAME plain Map, so `stats.set()` in slot()
+// was invisible to every `$derived(workStats())`. MEASURED, 28 Aug 2026, on
+// the rapper tier: the meter mounts before the 20 s boot bake, `rows` was
+// computed once as `[]` and never again, so it said "no bake pass has run yet"
+// under a bake that had run three times. And inside a row the `{#if
+// r.startedAt !== null}` never re-checked while `now - r.startedAt` did, so a
+// finished run read `▶ 1787956047.3s` — `now - null`, the epoch.
+//
+// Two layers, both needed: the SvelteMap versions the KEY set (a new slot
+// re-runs `workStats()`), and each slot is a `$state` proxy so its counters
+// (`runs`, `startedAt`, `queued`…) are fine-grained reactive in the panel.
+const stats = new SvelteMap<string, WorkStat>();
+const payloads = new SvelteMap<string, PayloadStat>();
 
 /** CIRCUITS: idle=nothing asked (grey), transit=request out (yellow), ok=data arrived (green), err=request broke (red). */
 /** ⛔ Probe reachability alone must never light green — only a real data call does; probes are used only to grey out / offer retry. */
@@ -161,8 +173,16 @@ export function payloadStats(): PayloadStat[] {
 export function notePayload(name: string, data: unknown): void {
 	let s = payloads.get(name);
 	if (!s) {
-		s = { name, sends: 0, lastKb: 0, maxKb: 0, totalKb: 0, lastFeatures: -1 };
-		payloads.set(name, s);
+		const fresh: PayloadStat = $state({
+			name,
+			sends: 0,
+			lastKb: 0,
+			maxKb: 0,
+			totalKb: 0,
+			lastFeatures: -1,
+		});
+		payloads.set(name, fresh);
+		s = fresh;
 	}
 	const kb =
 		typeof data === "string" ? Math.round(data.length / 1024) : 0;
@@ -178,23 +198,22 @@ export function notePayload(name: string, data: unknown): void {
 }
 
 function slot(name: string): WorkStat {
-	let s = stats.get(name);
-	if (!s) {
-		s = {
-			name,
-			runs: 0,
-			lastMs: 0,
-			maxMs: 0,
-			totalMs: 0,
-			startedAt: null,
-			queued: false,
-			errors: 0,
-			skips: 0,
-			lastSkip: "",
-		};
-		stats.set(name, s);
-	}
-	return s;
+	const have = stats.get(name);
+	if (have) return have;
+	const fresh: WorkStat = $state({
+		name,
+		runs: 0,
+		lastMs: 0,
+		maxMs: 0,
+		totalMs: 0,
+		startedAt: null,
+		queued: false,
+		errors: 0,
+		skips: 0,
+		lastSkip: "",
+	});
+	stats.set(name, fresh);
+	return fresh;
 }
 
 /** Every tracked operation, stable order (insertion). Read in the panel. */

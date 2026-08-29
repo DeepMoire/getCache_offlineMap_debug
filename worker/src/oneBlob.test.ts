@@ -16,6 +16,8 @@ function makeTile(
 	name: string,
 	lines: Array<Array<[number, number]>>,
 	kinds: string[] = [],
+	/** MVT GeomType for every feature: 1 POINT, 2 LINESTRING (default), 3 POLYGON. */
+	geomType: 1 | 2 | 3 = 2,
 ): Uint8Array {
 	const body: number[] = [];
 	const nameBytes = new TextEncoder().encode(name);
@@ -51,6 +53,7 @@ function makeTile(
 				);
 			}
 		}
+		if (geomType === 3) geom.push((1 << 3) | 7); // ClosePath
 		const gb: number[] = [];
 		for (const v of geom) pushVarint(gb, v);
 		const feat: number[] = [];
@@ -62,7 +65,7 @@ function makeTile(
 			pushVarint(tags, vi);
 			feat.push((2 << 3) | 2, tags.length, ...tags);
 		}
-		feat.push((3 << 3) | 0, 2); // LINESTRING
+		feat.push((3 << 3) | 0, geomType);
 		feat.push((4 << 3) | 2);
 		pushVarint(feat, gb.length);
 		feat.push(...gb);
@@ -408,6 +411,77 @@ describe("ONE BLOB — a single tile holding the whole disc", () => {
 			"path",
 			"highway", // tile B, in its own order
 		]);
+	});
+
+	it("⛔ KEEPS POINTS — a hospital is one vertex, not a line", () => {
+		// The remapper was written for roads and kept a run only if it had two
+		// or more vertices. A POI / place label is a single MoveTo, so every one
+		// was dropped and the layer discarded as a husk. MEASURED 28 Aug 2026:
+		// `pois` in the keep-set, no `pois` in any blob.
+		const frame = tileFrame(CELL_TILE);
+		const n13 = 2 ** 13;
+		const cxT = Math.floor(((LNG + 180) / 360) * n13);
+		const s = Math.sin((LAT * Math.PI) / 180);
+		const cyT = Math.floor((0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n13);
+		const kids: SourceTile[] = [
+			{
+				tile: { z: 13, x: cxT, y: cyT },
+				data: makeTile(
+					"pois",
+					[[[1000, 2000]], [[3000, 500]]],
+					["hospital", "camp_site"],
+					1,
+				),
+			},
+		];
+		const res = buildBlobTile(kids, frame);
+		expect(res.features).toBe(2);
+		expect(res.dropped).toBe(0);
+		expect(readTile(res.bytes).get("pois")?.n).toBe(2);
+		expect(readKinds(res.bytes, "pois").sort()).toEqual(["camp_site", "hospital"]);
+	});
+
+	it("keeps a POLYGON whole and closed — no edge trim on a ring", () => {
+		const frame = tileFrame(CELL_TILE);
+		const n13 = 2 ** 13;
+		const cxT = Math.floor(((LNG + 180) / 360) * n13);
+		const s = Math.sin((LAT * Math.PI) / 180);
+		const cyT = Math.floor((0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n13);
+		const ring: Array<[number, number]> = [
+			[1000, 1000],
+			[2000, 1000],
+			[2000, 2000],
+			[1000, 2000],
+			[1000, 1000],
+		];
+		const kids: SourceTile[] = [
+			{
+				tile: { z: 13, x: cxT, y: cyT },
+				data: makeTile("water", [ring], ["lake"], 3),
+			},
+		];
+		const res = buildBlobTile(kids, frame);
+		expect(res.features).toBe(1);
+		expect(readTile(res.bytes).get("water")?.n).toBe(1);
+		// the geometry ends with a ClosePath command (7)
+		const layer = res.bytes;
+		let last = -1;
+		let p = 0;
+		while (p < layer.length) {
+			let t: number;
+			[t, p] = readVarint(layer, p);
+			if ((t & 7) === 2) {
+				let len: number;
+				[len, p] = readVarint(layer, p);
+				const sub = layer.subarray(p, p + len);
+				p += len;
+				// dig: tile→layer→feature→geometry; the last varint of the deepest
+				// length-delimited chain that is a geometry is the ClosePath
+				const txt = Array.from(sub);
+				last = txt[txt.length - 1];
+			}
+		}
+		expect(last & 7).toBe(7);
 	});
 
 	it("merges MULTIPLE LAYERS independently", () => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-import "../shared/devCard.css";
+import "$parent/retreeved/sharedComponents/effemeralCard/devCard.css";
 /** OfflineBlobPanel — what's actually on disk, per area, alongside the work meter's "is it working now". ⚠️ IndexedDB is partitioned per origin — an empty table here means this origin has no blobs, not that they were lost. */
 import { onMount } from "svelte";
 import {
@@ -92,6 +92,15 @@ const rest = $derived(
 		.filter((e) => e !== focused)
 		.sort((a, b) => b.lastTouched - a.lastTouched),
 );
+/**
+ * CAPPED. A library of 400 pins rendered 400 cards under FOCUSED (28 Aug
+ * 2026) — a rail, not a ledger. The newest-touched few are the ones being
+ * worked; the rest sit behind one "N more…" line until asked for.
+ */
+const REST_CAP = 20;
+let showAllRest = $state(false);
+const restShown = $derived(showAllRest ? rest : rest.slice(0, REST_CAP));
+const restHidden = $derived(rest.length - restShown.length);
 
 function kb(n: number): string {
 	if (!n) return "—";
@@ -227,9 +236,14 @@ onMount(() => {
 				{@render card(focused, true)}
 			{/if}
 			{#if rest.length > 0}
-				{#each rest as e (e.areaKey)}
+				{#each restShown as e (e.areaKey)}
 					{@render card(e, false)}
 				{/each}
+				{#if restHidden > 0}
+					<button class="more" onclick={() => (showAllRest = true)}>
+						{restHidden} more…
+					</button>
+				{/if}
 			{/if}
 		</div>
 	{/if}
@@ -319,6 +333,17 @@ onMount(() => {
 	/* A pin with nothing on disk — dimmer still, the row's job is to SAY "never arrived", not to look like a blob. */
 	.row.empty {
 		opacity: 0.55;
+	}
+	/* The "N more…" line — one row's worth of height, reads as a link. */
+	.more {
+		all: unset;
+		cursor: pointer;
+		padding: 4px 6px;
+		opacity: 0.7;
+		text-decoration: underline dotted;
+	}
+	.more:hover {
+		opacity: 1;
 	}
 	.row.other {
 		opacity: 0.55;

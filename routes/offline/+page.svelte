@@ -19,6 +19,7 @@ let railRightHost = $state<HTMLElement>();
 </script>
 
 <OfflineMapPage {debugHost} {railLeftHost} {railRightHost} />
-<EphemeralCard title="offline map" bind:host={debugHost}><ParentGuardLight /></EphemeralCard>
-<EphemeralDock side="left" top="120px" bind:host={railLeftHost} />
+<EphemeralDock side="left" bind:host={railLeftHost}>
+	<EphemeralCard title="offline map" bind:host={debugHost}><ParentGuardLight /></EphemeralCard>
+</EphemeralDock>
 <EphemeralDock side="right" bind:host={railRightHost} />

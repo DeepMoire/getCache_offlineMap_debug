@@ -88,7 +88,7 @@ The parent reaches all of it as `$parent/siblings/getCache_OfflineMap/...`.
 
 | What | Where it is now |
 |---|---|
-| `MapLegend`, `SnakeRuler`, `DrawPalette`, `SelfCoordPill`, `TrackingStrip`, `MapTopControls`, `FeatureMapPopover`, `PlotMapPopoverV2`, `HostPillDock` (+ its two tests) | `lib/mapUi/` |
+| `MapLegend`, `SnakeRuler`, `DrawPalette`, `SelfCoordPill`, `TrackingStrip`, `MapTopControls`, `FeatureMapPopover`, `PlotMapPopoverV2` | `lib/mapUi/` |
 | `mapViewport`, `lastMapRoute`, `onlineMapHitchState`, `overlayVisibility`, `overlayOpacity`, `mapFraming`, `overlayManager`, `pinMarkers`, `vertexDrag`, `tracking`, `userLocation` (+ tests) | `lib/mapState/` |
 | **The contract** — `MapHostPorts { store, ui, gps, scenes?, tier?, q704? }` | `lib/shared/mapHostPorts.ts` |
 | ReTreever's implementation of it | `ReTreever/src/lib/mobile/offline/host/retreeverMapPorts.ts` |

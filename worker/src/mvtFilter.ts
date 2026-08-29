@@ -1,3 +1,21 @@
+// ── MVT byte-level filter — strip layers AND features without decoding geometry ──
+//
+// An MVT tile is protobuf:
+//   Tile  { repeated Layer layers = 3 }
+//   Layer { string name = 1; repeated Feature features = 2; repeated string keys = 3;
+//           repeated Value values = 4; uint32 extent = 5; uint32 version = 15 }
+//   Feature { uint64 id = 1; packed uint32 tags = 2; GeomType type = 3; packed uint32 geometry = 4 }
+//   Value { string string_value = 1; float = 2; double = 3; int64 = 4; uint64 = 5; sint64 = 6; bool = 7 }
+//
+// We never decode geometry. Two operations, both byte-lossless for survivors:
+//   1. filterMvtToLayers   — keep only named source-layers (the original behaviour),
+//      now ALSO applying a per-layer KIND allowlist when one is configured.
+//   2. filterLayerFeaturesByKind — within ONE layer, keep/drop features by their
+//      `kind` attribute, copying surviving features' raw bytes verbatim.
+//
+// Keeping the keys/values tables intact after dropping features is valid MVT — an
+// unreferenced key/value entry is harmless. This keeps the strip lossless + fast.
+
 export function readVarint(buf: Uint8Array, pos: number): [number, number] {
   let result = 0;
   let shift = 0;
@@ -48,12 +66,36 @@ export function layerName(layer: Uint8Array): string {
   return "";
 }
 
-export const KIND_ALLOWLIST: Record<string, ReadonlySet<string>> = {
-  pois: new Set(["hospital", "camp_site"]),
-  places: new Set(["city", "town", "village", "hamlet"]),
-};
+// ── per-source-layer KIND allowlist ──────────────────────────────────────────
+// DERIVED FROM THE CONTRACT — `lib/contract/packLayers.ts` is the one table of
+// what a pack ships, read by the Worker here and by the phone's debug report.
+// A layer with no `kinds` rule passes through whole (roads). A rule names the
+// attribute KEY it matches on: Protomaps v4 files city/town/village/hamlet under
+// `kind_detail` (every `places` feature is `kind:locality`), so matching `kind`
+// against "city" kept nothing and shipped a husk — MEASURED, 214/214 dropped.
+import { PACK_LAYERS } from "./packLayers";
 
-/** The decoded string values of a Layer's `values` table (field 4); non-string values yield "". */
+/** One allowlist entry: the attribute key to match and the values that survive. */
+export interface KindRule {
+  key: string;
+  kinds: ReadonlySet<string>;
+}
+/** A bare Set is shorthand for `{ key: "kind", kinds }` — the historical shape,
+ *  still accepted so hand-built test allowlists keep working. */
+export type KindAllowlist = Record<string, ReadonlySet<string> | KindRule>;
+
+export const KIND_ALLOWLIST: KindAllowlist = Object.fromEntries(
+  Object.entries(PACK_LAYERS)
+    .filter(([, r]) => r.kinds)
+    .map(([name, r]) => [name, { key: r.key ?? "kind", kinds: new Set(r.kinds) }]),
+);
+
+function ruleOf(entry: ReadonlySet<string> | KindRule): KindRule {
+  return entry instanceof Set ? { key: "kind", kinds: entry } : (entry as KindRule);
+}
+
+/** The decoded string values of a Layer's `values` table (field 4). Only string
+ *  Values (sub-field 1) matter for `kind`; non-string values yield "" (never a kind). */
 function layerStringValues(layer: Uint8Array): string[] {
   const values: string[] = [];
   let p = 0;
@@ -92,8 +134,9 @@ function layerStringValues(layer: Uint8Array): string[] {
   return values;
 }
 
-/** The index of the `"kind"` string in a Layer's `keys` table (field 3), or -1. */
-function kindKeyIndex(layer: Uint8Array): number {
+/** The index of the attribute `key` (default `"kind"`) in a Layer's `keys` table
+ *  (field 3), or -1. */
+function kindKeyIndex(layer: Uint8Array, key = "kind"): number {
   let p = 0;
   let idx = 0;
   while (p < layer.length) {
@@ -104,9 +147,9 @@ function kindKeyIndex(layer: Uint8Array): number {
     if (field === 3 && wire === 2) {
       let len: number;
       [len, p] = readVarint(layer, p);
-      const key = new TextDecoder().decode(layer.subarray(p, p + len));
+      const k = new TextDecoder().decode(layer.subarray(p, p + len));
       p += len;
-      if (key === "kind") return idx;
+      if (k === key) return idx;
       idx++;
     } else {
       p = skipField(layer, wire, p);
@@ -115,7 +158,8 @@ function kindKeyIndex(layer: Uint8Array): number {
   return -1;
 }
 
-/** Read one Feature's `kind` value index from its packed `tags` (field 2), given the `kind` key index; -1 if the feature has no `kind` tag. */
+/** Read one Feature's `kind` value index from its packed `tags` (field 2), given the
+ *  `kind` key index. Returns the value index, or -1 if the feature has no `kind` tag. */
 function featureKindValueIndex(feature: Uint8Array, kindKeyIdx: number): number {
   let p = 0;
   while (p < feature.length) {
@@ -146,13 +190,18 @@ export const PATH_KINDS: ReadonlySet<string> = new Set(["path"]);
 
 export type KindMode = "keep" | "drop";
 
-/** Keeps/drops a Layer's features by `kind`, copying bytes verbatim; unchanged if the layer has no `kind` key (don't nuke a schema variant). */
+/** Re-emit a single Layer sub-message keeping/dropping features by `kind`. Survivors'
+ *  feature bytes are copied verbatim; name/keys/values tables pass through untouched.
+ *  If the layer has no `kind` key, it's returned unchanged (don't nuke a schema variant).
+ *  Also reports the total byte length of features whose kind ∈ `kinds` (for budgeting). */
 export function filterLayerFeaturesByKind(
   layer: Uint8Array,
   mode: KindMode,
   kinds: ReadonlySet<string>,
+  /** The attribute matched — `kind` unless the contract says otherwise. */
+  key = "kind",
 ): { bytes: Uint8Array; matchedFeatureBytes: number } {
-  const kindKeyIdx = kindKeyIndex(layer);
+  const kindKeyIdx = kindKeyIndex(layer, key);
   if (kindKeyIdx < 0) return { bytes: layer, matchedFeatureBytes: 0 };
   const values = layerStringValues(layer);
   // value indices whose string is a wanted kind
@@ -199,14 +248,27 @@ export interface FilterResult {
   pathBytes: number;
 }
 
-/** Keeps only Tile layers whose name is in `keep`, applying the per-layer KIND allowlist; measures the output `roads` layer's total bytes and its `path`-feature byte share, and strips `path` features from roads when `dropPaths` is true. */
+/** Pass through only the Tile's layers whose name is in `keep`, applying the per-layer
+ *  KIND allowlist where configured. Also measures the output `roads` layer's total
+ *  bytes and its `path`-feature byte share (for the roads budget). When `dropPaths`
+ *  is true, `path` features are stripped from the roads layer too. */
 export function filterMvtToLayers(
   data: ArrayBuffer,
   keep: ReadonlySet<string>,
   opts: {
     dropPaths?: boolean;
-    allowlist?: Record<string, ReadonlySet<string>>;
-    /** Keep ONLY these road kinds (used by the z13 MID ring). */
+    allowlist?: KindAllowlist;
+    /**
+     * Keep ONLY these road kinds. Separate from `allowlist` because the `roads`
+     * branch has to stay in charge of `roadsBytes`/`pathBytes` (the roads budget
+     * reads them), so roads can't just be routed through the generic allowlist.
+     *
+     * Used by the z13 MID ring. MEASURED in a real z13 tile: `path` and
+     * `minor_road` are ~80% of the roads bytes (Vancouver: 16.6 kB + 11.1 kB of
+     * 34.9 kB) while `major_road` — 103 of the 158 features — is 14%. At a
+     * regional zoom the minor stuff is not legible anyway, so keeping the major
+     * network buys the whole visual benefit for a fifth of the bytes.
+     */
     roadKinds?: ReadonlySet<string>;
   } = {},
 ): FilterResult {
@@ -231,6 +293,10 @@ export function filterMvtToLayers(
 
       let layerBytes: Uint8Array = layer;
       if (name === "roads" && opts.roadKinds) {
+        // MID-RING ROADS: keep only the named kinds. This subsumes dropPaths (a
+        // kind list that omits `path` has already dropped them), and the ring is
+        // excluded from the roads budget, so nothing downstream needs pathBytes
+        // for these tiles.
         layerBytes = filterLayerFeaturesByKind(layer, "keep", opts.roadKinds).bytes;
         roadsBytes += layerBytes.length;
       } else if (name === "roads") {
@@ -245,7 +311,8 @@ export function filterMvtToLayers(
         }
         roadsBytes += layerBytes.length;
       } else if (allowlist[name]) {
-        layerBytes = filterLayerFeaturesByKind(layer, "keep", allowlist[name]).bytes;
+        const rule = ruleOf(allowlist[name]);
+        layerBytes = filterLayerFeaturesByKind(layer, "keep", rule.kinds, rule.key).bytes;
       }
 
       // re-emit: field 3 (layers) tag + length-delimited layerBytes
@@ -259,12 +326,45 @@ export function filterMvtToLayers(
   return { data: new Uint8Array(out).buffer, roadsBytes, pathBytes };
 }
 
+// ── THE DISC CLIP — 30 km means 30 km ───────────────────────────────────────
+//
+// THE BUG THIS EXISTS TO KILL. Selecting tiles by "does this tile touch the
+// 30 km circle" is not the same as shipping a 30 km circle, because a tile is a
+// SQUARE and at shallow zooms it is enormous. MEASURED at lat 45:
+//
+//     z15  0.9 km wide     z11  13.8 km     z9   55.3 km
+//     z13  3.5 km          z10  27.6 km     z1  14153.8 km
+//
+// A z9 tile kept because its nearest corner grazes the circle carries roads up
+// to 78 km past the edge. The user measured it on screen with the ruler: 80 km
+// of roads in a "30 km" blob, and `1/0/0` — one tile covering half the planet —
+// shipped inside the pack. Roads in places nobody downloaded, which is the
+// honesty rule broken.
+//
+// THE FIX, AND WHY IT IS STILL LOSSLESS. We do NOT decode-and-re-encode
+// geometry (that is the decode machinery this architecture deleted — 705 MB,
+// measured). We read each feature's packed geometry ONLY to compute its
+// bounding box in tile-local units, then keep or drop the feature WHOLE, its
+// bytes copied verbatim. A feature is dropped iff its bbox lies entirely
+// outside the disc. Survivors are untouched, so this stays a byte filter.
+//
+// A feature straddling the edge is KEPT in full. That is deliberate: cutting a
+// road mid-span needs re-encoding, and a road that runs a little past the rim
+// is honest — it is a road we really downloaded. What is NOT honest is a whole
+// continent riding along inside one z1 tile.
+
 /** MVT geometry commands are zigzag-encoded deltas in tile-local units. */
 function zigzag(n: number): number {
   return (n >> 1) ^ -(n & 1);
 }
 
-/** Bounding box of one feature's packed geometry in tile-local units (0..extent); null if the feature has no geometry. */
+/**
+ * Bounding box of one feature's packed geometry, in tile-local units (0..extent).
+ * Returns null if the feature carries no geometry.
+ *
+ * Walks MoveTo/LineTo/ClosePath commands accumulating the cursor. Never builds
+ * a geometry object — just four numbers.
+ */
 export function featureBBox(
   feature: Uint8Array,
 ): { x0: number; y0: number; x1: number; y1: number } | null {
@@ -339,7 +439,10 @@ export interface TileDisc {
   r: number;
 }
 
-/** Drops every feature in a layer whose bbox lies wholly outside the disc; survivors copied verbatim, keys/values pass through. */
+/**
+ * Drop every feature in a layer whose bbox lies wholly outside the disc.
+ * Survivors' bytes are copied verbatim; keys/values tables pass through.
+ */
 export function clipLayerToDisc(
   layer: Uint8Array,
   disc: TileDisc,
@@ -359,7 +462,9 @@ export function clipLayerToDisc(
       [len, p] = readVarint(layer, p);
       const feature = layer.subarray(p, p + len);
       const bb = featureBBox(feature);
-      // No geometry → keep; otherwise keep iff the nearest bbox point is within r of the disc centre.
+      // No geometry → keep (nothing to judge). Otherwise: nearest point of the
+      // bbox to the disc centre; if that is beyond r, nothing in this feature
+      // can be inside the disc.
       let keep = true;
       if (bb) {
         const nx = Math.min(Math.max(disc.cx, bb.x0), bb.x1);
@@ -381,6 +486,10 @@ export function clipLayerToDisc(
       p = next;
     }
   }
-  // A husk layer (zero features) still carries its name/keys/values tables — real bytes for nothing — so report it empty and let the caller drop it.
+  // A layer clipped down to ZERO features is a husk: it still carries its
+  // name + keys + values tables (MEASURED: `1/0/0` in a live pack was 16,512
+  // bytes of `places` keys/values with field 2 — features — entirely absent).
+  // Shipping it costs real bytes and paints nothing, so report it empty and let
+  // the caller drop the layer.
   return { bytes: kept > 0 ? new Uint8Array(out) : new Uint8Array(0), dropped, kept };
 }

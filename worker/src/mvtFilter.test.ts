@@ -4,8 +4,11 @@ import {
   filterMvtToLayers,
   layerName,
   readVarint,
+  skipField,
   writeVarint,
+  KIND_ALLOWLIST,
 } from "./mvtFilter";
+import { PACK_LAYERS, PACK_LAYER_NAMES } from "./packLayers";
 
 // Wire types: 0=varint, 2=length-delimited.
 
@@ -133,6 +136,37 @@ function countFeatures(layerBytes: Uint8Array): number {
 }
 
 /** Return the kind strings of every surviving feature in a layer (in order). */
+/** The `id` (field 1) of every Feature in a Layer, in order. */
+function featureIds(layerBytes: Uint8Array): number[] {
+  const ids: number[] = [];
+  let p = 0;
+  while (p < layerBytes.length) {
+    let t: number;
+    [t, p] = readVarint(layerBytes, p);
+    const field = t >>> 3;
+    const wire = t & 7;
+    if (field === 2 && wire === 2) {
+      let len: number;
+      [len, p] = readVarint(layerBytes, p);
+      const f = layerBytes.subarray(p, p + len);
+      p += len;
+      let fp = 0;
+      while (fp < f.length) {
+        let ft: number;
+        [ft, fp] = readVarint(f, fp);
+        if ((ft >>> 3) === 1 && (ft & 7) === 0) {
+          let id: number;
+          [id, fp] = readVarint(f, fp);
+          ids.push(id);
+          break;
+        }
+        fp = skipField(f, ft & 7, fp);
+      }
+    } else p = skipField(layerBytes, wire, p);
+  }
+  return ids;
+}
+
 function featureKinds(layerBytes: Uint8Array): string[] {
   // find "kind" key index + value strings, then read each feature's kind
   const keys: string[] = [];
@@ -254,6 +288,69 @@ const ALLOW = {
   pois: new Set(["hospital", "camp_site"]),
   places: new Set(["city", "town", "village", "hamlet"]),
 };
+
+describe("KIND_ALLOWLIST is the contract, not a Worker constant", () => {
+  it("derives one rule per kind-filtered layer in PACK_LAYERS, with its key", () => {
+    for (const [name, rule] of Object.entries(PACK_LAYERS)) {
+      if (!rule.kinds) {
+        expect(KIND_ALLOWLIST[name], `${name} ships whole — no allowlist`).toBeUndefined();
+        continue;
+      }
+      const entry = KIND_ALLOWLIST[name] as { key: string; kinds: ReadonlySet<string> };
+      expect(entry.key).toBe(rule.key ?? "kind");
+      expect([...entry.kinds].sort()).toEqual([...rule.kinds].sort());
+    }
+  });
+
+  it("places match on kind_detail — every v4 places feature is kind:locality", () => {
+    // MEASURED 28 Aug 2026 across the 324 z13 tiles of one disc: 214 `places`
+    // features, ALL `kind:"locality"`, city/town/village/hamlet in `kind_detail`.
+    // Matching `kind` against "city" kept NONE of them and shipped a husk.
+    const l = new Uint8Array(
+      layer("places", [
+        { id: 1, kind: "locality", extraKeys: { kind_detail: "city" } },
+        { id: 2, kind: "locality", extraKeys: { kind_detail: "hamlet" } },
+        { id: 3, kind: "locality", extraKeys: { kind_detail: "locality" } },
+        { id: 4, kind: "neighbourhood", extraKeys: { kind_detail: "suburb" } },
+      ]),
+    );
+    const rule = KIND_ALLOWLIST.places as { key: string; kinds: ReadonlySet<string> };
+    const { bytes } = filterLayerFeaturesByKind(l, "keep", rule.kinds, rule.key);
+    expect(featureIds(bytes)).toEqual([1, 2]);
+    // and the OLD way — matching `kind` — keeps nothing, which is the bug
+    const wrong = filterLayerFeaturesByKind(l, "keep", rule.kinds, "kind");
+    expect(featureIds(wrong.bytes)).toEqual([]);
+  });
+
+  it("filterMvtToLayers applies the contract by default — no allowlist passed", () => {
+    const data = tile([
+      { name: "roads", features: [{ id: 1, kind: "path" }] },
+      {
+        name: "water",
+        features: [
+          { id: 2, kind: "lake" },
+          { id: 3, kind: "stream" },
+          { id: 4, kind: "water" },
+        ],
+      },
+      {
+        name: "places",
+        features: [
+          { id: 5, kind: "locality", extraKeys: { kind_detail: "town" } },
+          { id: 6, kind: "locality", extraKeys: { kind_detail: "locality" } },
+        ],
+      },
+      { name: "pois", features: [{ id: 7, kind: "hospital" }, { id: 8, kind: "cafe" }] },
+      { name: "earth", features: [{ id: 9, kind: "earth" }] },
+    ]);
+    const r = filterMvtToLayers(data, new Set(PACK_LAYER_NAMES));
+    expect(getLayer(r.data, "earth")).toBeNull();
+    expect(featureIds(getLayer(r.data, "roads")!)).toEqual([1]); // nothing dropped by kind
+    expect(featureIds(getLayer(r.data, "water")!)).toEqual([2, 4]); // stream dropped
+    expect(featureIds(getLayer(r.data, "places")!)).toEqual([5]); // bare locality dropped
+    expect(featureIds(getLayer(r.data, "pois")!)).toEqual([7]); // cafe dropped
+  });
+});
 
 describe("filterLayerFeaturesByKind", () => {
   it("pois keep → drops cafe, keeps hospital", () => {
