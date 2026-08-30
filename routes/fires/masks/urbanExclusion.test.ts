@@ -9,7 +9,7 @@ import {
 	prepareUrban,
 } from "./urbanExclusion";
 
-// Populated by ./fetchAssets.sh (see ASSETS.md); absent in a bare clone → the suite SKIPS.
+// Populated by ./fetchAssets.sh; absent in a bare clone → the suite SKIPS.
 const URBAN = fileURLToPath(
 	new URL("../../../static/mobileAssets/worldBase/base/min/urban.json", import.meta.url),
 );

@@ -135,20 +135,19 @@ the geometry.
 ### 4.1 The one endpoint
 
 ```
-GET /pack?lng=<number>&lat=<number>&v=<int>
+GET /pack?lng=<number>&lat=<number>&pv=<int>     (pv = PACK_FORMAT_VERSION)
 ```
 
 Returns a binary pack: `[uint32 LE manifestLength][manifest JSON][tile bytes…]`
 
-Manifest:
+Manifest (`worker/src/packBuilder.ts`):
 ```json
-{ "tiles": [{ "k": "<key>", "n": <byteLength> }, …],
-  "box":   { "w": <lng>, "s": <lat>, "e": <lng>, "n": <lat> } }
+{ "total": <int>, "empty": <int>, "tiles": [{ "k": "z/x/y", "n": <byteLength> }, …] }
 ```
 
-Tile bytes are concatenated in manifest order. `box` is the pin's own 25 km
-box — it records what this pack was built for, so the phone can always verify
-placement without re-deriving it.
+Tile bytes are concatenated in manifest order; an entry with `n: 0` is never
+written. The pin's box is not in the pack — the phone derives it from the same
+`radiusBox` the Worker used (§9 rule 6).
 
 ### 4.2 What it does
 
@@ -248,7 +247,7 @@ space. No decoding, no re-projection.
 This is the central fact of the whole subsystem and it was undocumented for
 five months. A tile source has exactly one URL template:
 ```
-rtoffline://tiles/{z}/{x}/{y}
+rtraw://disc/{z}/{x}/{y}        (RAW_TILE_URL, lib/onPhone/roads/rawWallProtocol.ts)
 ```
 MapLibre fills in three integers and asks. **There is nowhere to put a pin.**
 

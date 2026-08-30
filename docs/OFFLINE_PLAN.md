@@ -29,7 +29,7 @@ stable, and runs on the **main thread** — see `lib/onPhone/roads/rawWallProtoc
 
 ⚠️ **MapLibre is NOT a memory fix.** Both renderers decode a 1536×1536
 satellite WebP into the same ~9.44 MB GPU texture. The photo-driven spike is
-governed by `MAX_MOUNTED_PHOTOS`, which no renderer change touches.
+the number of mounted photos, which no renderer change touches.
 
 `MapDrawControls` and the shared map helpers serve BOTH renderers: each takes a
 structural map type, or asks the live instance which library built it
@@ -100,14 +100,9 @@ constant, and never with a road *picture* at the vector zooms — the deleted ro
 raster cost ~70 MB/device and drew lines 8× a real road's width
 (`purgeRoadRasters.ts` still drops its orphaned databases on boot).
 
-**Reconcile invariants (keep them):**
-- **Sweep BEFORE mount.** The unmount sweep runs before any mounting, and every
-  mount is per-area try/caught. One throwing mount must never abort the pass.
-- **Viewport render budget.** Only areas near the viewport mount
-  (`viewportAreas`, `MOUNT_MARGIN`, caps); the selection re-runs on debounced
-  `moveend`. Never mount the full area set — that built GB-scale heap.
-- **Force refresh is throttled.** Bake-service generation bumps force a full
-  refresh at most every 45 s.
+**Reconcile invariant (keep it):** the unmount sweep runs before any
+mounting, and every mount is per-area try/caught (`mountSatellite.ts`). One
+throwing mount must never abort the pass.
 
 **Features are NOT the viewer's business.** Pins, plots, clusters, draw tools
 come from the SAME shared machinery as the online map and must render
@@ -152,24 +147,25 @@ per-area, and rendered from cache when there isn't. The **map** still renders
 only on-device bytes; the fetch is the same user-driven downloader path on a
 much shorter clock.
 
-⚠️ **The viewer never fetches.** `attachFireLayer` is called with
-`canFetch: false` on this route, because `/offline` is a pure VIEWER and the
-app-wide `bakeService` owns every download. A second downloader would
+⚠️ **The viewer never fetches.** `/offline` is a pure VIEWER and the
+app-wide `bakeService` owns every download, so the fire layer — when it lands
+(no `attachFireLayer` exists yet; the Fires switch in `wallLegend.ts` has an
+empty `ids`) — mounts with `canFetch: false`. A second downloader would
 double-fetch and fight over the same cache entries.
 
 ### 🔬 Fire refresh is currently DISABLED — a bisect, not a decision
 
-`FIRE_REFRESH_ENABLED = false` in `bakeService.svelte.ts` (pairs with
-`FIRE_LAYER_ENABLED_ONLINE` in the parent's `MobMapPage.svelte`). Fire has TWO
-halves (render + fetch/store); disabling only one invalidates the bisect.
-State: [`../routes/fires/v2/BISECT_STATE.md`](../routes/fires/v2/BISECT_STATE.md).
+`FIRE_REFRESH_ENABLED = false` in `lib/shared/bakeFlags.ts` gates
+`refreshFires` in `bakeService.svelte.ts`. Fire has TWO halves (render +
+fetch/store); disabling only one invalidates the bisect.
+State: [`../routes/fires/docs/FIRES.md`](../routes/fires/docs/FIRES.md).
 
 Why it matters: **fire v1 measured ~4,000 MB and 119% CPU on an idle page**;
 disabling only that layer took the same page to 963 MB. Every memory number in
 these docs was taken with fires OFF, so none proves anything about fire cost.
 
 **Fire v2 is written and tested but NOT wired in**, and its Worker route does
-not exist yet: [`WILDFIRE_LAYER_V2.md`](../routes/fires/docs/WILDFIRE_LAYER_V2.md).
+not exist yet: [`FIRES.md`](../routes/fires/docs/FIRES.md).
 Same lesson as the wall map: v1 held every raw detection on the phone; v2
 computes in the Worker and ships something already reduced.
 
@@ -179,12 +175,11 @@ Hospitals are POIs in the wall map's `pois` source-layer, drawn as an icon-only
 symbol layer sized to match the online map's marker. No separate source, no
 download, no clock — if the area is downloaded, its hospitals came with it.
 
-⚠️ **`showHospitalMarkers: false` on this route does NOT mean hospitals are
-off.** That flag belongs to the *shared online* hospital machinery, which this
-route does not use. If a hospital doesn't appear, the question is whether the
-`pois` layer made it into the pack (`packLayers.ts`). Campsites in the same
-layer are gated to z10+ as decluttering — the one sanctioned exception to
-Law 1's no-zoom-band rule.
+⚠️ If a hospital doesn't appear, the question is whether the `pois` layer
+made it into the pack (`packLayers.ts`), not the online map's hospital
+machinery, which this route does not use. Campsites in the same layer
+(`v4-poi-camp`, `wallLabels.ts`) are gated to z10+ as decluttering — the one
+sanctioned exception to Law 1's no-zoom-band rule.
 
 ---
 
@@ -227,8 +222,8 @@ The safety layers cut across all three tiers and are governed above.
 | **2** | **Cloud globe basemap (wall map)** | The planet's OSM vector tiles as one Protomaps `.pmtiles` on R2; the Worker packs the area's slice; the phone stores it and serves it locally (LAW 0). The roads/water you see. | **Shipping — THE offline map** |
 | **3** | **Cloud bake + supplement** | Bake each area once in the cloud, a central registry so nothing is built/sent twice, better-than-default data per area. | **Vision — design only** |
 
-Layers 1 and 2 ship as ONE route, `/offline` (the crow toggle from `/map`).
-The blob debug panel (`OfflineBlobPanel`) inspects on-device storage.
+Layers 1 and 2 ship as ONE route, `/offline`. The blob debug panel
+(`OfflineBlobPanel`) inspects on-device storage.
 
 ---
 
@@ -297,9 +292,8 @@ LIST B — DOWNLOAD-WHAT'S-MISSING  (separate pass over the same kept list)
               NEVER store the ~30 KB transparent dud.
 ```
 
-**Last-touched is the ONLY clock.** Size only decides WHERE the 1 GB line
-falls. Being briefly over 1 GB is fine. Blob panel badges: 🟢 has its blob ·
-🟠 roads but the image bake FAILED (a download problem) · 🟡 evicted.
+**Last-touched is the ONLY clock.** Size (`OFFLINE_BUDGET_BYTES`) only
+decides WHERE the 1 GB line falls. Being briefly over 1 GB is fine.
 
 ---
 
@@ -386,7 +380,7 @@ unreachable, the phone still bakes and the map still works.
 |-------|----------|---------|--------|
 | Satellite photo | EOX (Sentinel-2 cloudless) | open | raster `image` |
 | Roads, water, places, pois | Protomaps planet (OSM), via the pack | ODbL | MVT, `packLayers.ts` |
-| World base below the area | bundled Natural Earth (`static/worldBase/`) | public domain | GeoJSON |
+| World base below the area | bundled Natural Earth (`static/mobileAssets/worldBase/`) | public domain | GeoJSON |
 
 A layer earns its place only if it's **small AND shows something the satellite
 photo can't.** Rejected: **forest / landcover** (the photo already shows the
@@ -433,9 +427,7 @@ high-res imagery is a *replacement* for the satellite, not a new layer (§3c).
 - Design rationale + the acceptance tests (§8) and engineering rules (§9):
   [`OFFLINE_MAP_SPEC.md`](./OFFLINE_MAP_SPEC.md)
 - Dead ends already walked: [`OFFLINE_HISTORY.md`](./OFFLINE_HISTORY.md)
-- **The fire layer:** [`WILDFIRE_LAYER_V2.md`](../routes/fires/docs/WILDFIRE_LAYER_V2.md)
-  (v1, still what runs: [`WILDFIRE_LAYER.md`](../routes/fires/docs/WILDFIRE_LAYER.md);
-  data sources: [`fireAPIs.md`](../routes/fires/docs/fireAPIs.md))
+- **The fire layer:** [`FIRES.md`](../routes/fires/docs/FIRES.md)
 - Measured memory receipts: [`MEMORY_FINDINGS.md`](../../ReTreever/src/lib/mobile/offline/MEMORY_FINDINGS.md)
 - Forward work: [`TODO.md`](../../ReTreever/src/lib/mobile/docs/TODO.md)
 - Memories: `offline-blob-naming-and-model`, `offline-download-guard`,

@@ -58,7 +58,7 @@ describe("fireArrival — the TTL bypass", () => {
 	});
 });
 
-/** ⛔ both fetch paths must arm from the same TTL — arming only one fixes one map and leaves the other showing stale dots (WILDFIRE_LAYER.md). */
+/** ⛔ both fetch paths must arm from the same TTL — arming only one fixes one map and leaves the other showing stale dots (routes/fires/docs/FIRES.md). */
 describe.skip("both fetch paths honour the arrival", () => {
 	// ⚠️ skipped for the v5 rebuild (v4 offline route/bake service deleted) — re-point at v5's route and unskip; do NOT delete, this guard caught real drift.
 	const bake = "";

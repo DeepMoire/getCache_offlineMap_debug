@@ -18,10 +18,12 @@ talks to, the `/pack` downloader, the fires fetch.
   Never create them by hand in the dashboard — the deploy then fails (100117)
   and there is no `--force`. `tiles-local` is the one hand-made DNS record
   (A → 127.0.0.1, DNS-only); nothing else will ever create it.
-- ⛔ No prod/dev host is baked into this child — the mounting app injects both
-  (`configureTilesHost` / `configureTilesDevHost`). Unconfigured → `null` → the
-  row greys out. A hardcoded default bills the maintainer's R2 account for
-  every stranger who installs the package.
+- ⛔ No prod/dev host is baked into this child — `routes/+layout.svelte` calls
+  `configureTilesFromEnv()`, which reads `VITE_TILES_HOST` / `VITE_TILES_DEV_HOST`
+  from the `.env` beside vite's root (`rapper/.env`, written by `npm create`).
+  Unset → `null` → the row greys out, and the console warns on the first line.
+  A hardcoded default bills the maintainer's R2 account for every stranger who
+  installs the package.
 - Default is always prod; the switch only exists in a dev build
   (`import.meta.env.DEV`), so a shipped phone cannot be left on a sandbox.
 - `tierNaming.test.ts` fails the build on any other tile hostname spelling.

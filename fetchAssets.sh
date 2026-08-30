@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Populate static/mobileAssets/ for this child's demo.
-# See ASSETS.md. Fails loud — no silent fallbacks.
+# Fails loud — no silent fallbacks.
 set -euo pipefail
 
 DEST="${1:-static/mobileAssets}"
@@ -62,5 +62,4 @@ echo "Either:" >&2
 echo "  - set RETREEVER_ASSETS=/path/to/ReTreever/static/mobileAssets, or" >&2
 echo "  - set ASSETS_URL to a reachable copy of the bundle, or ask Ground Truth Data for it." >&2
 echo "" >&2
-echo "See ASSETS.md." >&2
 exit 1

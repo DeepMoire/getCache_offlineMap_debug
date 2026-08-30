@@ -10,7 +10,7 @@ account or a private endpoint; that material stays in the parent's
 | [`OFFLINE_PLAN.md`](./OFFLINE_PLAN.md) | **Start here.** The plan of record: the 5 laws, the wall map, the layers, do-nots. Wins over everything below. |
 | [`OFFLINE_MAP_SPEC.md`](./OFFLINE_MAP_SPEC.md) | Design rationale: the measured failures, the acceptance tests (§8) and engineering rules (§9) that tests cite by number. |
 | [`OFFLINE_HISTORY.md`](./OFFLINE_HISTORY.md) | Dead ends already walked (V2, V3, rings, decode, rasters). Don't re-walk them. |
-| [`../routes/fires/docs/`](../routes/fires/docs/) | The wildfire layer: v1, v2 spec + cutover, data sources. |
+| [`../routes/fires/docs/FIRES.md`](../routes/fires/docs/FIRES.md) | The wildfire layer: data source, caching, render contract, why v2 is held back and what remains. |
 | [`../lib/r2Worker/README.md`](../lib/r2Worker/README.md), [`../worker/README.md`](../worker/README.md) | The client half of the tile Worker, and the Worker itself (tiers, deploy). |
 
 Stayed in the parent (`ReTreever/src/lib/mobile/docs/`): `mapDocs.md` (the map

@@ -19,7 +19,7 @@ features) read from IndexedDB lazily on mount and dropped on unmount — never
 hoarded. ~65 MB retained after heavy panning (was 596 MB). The cull was always
 working; the HOARD was the bug.
 
-> **`static/worldBase/`** (once `static/offlineV2/`) was never V2 machinery
+> **`static/mobileAssets/worldBase/`** (once `static/offlineV2/`) was never V2 machinery
 > and is **live**: the bundled Natural Earth world base + gazetteer + Noto Sans
 > glyphs. Deleting it black-screens the offline map and strips every label.
 
