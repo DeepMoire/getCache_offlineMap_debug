@@ -1,8 +1,4 @@
-/**
- * ⚠️ Neither host is baked in — both injected at boot (configureTilesHost / configureTilesDevHost), since this child ships standalone and a hardcoded origin would bill whoever owns it.
- * r2_prod — tiles-prod.getcache.org, every shipped phone, real users.
- * r2_dev — tiles-dev.getcache.org, a deployed sandbox, contractors deploy here.
- */
+// ⚠️ neither host is baked in — both are injected at boot; a hardcoded origin would bill whoever owns it.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
@@ -26,7 +22,6 @@ describe("worker tiers", () => {
 		const m = await import("./local_dev/tilesHost");
 		m.configureTilesHost("https://prod.example.test");
 		m.setWorkerTarget("r2Dev");
-		// falling back to prod would let a dev-tester silently hit real user data — null greys the row instead.
 		expect(m.tilesHost()).toBeNull();
 		expect(m.packUrl()).toBeNull();
 	});
@@ -41,7 +36,7 @@ describe("worker tiers", () => {
 			import("./local_dev/tilesHost"),
 			import("./r2_prod/tilesHost"),
 		]);
-		// r2Worker README requires local_dev/ and r2_prod/ stay identical — a tier added to only one is the drift this catches.
+		// ⛔ local_dev/ and r2_prod/ must export the same tier surface — a tier added to only one is the drift this catches.
 		expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
 	});
 });

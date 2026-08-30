@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-#
-# Deploy this Worker to r2_dev — https://tiles-dev.getcache.org
-#
-# ⛔ NO CONFIRMATION PROMPT, ON PURPOSE — nothing reaches a shipped phone from here (r2_dev is unreachable from any Capacitor build); breaking this Worker is the intended use.
-#
-# scope the CLOUDFLARE_API_TOKEN to THIS Worker only — that's what makes deployProduction.sh fail at Cloudflare's edge for a contractor, not people remembering which script is which.
-#
-# same R2 bucket as production — a difference between the two Workers is always CODE, never data.
+# ⛔ NO CONFIRMATION PROMPT, ON PURPOSE — r2_dev is unreachable from any shipped phone.
+# ⚠️ scope CLOUDFLARE_API_TOKEN to THIS Worker only — that is what makes deployProduction.sh fail for a contractor.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 

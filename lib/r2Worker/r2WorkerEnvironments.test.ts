@@ -1,4 +1,4 @@
-// ⛔ TWO ENVIRONMENTS MUST EXIST (local_dev AND r2_prod) — they hold byte-for-byte identical files on purpose (dev vs. deployed prod), so do NOT delete one as a "duplicate"; do not edit this test to make it pass — see README.md.
+// ⛔ BOTH environments (local_dev AND r2_prod) must exist — identical bytes on purpose; never delete one as a "duplicate", never edit this test to pass.
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,10 +6,9 @@ import { describe, expect, it } from "vitest";
 
 const R2_WORKER = fileURLToPath(new URL(".", import.meta.url));
 
-/** The two environments, by folder name. Both are load-bearing. */
 const ENVIRONMENTS = ["local_dev", "r2_prod"] as const;
 
-/** Files each environment must actually contain — an empty dir is not an env. */
+/** files each environment must contain — an empty dir is not an env */
 const REQUIRED = ["tilesHost.ts", "roads/packDownload.ts", "fires/fireFetch.ts"];
 
 describe("r2Worker keeps BOTH environments", () => {
@@ -43,7 +42,7 @@ describe("r2Worker keeps BOTH environments", () => {
 		});
 	}
 
-	// if this ever fails, the environments have genuinely diverged — relax this test deliberately, never remove a folder to fix it.
+	// ⛔ if this fails the environments have diverged — relax the test deliberately, never delete a folder to fix it.
 	it("both environments carry the same file names (identical is CORRECT)", () => {
 		const names = ENVIRONMENTS.map((env) => {
 			const walk = (d: string, prefix = ""): string[] =>

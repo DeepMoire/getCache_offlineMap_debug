@@ -36,7 +36,17 @@ for guess in "${CANDIDATES[@]}"; do
   exit 0
 done
 
-echo "ERROR: could not find the mobileAssets source." >&2
+# no local ReTreever — pull the public bundle (a GitHub release on this repo)
+ASSETS_URL="${ASSETS_URL:-https://github.com/Ground-Truth-Data/getCache_offlineMap/releases/download/assets-v1/mobileAssets.tar.gz}"
+echo "No local asset source — downloading $ASSETS_URL"
+mkdir -p "$DEST"
+if curl -fsSL "$ASSETS_URL" | tar -xz -C "$DEST"; then
+  for n in "${NEEDED[@]}"; do [ -e "$DEST/$n" ] || { echo "ERROR: bundle is missing $n" >&2; exit 1; }; echo "  ✓ $n"; done
+  echo "Done. Assets are in $DEST"
+  exit 0
+fi
+
+echo "ERROR: could not find or download the mobileAssets source." >&2
 echo "" >&2
 echo "This child needs ~50 MB of basemap assets that are not in git." >&2
 echo "Looked in (in order):" >&2
@@ -50,7 +60,7 @@ done
 echo "" >&2
 echo "Either:" >&2
 echo "  - set RETREEVER_ASSETS=/path/to/ReTreever/static/mobileAssets, or" >&2
-echo "  - ask Ground Truth Data for the asset bundle." >&2
+echo "  - set ASSETS_URL to a reachable copy of the bundle, or ask Ground Truth Data for it." >&2
 echo "" >&2
 echo "See ASSETS.md." >&2
 exit 1

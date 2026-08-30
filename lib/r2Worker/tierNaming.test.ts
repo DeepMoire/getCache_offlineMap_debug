@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { LOCAL_DEV_HOST } from "./local_dev/tilesHost";
 
-/** ⛔ the three tiers have three names — prod (tiles-prod.getcache.org), dev (tiles-dev.getcache.org), local (tiles-local.getcache.org, → 127.0.0.1 until the record exists). A test enforces it, not a doc: seven spellings were live at once and every one read as authoritative. [[no-silent-fallbacks]] */
+// ⛔ three tier names only — tiles-prod / tiles-dev / tiles-local (→ 127.0.0.1); enforced by test, not doc.
 
 const ALLOWED = [
 	"tiles-prod.getcache.org",
@@ -11,7 +11,6 @@ const ALLOWED = [
 	"tiles-local.getcache.org",
 ];
 
-/** Anything that LOOKS like one of our tile hostnames. */
 const TILE_HOST = /tiles[a-z-]*\.(?:getcache|retreever)\.(?:org|com|io|app)/g;
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
@@ -46,7 +45,7 @@ describe("tile hostnames — dev, prod, local and nothing else", () => {
 	});
 
 	it("the child bakes in NO production hostname at all", () => {
-		// ⛔ the child cannot name our infrastructure — prod arrives via VITE_TILES_HOST at boot; there's no PRODUCTION_HOST export to assert on, and that absence IS the guarantee. [[child-names-no-parent]]
+		// ⛔ the child cannot name our infrastructure — prod arrives via VITE_TILES_HOST at boot; the absence IS the guarantee.
 		const src = readFileSync(join(__dirname, "local_dev", "tilesHost.ts"), "utf8");
 		const code = src
 			.split("\n")
@@ -56,7 +55,7 @@ describe("tile hostnames — dev, prod, local and nothing else", () => {
 	});
 
 	it("the local tier is loopback or the local NAME — never a cloud host", () => {
-		// loopback while the DNS record is missing, tiles-local.getcache.org once it exists — anything else means local silently became remote and bills someone for a "free" tier
+		// ⚠️ anything but loopback/tiles-local means local silently became remote and bills someone.
 		expect(LOCAL_DEV_HOST).toMatch(
 			/^https?:\/\/(127\.0\.0\.1|localhost|tiles-local\.getcache\.org):8787$/,
 		);

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-#
-# ⚠️ The ONLY sanctioned way to deploy to prod — `wrangler deploy` alone has no confirmation and can hit tiles-prod.getcache.org by muscle memory. Don't remove or auto-answer this prompt.
-#
-# --yes is the deliberate opt-out for non-interactive callers (no TTY, e.g. Claude Code's `!` prefix) — don't auto-answer via `echo deploy |` instead, that bypasses the guard invisibly.
-#
+# ⚠️ the ONLY sanctioned prod deploy — bare `wrangler deploy` has no confirmation; don't remove or auto-answer this prompt.
+# ⚠️ --yes is the opt-out for no-TTY callers — never `echo deploy |` it, that bypasses the guard invisibly.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 

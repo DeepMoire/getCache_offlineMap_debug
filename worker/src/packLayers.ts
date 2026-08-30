@@ -1,6 +1,2 @@
-/**
- * ONE SOURCE. The Worker and the phone must agree on which source-layers (and
- * which feature kinds inside them) a pack carries — see `lib/contract/packLayers.ts`.
- * Re-exported, not copied, for the same reason as `grid.ts` and `blob.ts`.
- */
+// ⚠️ re-exported, not copied — Worker and phone must agree on pack layers; a copy drifts.
 export * from "../../lib/contract/packLayers";

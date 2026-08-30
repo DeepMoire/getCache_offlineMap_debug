@@ -1,44 +1,4 @@
-/**
- * offline-tiles — serve a Protomaps planet .pmtiles archive parked on R2.
- *
- * Two routes, both backed by the same R2 archive (read via the R2 binding, which does
- * NOT count against the Workers subrequest cap — so a single request can pull hundreds
- * of tiles):
- *
- *   GET /{z}/{x}/{y}.pbf       -> one MVT tile (Mapbox GL 3.23.1 has no native PMTiles).
- *
- *   GET /pack?lng=&lat=        -> the v4 offline DOWNLOADER's endpoint. Computes the SAME
- *                                 concentric RINGS (5 km z15 inner + 25–40 km z12 outer, the
- *                                 outer reach grown by the roads budget) the phone would fetch
- *                                 tile-by-tile (hundreds of round-trips), reads every tile
- *                                 from R2 here, and packs them into ONE binary response. The
- *                                 phone makes ONE request and unpacks locally into IndexedDB.
- *                                 600 high-latency phone↔R2 trips collapse to 1 phone trip +
- *                                 N in-datacenter R2 reads. This is the whole point of PMTiles
- *                                 being one indexed file — we slice it server-side.
- *
- *   GET /fires?lng=&lat=&km=   -> NASA FIRMS active-fire hotspots for one disc, as GeoJSON.
- *                                 NOT R2-backed — it proxies the FIRMS Area API, so the
- *                                 MAP_KEY stays a Worker secret and off every device. Rides
- *                                 the same rails as /pack (the phone fetches it from the
- *                                 offline bake loop and stores it in IndexedDB) but caches
- *                                 for 1 h, not a year: hotspots are perishable. Logic lives
- *                                 in ./fires.ts.
- *
- * PMTiles stores its internal directories AND its MVT tiles gzip-compressed, and the client
- * MUST decompress the directories to locate a tile — so we gunzip on the edge and serve the
- * tile as raw protobuf (no Content-Encoding). The pack route stores the same decompressed MVT
- * bytes the phone's pmtiles reader produced, so the on-device decode path is unchanged.
- *
- * ── Where the logic lives ──
- * This file is the HTTP router + R2/PMTiles plumbing ONLY. The pack brain — ring
- * geometry, the roads budget (radius + path-drop rule), and pack assembly — lives in
- * ./packBuilder.ts. The per-tile MVT byte surgery (layer keep + kind allowlist + path
- * strip) lives in ./mvtFilter.ts. Ring geometry in packBuilder MUST stay in lockstep
- * with `tilesForRings()` in
- * /Users/chrisharris/DEV/fetch/ReTreever/src/lib/mobile/offlineV4/v4CloudflareTiles.ts
- * (the phone's `areaTilesPresent` probe must agree on which tiles an area contains).
- */
+// ⚠️ geometry in ./packBuilder.ts MUST stay in lockstep with `tilesForRings()` in ReTreever/src/lib/mobile/offlineV4/v4CloudflareTiles.ts — the phone's `areaTilesPresent` probe must agree on which tiles an area holds.
 
 import { gunzipSync, gzipSync } from "fflate";
 import {

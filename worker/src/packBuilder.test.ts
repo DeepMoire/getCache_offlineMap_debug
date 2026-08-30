@@ -1,10 +1,3 @@
-// packBuilder — ring geometry + the three-ring routing.
-//
-// These guard the two things that broke while the z13 MID ring was being added, both
-// of which fail SILENTLY in production: a mid-ring tile routed to the wrong keep-set
-// (water vanishes across the default camera band) and the mid ring's bytes folded
-// into the roads budget (every area reads as dense → paths stripped, reach cut).
-
 import { describe, expect, it } from "vitest";
 import {
   MID_ROAD_KINDS,

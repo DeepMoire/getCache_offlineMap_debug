@@ -1,21 +1,3 @@
-// ── MVT byte-level filter — strip layers AND features without decoding geometry ──
-//
-// An MVT tile is protobuf:
-//   Tile  { repeated Layer layers = 3 }
-//   Layer { string name = 1; repeated Feature features = 2; repeated string keys = 3;
-//           repeated Value values = 4; uint32 extent = 5; uint32 version = 15 }
-//   Feature { uint64 id = 1; packed uint32 tags = 2; GeomType type = 3; packed uint32 geometry = 4 }
-//   Value { string string_value = 1; float = 2; double = 3; int64 = 4; uint64 = 5; sint64 = 6; bool = 7 }
-//
-// We never decode geometry. Two operations, both byte-lossless for survivors:
-//   1. filterMvtToLayers   — keep only named source-layers (the original behaviour),
-//      now ALSO applying a per-layer KIND allowlist when one is configured.
-//   2. filterLayerFeaturesByKind — within ONE layer, keep/drop features by their
-//      `kind` attribute, copying surviving features' raw bytes verbatim.
-//
-// Keeping the keys/values tables intact after dropping features is valid MVT — an
-// unreferenced key/value entry is harmless. This keeps the strip lossless + fast.
-
 export function readVarint(buf: Uint8Array, pos: number): [number, number] {
   let result = 0;
   let shift = 0;

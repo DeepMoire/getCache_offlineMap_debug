@@ -1,45 +1,23 @@
-# Offline Map — Build Spec
+# Offline Map — Build Spec (design rationale)
 
-**Status: SHIPPED and carved out.** This was written as a from-scratch build
-brief; it is now a *design rationale*, not a work order. The engine lives in the
-`getCache_OfflineMap` **child** at
-`getCache_OfflineMap/lib/`, and the live plan of
-record is [`OFFLINE_PLAN.md`](OFFLINE_PLAN.md) — read that first, and prefer it
-wherever the two disagree.
-
-Note this file's "no fires, no hospitals, ever" scope line is **not** the
-current position: `OFFLINE_PLAN.md` builds the two safety layers deliberately.
-
-You are adding an **offline map** to Get Cache, an existing Capacitor mobile app
-(SvelteKit + MapLibre) in this repo. Today the app has a working online map and
-one button that does nothing:
-
-```html
-<button class="crow-switch" aria-label="Offline map — tap to switch to the online map" aria-pressed="true">
-  <img class="crow-switch__img" alt="" src="/mobileAssets/offLine.webp">
-</button>
-```
-
-Your job is to make that button mean something.
-
----
+The original from-scratch build brief, kept for its **why**: the measured
+failures, the acceptance tests (§8) and the engineering rules (§9) that tests
+cite by number. The plan of record is [`OFFLINE_PLAN.md`](OFFLINE_PLAN.md) —
+prefer it wherever the two disagree. Radii here say 25 km; the shipped
+constant is `GRID_RADIUS_KM` in `lib/contract/grid.ts`.
 
 ## ⛓️ CONSTRAINTS
 
-These are the user's rules, in his words. They are not implementation
-suggestions — they are the definition of done.
+The user's rules, in his words. They are the definition of done.
 
 🗜️ **"We need to see the roads all the time, and we need it to be fast. That's it."**
-🗜️ **Roads within 25 km of every pin, visible at EVERY zoom level.** Zoomed all the
-   way out, zoomed all the way in. No blank zoom bands.
+🗜️ **Roads within the radius of every pin, visible at EVERY zoom level.** No blank zoom bands.
 🗜️ **Every pin, not just the one on screen.** Imported pins, pins from a shared
    file, pins the user has never looked at. Nothing may require the user to
    visit, centre, or hold still on a pin for it to get data.
 🗜️ **It works with the phone in airplane mode.** That is the entire point.
-🗜️ **No fires, no hospitals, no wildfire layers.** Not in scope, ever.
 🗜️ **Fail loud.** A read that returns null on error, a catch that swallows, a
-   "retry next pass" on a permanent failure — each of these has cost this
-   project multiple days. See §9.
+   "retry next pass" on a permanent failure — each has cost multiple days. See §9.
 
 ---
 
@@ -58,25 +36,14 @@ pin is here". The roads are the useful part — "here is how I get there".
 
 ## 2. Infrastructure that ALREADY EXISTS — do not rebuild
 
-The Cloudflare account, R2 bucket, domain and map archive are **already set up
-and must be reused as-is**. Do not create new buckets, keys, or domains — the
-user has explicitly asked not to redo this.
+The Cloudflare account, R2 bucket (`offline-tiles`, `env.TILES`), the three
+tile hostnames and the `planet.pmtiles` archive are set up and reused as-is —
+never create new buckets, keys or domains. Source, deploy and tiers:
+[`../worker/README.md`](../worker/README.md).
 
-| Thing | Value |
-|---|---|
-| Worker name | `offline-tiles` |
-| Public endpoint | `https://tiles.retreever.org` (custom domain, TLS auto-provisioned) |
-| R2 binding | `env.TILES` |
-| R2 bucket | `offline-tiles` |
-| Map archive | `planet.pmtiles` — whole world, z0–15, Protomaps schema |
-| Env var | `PACK_PMTILES_KEY = "planet.pmtiles"` |
-| Config | `workers/offline-tiles/wrangler.toml` |
-
-**Rewrite the Worker's source. Keep `wrangler.toml` and every binding in it.**
-
-Satellite imagery comes from EOX Sentinel-2 cloudless (public WMTS, no key):
+Satellite imagery is EOX Sentinel-2 cloudless (public WMTS, no key):
 `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg`
-(note the `z/y/x` order — it is not the usual `z/x/y`).
+(note the `z/y/x` order).
 
 ---
 
@@ -152,11 +119,6 @@ few-hundred-metre offset is the tile grid, and it is invisible: at z12 it is
 on its true coordinates. What was off is the *extent of the downloaded area*,
 not the position of anything in it.
 
-**Compare with the failures**, same measurement, same night:
-```
-West Glacier MT   offsetFromPin 27,900 m   ← a grid square
-Yellowstone  WY   offsetFromPin 50,400 m   ← served a NEIGHBOUR's tiles (§5.1)
-```
 **Kilometres = a bug. Metres = working.** That is the whole readout.
 
 ### The separate bug that looks identical
@@ -198,22 +160,8 @@ placement without re-deriving it.
 
 ### 4.3 ⛔ Traps that have already cost days
 
-**Never send a derived point instead of the pin.** An earlier version sent the
-grid-cell centre so nearby pins would share a cache entry. It worked, and it
-silently moved the data — measured 63 km west of the user's pin. *A cache key
-may be derived from the request; it must never replace the request.*
-
-**Never clip geometry to the radius.** Clipping was tried. It centres the data
-correctly and cuts every road crossing the boundary into an arc — that is not a
-bug in the clip, it is what clipping means. Mapbox and MapLibre both download
-every tile *intersecting* a region, explicitly including "many tiles outside the
-visible area." **Whole tiles, always a superset.** The pin is honoured by the
-camera (§6.4), never by cutting data.
-
-**Never rasterise roads to PNG.** Tried, deployed, reverted the same day. It
-centres perfectly and is worse in every way that matters: a raster cannot
-restyle, blurs the moment you zoom past its render resolution, and replaces a
-tiled map with one flat picture per pin.
+The centring traps are the §3.5 table — derived point, clipping, rasterising.
+Worker-side:
 
 **The build ID must be part of the edge cache key.** Entries are stored
 `immutable`; without a build stamp in the key a code change is invisible — the
@@ -328,22 +276,13 @@ the tile cache. Do it on a short retry ladder (e.g. 400 ms / 1.5 s / 4 s), not
 once — a single call races the source being mounted. And make the "asked N,
 found 0" detector *trigger* that refresh rather than merely log it.
 
-### 6.3 ⛔ Roads at EVERY zoom — the requirement that was never delivered
+### 6.3 ⛔ Roads at EVERY zoom
 
 MapLibre **overzooms up, never down.** A source with `minzoom: 8` shows nothing
-below z8 — silently. Setting `minzoom: 0` does not help: MapLibre then requests
-z0–z7 addresses that do not exist, gets 404s, and the map is blank.
-
-So storing one zoom level does **not** satisfy "visible at every zoom", and the
-previous attempt shipped with a hard floor at z8 and a permanently blank
-zoomed-out view. **Solve this deliberately.** Two workable approaches:
-
-- **Store a shallow level too** (e.g. z5 and z12), so the pyramid genuinely
-  spans the range. Costs bytes; simple and predictable.
-- **A low-zoom image tier** — one small pre-rendered picture per pin below the
-  vector floor, placed by explicit GPS bounds like the satellite.
-
-Whichever you pick, the acceptance test in §8 must pass at *every* zoom.
+below z8 — silently; `minzoom: 0` just 404s z0–z7. Storing one zoom level does
+**not** satisfy "visible at every zoom". The open fix is a low-zoom IMAGE tier
+per pin, placed by GPS bounds like the satellite (see `OFFLINE_PLAN.md`,
+"Below `BLOB_TILE_Z`"). §8 A2 must pass at *every* zoom.
 
 ### 6.4 Centring is the camera's job
 
@@ -460,9 +399,3 @@ it. Multiple tests in the previous attempt passed on broken code.
    requests something the Worker never wrote and the map is blank with no error.
    Share the file byte-for-byte and add a test that fails if the copies drift.
 
----
-
-## 10. Deliberately out of scope
-
-Fires, wildfire hotspots, hospitals, corridor/route ribbons, Quality 704, inbox,
-KMZ export. If a design pulls any of these in, the design is wrong.

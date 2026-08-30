@@ -1,17 +1,3 @@
-// ── packBuilder — build ONE area's offline vector pack from the PMTiles archive ──
-//
-// This is the whole "what tiles, how far, what to drop" brain, kept OUT of index.ts
-// (which is just the HTTP router + R2/PMTiles plumbing). Three concerns live here:
-//   1. RING GEOMETRY — which slippy tiles a pin's disc covers (jagged discs by radius).
-//   2. THE ROADS BUDGET — the one rule that picks the radius + whether to drop paths.
-//   3. PACK ASSEMBLY — read+filter the disc's tiles and serialise the binary blob.
-//
-// The per-tile MVT byte surgery (layer keep + kind allowlist + path strip) lives in
-// ./mvtFilter.ts. This file decides WHICH tiles and the budget; mvtFilter decides
-// WHAT survives inside each tile. index.ts owns R2 (it constructs the PMTiles archive
-// and passes it in), so this module has no R2/Worker-runtime dependency — it's pure
-// logic over a PMTiles reader, which keeps it unit-testable.
-
 import type { PMTiles } from "pmtiles";
 import {
   filterMvtToLayers,

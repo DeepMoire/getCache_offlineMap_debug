@@ -1,43 +1,37 @@
-/**
- * fires.ts — NASA FIRMS active-fire hotspots, fetched per-area, returned as trimmed GeoJSON.
- * ⚠️ FIRMS MAP_KEY is a Worker secret — never put it in the app bundle.
- * ⚠️ fetchedAt is not decoration — it drives the "as of Xh ago" staleness stamp; keep it wired end to end.
- * Pure logic over an injected fetch — no R2/caching/Response building (that's index.ts).
- */
+// ⚠️ FIRMS MAP_KEY is a Worker secret — never put it in the app bundle.
+// ⚠️ fetchedAt drives the "as of Xh ago" staleness stamp — keep it wired end to end.
 
-/** FIRMS Area API base. CSV flavour: /api/area/csv/{KEY}/{SOURCE}/{bbox}/{days} */
 const FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv";
 
-/** The three VIIRS 375m sensors, queried together — MODIS deliberately excluded: coarser, and its 0–100 confidence scale doesn't match VIIRS l/n/h. */
+// ⚠️ MODIS excluded — its 0–100 confidence scale doesn't match VIIRS l/n/h.
 export const FIRMS_SOURCES = [
 	"VIIRS_NOAA20_NRT",
 	"VIIRS_SNPP_NRT",
 	"VIIRS_NOAA21_NRT",
 ] as const;
 
-/** ⚠️ DAY_RANGE=1 means "today, UTC", not "last 24h" — blanked the whole layer nightly at UTC midnight (5pm BC) while fires burned. Never drop below 2; locked by a test in fires.test.ts. */
+// ⚠️ never below 2 — DAY_RANGE=1 means "today, UTC", not "last 24h", and blanks the layer nightly at UTC midnight.
 export const DAY_RANGE = 2;
 
-/** Default disc radius. ~785,000 km² — the smoke shed, not just the block. */
 export const DEFAULT_RADIUS_KM = 500;
 
-/** Hard ceiling so a hand-edited URL can't ask us to pull a continent. */
+/** hard ceiling on a hand-edited URL */
 export const MAX_RADIUS_KM = 800;
 
-/** VIIRS confidence is CATEGORICAL (l/n/h) — not the MODIS 0–100 scale. */
+/** ⚠️ VIIRS confidence is categorical l/n/h — not the MODIS 0–100 scale */
 export type FireConfidence = "low" | "nominal" | "high";
 
 export interface FireFeature {
-	/** [lng, lat] — GeoJSON order, not the CSV's lat-first order. */
+	/** ⚠️ [lng, lat] — GeoJSON order, not the CSV's lat-first */
 	readonly coordinates: readonly [number, number];
-	/** Acquisition time, UTC epoch ms. Drives the age-colour ramp. */
+	/** acquisition time, UTC epoch ms */
 	readonly t: number;
 	readonly confidence: FireConfidence;
-	/** Fire radiative power, megawatts. */
+	/** fire radiative power, MW */
 	readonly frp: number;
-	/** Pixel footprint km (larger of scan/track), OPTIONAL. A detection means part of this ~0.4km cell was hot, NOT that the whole square is on fire. */
+	/** pixel footprint km (max of scan/track) — a hot cell, not a burning square */
 	readonly px?: number;
-	/** Day or Night overpass — night detections have less solar contamination, so are more trustworthy. OPTIONAL. */
+	/** day or night overpass */
 	readonly dn?: "D" | "N";
 }
 
@@ -58,7 +52,6 @@ export interface FireCollection {
 
 const EARTH_RADIUS_KM = 6371;
 
-/** Bbox order matches Mapbox bounds (no conversion needed); clamps at poles where cos(lat)→0 would otherwise explode the span. */
 export function bboxForRadius(
 	lng: number,
 	lat: number,
@@ -75,7 +68,6 @@ export function bboxForRadius(
 	];
 }
 
-/** Great-circle distance in km (haversine) — trims the bbox corners to a disc. */
 export function distanceKm(
 	aLng: number,
 	aLat: number,
@@ -91,7 +83,7 @@ export function distanceKm(
 	return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 
-/** l/n/h → enum. Unknown codes are treated as WEAKEST, never silently promoted to a confirmed fire. */
+// ⚠️ unknown codes are treated as WEAKEST — never promoted to a confirmed fire.
 function parseConfidence(raw: string): FireConfidence {
 	switch (raw.trim().toLowerCase()) {
 		case "h":
@@ -105,7 +97,7 @@ function parseConfidence(raw: string): FireConfidence {
 	}
 }
 
-/** ⚠️ Built via Date.UTC from explicit parts, NOT ISO-string-slicing — that's the repo's UTC date trap (local-timezone slicing silently shifts the day by up to 24h). */
+/** ⚠️ Date.UTC from explicit parts, never ISO-string slicing — local-timezone slicing shifts the day by up to 24h */
 export function parseAcqTime(acqDate: string, acqTime: string): number {
 	const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(acqDate.trim());
 	if (m === null) return Number.NaN;
@@ -116,7 +108,7 @@ export function parseAcqTime(acqDate: string, acqTime: string): number {
 	return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), hours, mins);
 }
 
-/** ⚠️ Columns read BY HEADER NAME, never by index — a reordered/extended feed would silently poison every coordinate if hardcoded; header lookup fails loudly instead. */
+/** ⚠️ columns read BY HEADER NAME, never by index — a reordered feed would silently poison every coordinate */
 export function parseFiresCsv(
 	csv: string,
 	centreLng: number,
@@ -124,7 +116,7 @@ export function parseFiresCsv(
 	radiusKm: number,
 ): FireFeature[] {
 	const lines = csv.trim().split("\n");
-	if (lines.length < 2) return []; // header only = no fires in this bbox
+	if (lines.length < 2) return [];
 
 	const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
 	const col = (name: string): number => {
@@ -142,7 +134,7 @@ export function parseFiresCsv(
 	const iTime = col("acq_time");
 	const iConf = col("confidence");
 	const iFrp = col("frp");
-	// OPTIONAL columns, looked up softly (not via col(), which throws) — a feed missing them degrades the popup, never blanks the layer.
+	// ⚠️ optional columns must not go through col() — a feed missing them degrades the popup, never blanks the layer.
 	const soft = (name: string): number => header.indexOf(name);
 	const iScan = soft("scan");
 	const iTrack = soft("track");
@@ -156,12 +148,11 @@ export function parseFiresCsv(
 		const lat = Number(f[iLat]);
 		const lng = Number(f[iLng]);
 		if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-		// API returns the bbox; we want the DISC — without this, corners carry fires up to 40% past the stated radius.
+		// ⚠️ trim the bbox to a disc — corners carry fires up to 40% past the stated radius.
 		if (distanceKm(centreLng, centreLat, lng, lat) > radiusKm) continue;
 		const t = parseAcqTime(f[iDate] ?? "", f[iTime] ?? "");
 		if (!Number.isFinite(t)) continue;
 		const frp = Number(f[iFrp]);
-		// Pixel footprint = larger axis, rounded to 0.1km — VIIRS is 375m at nadir but stretches toward the swath edge, so this genuinely varies.
 		const scan = iScan === -1 ? Number.NaN : Number(f[iScan]);
 		const track = iTrack === -1 ? Number.NaN : Number(f[iTrack]);
 		const px =
@@ -181,7 +172,7 @@ export function parseFiresCsv(
 	return out;
 }
 
-/** Collapses detections on the same ~375m cell within the same hour, keeping strongest FRP — else one fire renders as a clump of dots. */
+/** same ~375m cell within the same hour → keep strongest FRP */
 export function dedupeFires(features: readonly FireFeature[]): FireFeature[] {
 	const best = new Map<string, FireFeature>();
 	for (const f of features) {
@@ -196,7 +187,6 @@ export function dedupeFires(features: readonly FireFeature[]): FireFeature[] {
 	return [...best.values()];
 }
 
-/** Build one Area API URL. Exported for the test; the key never gets logged. */
 export function firmsUrl(
 	mapKey: string,
 	source: string,
@@ -207,7 +197,7 @@ export function firmsUrl(
 	return `${FIRMS_BASE}/${mapKey}/${source}/${area}/${days}`;
 }
 
-/** ⚠️ FAIL-LOUD: if every source fails, throw (never return an empty collection — that lies as "no fires near you"). A partial failure (one satellite down) is legitimate data and returns normally via sourcesOk. */
+/** ⚠️ throws when every source fails — never return an empty collection, it lies as "no fires near you"; a partial failure returns normally via sourcesOk */
 export async function fetchFires(
 	mapKey: string,
 	lng: number,
@@ -224,7 +214,7 @@ export async function fetchFires(
 				throw new Error(`FIRMS ${source} responded ${res.status}`);
 			}
 			const body = await res.text();
-			// Invalid/over-quota key returns 200 with an HTML/plaintext error body, which would parse as zero fires — catch it as the failure it is.
+			// ⚠️ a bad/over-quota key returns 200 with an HTML body, which would parse as zero fires.
 			if (body.trimStart().startsWith("<") || !body.includes("latitude")) {
 				throw new Error(
 					`FIRMS ${source} returned a non-CSV body (bad key or quota?)`,
@@ -252,7 +242,7 @@ export async function fetchFires(
 			features: merged.map((f) => ({
 				type: "Feature" as const,
 				geometry: { type: "Point" as const, coordinates: f.coordinates },
-				// Keys stay SHORT (repeated thousands of times per disc); optional keys omitted rather than sent as null — absent means "feed didn't say".
+				// ⚠️ omit optional keys, never send null — absent means "feed didn't say".
 				properties: {
 					t: f.t,
 					c: f.confidence,

@@ -1,6 +1,5 @@
-/**
- * ⚠️ Two rules this file enforces: 1) A FAILURE MUST THROW — an empty list on error renders as "no fires near you", the most dangerous lie this layer can tell. 2) NEVER hang — an un-timed fetch on lie-fi is a documented cause of past field failures, hence the explicit AbortController timeout.
- */
+// ⚠️ failure MUST throw — an empty list on error renders as "no fires near you".
+// ⚠️ NEVER hang — an un-timed fetch on lie-fi has caused field failures; hence the AbortController timeout.
 
 import { guardPackDownload } from "../../../onPhone/store/downloadGuard";
 import { firesUrl } from "../tilesHost";
@@ -13,16 +12,14 @@ const FIRE_TIMEOUT_MS = 20_000;
 
 export interface FireFetchResult {
 	hotspots: FireHotspot[];
-	/** Server's fetch time (X-Fetched-At) — the edge may serve a cached slice, so
-	 *  trusting our own clock would overstate freshness by up to the cache TTL. */
+	/** X-Fetched-At — ⚠️ not our clock, which overstates freshness by up to the cache TTL */
 	fetchedAt: number;
-	/** How many of the three satellites reported (X-Sources-Ok). */
+	/** X-Sources-Ok — satellites that reported, of three */
 	sourcesOk: number;
-	/** Response size, for the cellular-gate tally. */
+	/** response size in bytes */
 	bytes: number;
 }
 
-/** Minimal shape we require back; anything else is a malformed response. */
 interface FireGeoJSON {
 	type: string;
 	features?: Array<{
@@ -31,7 +28,7 @@ interface FireGeoJSON {
 			t?: number;
 			c?: string;
 			frp?: number;
-			/** Pixel footprint km + day/night pass — optional, popup-only. */
+			/** pixel footprint km; day/night pass — optional */
 			px?: number;
 			dn?: string;
 		};
@@ -39,11 +36,11 @@ interface FireGeoJSON {
 }
 
 function toConfidence(raw: unknown): FireHotspot["c"] {
-	// Unknown codes fall to the WEAKEST reading — never silently promoted.
+	// ⚠️ unknown codes fall to the WEAKEST reading — never silently promoted.
 	return raw === "high" ? "high" : raw === "nominal" ? "nominal" : "low";
 }
 
-// ⚠️ guardPackDownload is the same session circuit-breaker the tile downloader trips against, so a runaway bake loop can't hammer this endpoint either.
+// ⚠️ guardPackDownload is the tile downloader's circuit-breaker too — a runaway bake loop can't hammer this endpoint.
 export async function fetchAreaFires(
 	lng: number,
 	lat: number,
@@ -97,7 +94,7 @@ export async function fetchAreaFires(
 			t,
 			c: toConfidence(f.properties?.c),
 			frp: Number.isFinite(f.properties?.frp) ? (f.properties?.frp as number) : 0,
-			// ⚠️ Never default px to a number — "unknown footprint" and "footprint is 0" are different claims.
+			// ⚠️ never default px to a number — "unknown footprint" and "footprint is 0" are different claims.
 			...(Number.isFinite(f.properties?.px)
 				? { px: f.properties?.px as number }
 				: {}),
@@ -107,7 +104,7 @@ export async function fetchAreaFires(
 		});
 	}
 
-	// ⚠️ Fall back to our own clock only if the header is missing — a custom header reads as null when not explicitly CORS-exposed.
+	// ⚠️ own clock only when the header is missing — a custom header reads null unless CORS-exposed.
 	const headerAt = Number(res.headers.get("X-Fetched-At"));
 	const sourcesOk = Number(res.headers.get("X-Sources-Ok"));
 

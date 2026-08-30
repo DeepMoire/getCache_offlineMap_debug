@@ -1,6 +1,4 @@
-// the roads budget must measure the zoom BLOB_DETAIL_LEVEL the pack actually reads, or roadsBytes is 0 by construction.
-// ⚠️ same drift already bit the kind filter in this file (BLOB_DETAIL_Z vs BLOB_DETAIL_LEVEL) — fixed there, but the budget comparison was left on the old constant.
-// ⛔ don't "fix" this by hard-coding 13 — derive the budget from BLOB_DETAIL_LEVEL, or the next build-speed change silently zeroes it again.
+// ⛔ derive the budget from BLOB_DETAIL_LEVEL, never hard-code 13 — a read-level change silently zeroes roadsBytes.
 import { describe, expect, it } from "vitest";
 import { BLOB_DETAIL_LEVEL } from "./blob";
 import { countsTowardBudget, keepSetForZoom } from "./packBuilder";

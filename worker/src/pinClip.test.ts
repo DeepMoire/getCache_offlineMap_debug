@@ -1,7 +1,4 @@
-/**
- * ⛔ THE 27.9 km BUG — a cell contributing ALL of itself (a z8 cell ~104 km wide) let roads land up to 28 km from the pin; measured: West Glacier MT, roads offset 27.9 km vs satellite's 4 m.
- * ⚠️ Also the "it worked this morning" bug — a pin near a cell centre looks fine, the same code near a cell EDGE puts roads ~28 km away.
- */
+// ⛔ a cell contributing ALL of itself (z8 ≈104 km) put roads 27.9 km off the pin (West Glacier MT) — fine near a cell centre, broken near a cell EDGE.
 import { describe, expect, it } from "vitest";
 import { GRID_RADIUS_KM, cellBox, cellsFor, radiusBox } from "./grid";
 

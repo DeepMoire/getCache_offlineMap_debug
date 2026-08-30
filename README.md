@@ -2,21 +2,30 @@
 
 **Watch first:** https://youtu.be/ksRR6UpchDc
 
-## Setup
+## Day one
 
 ```bash
 npm create @retreever/rapper@latest rapper --min-release-age=0 -- --offline
-cd rapper && npm run dev
+cd rapper && npm install && npm run dev
 ```
 
-That gives you the offline map at `http://localhost:5173/offline` (`/` lands
-there too — see `hooks.ts`). **There is no `/offline/debug` any more:** the
+That one command scaffolds the workspace, downloads the ~50 MB map assets
+(`fetchAssets.sh` — not in git), and writes `rapper/.env` pointing at the
+public tile servers. **You need nothing from us: no key, no account, no
+private repo.** Everything you can see is in the two repos below.
+
+**You are set up when:** `http://localhost:5173/offline` shows the map, you
+drop a pin near Ottawa (`?at=45.42,-75.70&z=11`), and roads appear inside the
+circle within a minute. If the satellite photo appears but roads never do,
+`rapper/.env` is missing or wrong — the console says so on the first line.
+
+`/` lands on the offline map too — see `hooks.ts`. **There is no `/offline/debug` any more:** the
 debug rails are a toggle on the map itself (the `debug` switch in the card at
 the top), not a second URL. One view, one address.
 
 The Cloudflare Worker that serves tiles lives in this repo at `worker/`. To run
 it locally: `cd worker && ./setupLocalTiles.sh && npx wrangler dev`, then pick
-the `local` tier in the map's worker switch (`lib/r2Worker/TIERS.md`).
+the `local_dev` tier in the map's worker switch (`lib/r2Worker/README.md`).
 
 Repos:
 
