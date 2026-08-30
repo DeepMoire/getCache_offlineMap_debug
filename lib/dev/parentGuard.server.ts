@@ -13,8 +13,12 @@ import { json } from "@sveltejs/kit";
 import { dev } from "$app/environment";
 
 const GUARD = "lib/noParentNames.test.ts";
-const THIS_CHILD = resolve(fileURLToPath(new URL("../..", import.meta.url)));
-const WORKSPACE = resolve(THIS_CHILD, "..");
+// Lazy, not module-scope: the cap build compiles `import.meta.url` away to
+// undefined, and a top-level `new URL("../..", undefined)` crashes SvelteKit's
+// postbuild analysis. This endpoint only ever RUNS in dev, so resolve at call
+// time, where a real import.meta.url exists.
+const workspaceDir = () =>
+	resolve(fileURLToPath(new URL("../..", import.meta.url)), "..");
 
 export type GuardStatus = "green" | "red" | "yellow";
 export interface Offender {
@@ -32,9 +36,10 @@ export interface ChildReport {
 }
 
 function children(): string[] {
-	return readdirSync(WORKSPACE, { withFileTypes: true })
+	const ws = workspaceDir();
+	return readdirSync(ws, { withFileTypes: true })
 		.filter((e) => e.isDirectory() && !e.name.startsWith("."))
-		.map((e) => join(WORKSPACE, e.name))
+		.map((e) => join(ws, e.name))
 		.filter((dir) => existsSync(join(dir, GUARD)))
 		.sort();
 }
@@ -43,7 +48,7 @@ function children(): string[] {
 const OFFENDER = /^\s+((?:lib|routes)\/\S+):(\d+)\s+(.*)$/;
 
 function runGuard(dir: string): Promise<ChildReport> {
-	const repo = dir.slice(WORKSPACE.length + 1);
+	const repo = dir.slice(workspaceDir().length + 1);
 	const t0 = Date.now();
 	return new Promise((done) => {
 		execFile(
