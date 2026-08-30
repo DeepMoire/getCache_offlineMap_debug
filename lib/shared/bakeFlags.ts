@@ -1,2 +1,2 @@
-/** 🔬 BISECT: FIRE_REFRESH_ENABLED=false means the Fires row is grey BY DESIGN, not broken. */
-export const FIRE_REFRESH_ENABLED = false;
+/** Was false for the 119%-CPU bisect — the unionHotspots box-reject (fireCache.ts) removed that cost, so the fetch/store pass is back on. `false` greys the Fires row by design. */
+export const FIRE_REFRESH_ENABLED = true;

@@ -21,8 +21,7 @@ function stripComments(text: string): string {
 
 const CACHE = stripComments(src("fireCacheV2.ts"));
 const FETCH = stripComments(src("fireFetchV2.ts"));
-// ⚠️ LAYER is intentionally empty — v2's render layer hasn't moved to a child yet; don't delete this as dead code, it keeps CACHE/FETCH under test via the negative assertions below.
-const LAYER = "";
+const LAYER = stripComments(src("fireLayerV2.ts"));
 const ALL_V2 = [CACHE, FETCH, LAYER].join("\n");
 
 describe("the phone does NO geometry — v2's founding rule", () => {

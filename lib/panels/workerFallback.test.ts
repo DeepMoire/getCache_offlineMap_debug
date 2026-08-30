@@ -28,18 +28,23 @@ describe("worker tier fallback", () => {
 	});
 });
 
-// ⚠️ r2_dev must be configured in the same place as production (configureTilesDevHost) or it's dead by construction — configuredDevHost stays null until called.
+// ⚠️ r2_dev must be configured in the same place as production (configureTilesDevHost) or it's dead by construction — configuredDevHost stays null until called. Both hosts are configured via configureTilesFromEnv(), called from the child's boot.
 const LAYOUT = readFileSync(join(__dirname, "..", "..", "routes", "+layout.svelte"), "utf8");
+const TILES_FROM_ENV = readFileSync(
+	join(__dirname, "..", "r2Worker", "local_dev", "tilesFromEnv.ts"),
+	"utf8",
+);
 
 describe("r2_dev tier is configurable", () => {
 	it("the child's boot configures the dev host, not only production", () => {
-		expect(LAYOUT).toContain("configureTilesDevHost");
+		expect(LAYOUT).toContain("configureTilesFromEnv()");
+		expect(TILES_FROM_ENV).toContain("configureTilesDevHost");
 	});
 
 	it("reads it from the environment rather than baking an origin in", () => {
 		// Baking a real origin here would bill whoever owns it — same rule that keeps packUrl() answering null until configured.
-		expect(LAYOUT).toContain("VITE_TILES_DEV_HOST");
-		expect(LAYOUT).not.toMatch(/configureTilesDevHost\(\s*["'`]https?:/);
+		expect(TILES_FROM_ENV).toContain("VITE_TILES_DEV_HOST");
+		expect(TILES_FROM_ENV).not.toMatch(/configureTilesDevHost\(\s*["'`]https?:/);
 	});
 });
 

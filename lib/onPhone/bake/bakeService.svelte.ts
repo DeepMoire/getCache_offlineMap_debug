@@ -693,7 +693,7 @@ async function bakeAll(): Promise<void> {
 			) {
 				fireCentres.unshift(liveCentre); // where the user IS comes first
 			}
-			// TEMPORARY BISECT flag (pairs with FIRE_LAYER_ENABLED_ONLINE in MobMapPage.svelte). ⚠️ Fire has TWO halves (render + this fetch/store pass, which runs regardless of route) — disabling only one leaves the other running and invalidates any bisect.
+			// ⚠️ Fire has TWO halves (render + this fetch/store pass, which runs regardless of route) — a future bisect must disable both or it measures nothing.
 			if (FIRE_REFRESH_ENABLED) await refreshFires(fireCentres);
 		} catch (err) {
 			// The overlay must fail alone — never let it mark the whole pass failed.

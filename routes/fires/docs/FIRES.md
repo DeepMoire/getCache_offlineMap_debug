@@ -16,39 +16,31 @@ in signal the cache is topped up, and the UI must say how old it is.
 |---|---|---|
 | Worker `GET /fires?lng=&lat=&km=` | `worker/src/index.ts` (route) + `lib/r2Worker/firesWorker.ts` (pure FIRMS logic) | **live**, v1 payload only |
 | Phone fetch + IndexedDB (v1) | `lib/r2Worker/{local_dev,r2_prod}/fires/fireFetch.ts`, `routes/fires/fireCache.ts` (`rt-fire-cache`) | works; **refresh switched off** |
-| Bake-loop refresh | `refreshFires()` in `lib/onPhone/bake/bakeService.svelte.ts` | gated by `FIRE_REFRESH_ENABLED = false` in `lib/shared/bakeFlags.ts` |
-| Render layer | — | **does not exist.** v1's `fireLayer.ts` went with the online map move (28 Aug); the v4 offline route went with the v5 rebuild. The Fires switch in `lib/onPhone/render/wallLegend.ts` has `ids: []` and is a no-op |
+| Bake-loop refresh | `refreshFires()` in `lib/onPhone/bake/bakeService.svelte.ts` | **on** — `FIRE_REFRESH_ENABLED = true` in `lib/shared/bakeFlags.ts` since the `unionHotspots` box-reject fix (30 Aug) |
+| Render layer | `routes/fires/v2/fireLayerV2.ts` | restored from ReTreever git history (30 Aug), **unwired** — nothing mounts it yet. v1's `fireLayer.ts` went with the online map move (28 Aug); the Fires switch in `lib/onPhone/render/wallLegend.ts` has `ids: []` and is a no-op |
 | Phone v2 (`routes/fires/v2/`) | `fireCacheV2.ts` (`rt-fire-v2`), `fireFetchV2.ts` | written, tested, **inert** — throws a named error because the Worker has no `?v=2` |
 | Worker `?v=2` | — | not started |
 
 ReTreever mounts the v1 phone half through `retreeverPorts.ts`; this repo's
 rapper demo omits the `fires` port and never reaches for hotspots.
 
-### Why it is held back — not a decision, a bisect
+### The bisect, and how it ended
 
 v1 held every raw detection on the phone and re-derived geometry from it on
 every pan (cross-disc union, supersede test, convex hulls, urban classifier,
 five memo layers). Measured 2026-08-10 on an idle page: **~4,000 MB heap, then
 the tab crashed; 119% CPU**. Fires off, the same page was 963 MB and the
-online map 274 MB. `FIRE_REFRESH_ENABLED = false` is the flag that proved it.
+online map 274 MB. `FIRE_REFRESH_ENABLED = false` was the flag that proved it.
 Its partner `FIRE_LAYER_ENABLED_ONLINE` (in ReTreever's `MobMapPage.svelte`)
-no longer exists — the render half is simply absent now.
+no longer exists — the render half went with the online map move.
 
-**Either v2 lands or v1 comes back on.** A hazard layer switched off is not a
-resting state.
-
-### Expected red — 6 tests, all doing their job
-
-| test | why it fails |
-|---|---|
-| `fireCache.test.ts` "scales LINEARLY in disc count" | `unionHotspots` is still O(n³) — the fix was reverted to isolate memory from CPU |
-| `fireCache.test.ts` "absorbs a realistic full cache" | same; reports ~1,065,750 distance calls |
-| `fireCostV2.test.ts` ×4 | `LAYER = ""` — there is no `fireLayerV2.ts` to scan yet |
-
-⚠️ The `unionHotspots` fix (CPU 119% → 3.4%) lived in a scratchpad file that is
-**gone**. If v2 stalls and v1 returns, it has to be rewritten: bounding-box
-reject before `kmBetween`, so calls scale with hotspots, not hotspots × discs.
-The two tests above are its spec.
+Resolved 30 Aug 2026: the `unionHotspots` box-reject was rewritten in
+`fireCache.ts` (bounding-box reject + newest-first break before `kmBetween`,
+so distance calls scale with hotspots, not hotspots × discs — the two
+`fireCache.test.ts` cost tests are its spec and now pass), and
+`FIRE_REFRESH_ENABLED` went back to `true`. `fireLayerV2.ts` was restored from
+ReTreever git history into `routes/fires/v2/` and `fireCostV2.test.ts` scans
+it again — but nothing mounts it yet (see "Phone — what remains").
 
 ---
 
@@ -239,10 +231,11 @@ fetch, no `Response`, no cache — `index.ts` owns those.
 
 ### Phone — what remains
 
-1. Write `routes/fires/v2/fireLayerV2.ts` and point `LAYER` in
-   `fireCostV2.test.ts` at it. The four red tests are its spec: `kmBetween` in
-   exactly one place, `JSON.parse` only straight into `setData`, `if (!disc)`
-   keeps the last good cache, `if (!isLive()) return` after every await.
+1. ~~Write `routes/fires/v2/fireLayerV2.ts`~~ — done 30 Aug (restored from
+   ReTreever history); `LAYER` in `fireCostV2.test.ts` scans it. Its spec:
+   `kmBetween` in exactly one place, `JSON.parse` only straight into
+   `setData`, `if (!disc)` keeps the last good cache, `if (!isLive()) return`
+   after every await. Still to do: MOUNT it — nothing imports it yet.
 2. Wire the bake ports (`retreeverPorts.ts`) to v2 alongside v1 so both
    caches fill on one device and can be compared.
 3. Put the real layer ids into the Fires row of `wallLegend.ts`.

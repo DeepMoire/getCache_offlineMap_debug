@@ -7,7 +7,7 @@
  * Own IndexedDB DB (never TinyBase — big local-only payload), sandbox-aware via keyedIdbStore.
  */
 
-import { kmBetween } from "../../lib/shared/kmGeo";
+import { kmBetween, kmToDegSpan } from "../../lib/shared/kmGeo";
 import { makeKeyedIdbStore } from "../../lib/onPhone/store/keyedIdbStore";
 
 /**
@@ -212,6 +212,21 @@ function coveredBy(e: FireCacheEntry, lng: number, lat: number): boolean {
 	return kmBetween([lng, lat], e.center) <= e.radiusKm;
 }
 
+interface DiscBox {
+	w: number;
+	s: number;
+	e: number;
+	n: number;
+}
+
+/** Degree box that contains the whole disc — dLng taken at the box's own worst latitude so the reject can never drop a point `coveredBy` would accept (kmBetween's cos runs at the POINT's latitude, not the centre's). */
+function discBox(entry: FireCacheEntry): DiscBox {
+	const [lng, lat] = entry.center;
+	const worstLat = Math.min(89, Math.abs(lat) + entry.radiusKm / 111);
+	const { dLat, dLng } = kmToDegSpan(entry.radiusKm, worstLat);
+	return { w: lng - dLng, s: lat - dLat, e: lng + dLng, n: lat + dLat };
+}
+
 /** Unions every cached area into one deduplicated hotspot list, plus the OLDEST (not newest) contributing fetch time — newest would let one fresh disc vouch for a stale one sitting beside it. */
 export function unionHotspots(entries: readonly FireCacheEntry[]): UnionResult {
 	if (entries.length === 0) {
@@ -221,8 +236,13 @@ export function unionHotspots(entries: readonly FireCacheEntry[]): UnionResult {
 	if (unionMemo !== null && entries === unionMemoSrc) return unionMemo;
 	// Key on rounded position + hour, matching the Worker's dedupe, so one fire stays one dot across areas.
 	// PRECOMPUTED outside the hotspot loop — doing the newer-covers test per-hotspot would be O(n²) (tens of discs × tens of thousands of hotspots) and reintroduce the per-pan hitch.
+	// Sorted NEWEST-FIRST so the covering search below can stop at its first hit.
+	const boxes = entries.map(discBox);
 	const newerThan = entries.map((e) =>
-		entries.filter((o) => o.fetchedAt > e.fetchedAt),
+		entries
+			.map((other, j) => ({ other, box: boxes[j] }))
+			.filter(({ other }) => other.fetchedAt > e.fetchedAt)
+			.sort((a, b) => b.other.fetchedAt - a.other.fetchedAt),
 	);
 	const best = new Map<string, FireHotspot>();
 	for (let i = 0; i < entries.length; i++) {
@@ -230,13 +250,16 @@ export function unionHotspots(entries: readonly FireCacheEntry[]): UnionResult {
 		const newer = newerThan[i];
 		for (const h of e.hotspots) {
 			// Find the newest later fetch covering this spot; slack accounts for NASA's processing lag so a very recent detection isn't wrongly erased by a fetch too soon to include it.
+			// Box-reject before kmBetween — the trig call per (hotspot × newer disc) was the 119% idle-CPU bug; the box keeps distance calls proportional to hotspots, not hotspots × discs.
+			const [lng, lat] = h.coordinates;
 			let newestCover = 0;
-			for (const other of newer) {
-				if (
-					other.fetchedAt > newestCover &&
-					coveredBy(other, h.coordinates[0], h.coordinates[1])
-				) {
-					newestCover = other.fetchedAt;
+			for (const { other, box } of newer) {
+				if (lng < box.w || lng > box.e || lat < box.s || lat > box.n) {
+					continue;
+				}
+				if (coveredBy(other, lng, lat)) {
+					newestCover = other.fetchedAt; // first hit IS the newest — newerThan is sorted
+					break;
 				}
 			}
 			if (newestCover - SUPERSEDE_SLACK_MS > h.t) {

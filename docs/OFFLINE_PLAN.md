@@ -153,11 +153,12 @@ app-wide `bakeService` owns every download, so the fire layer — when it lands
 empty `ids`) — mounts with `canFetch: false`. A second downloader would
 double-fetch and fight over the same cache entries.
 
-### 🔬 Fire refresh is currently DISABLED — a bisect, not a decision
+### 🔬 Fire refresh — the bisect is over
 
-`FIRE_REFRESH_ENABLED = false` in `lib/shared/bakeFlags.ts` gates
-`refreshFires` in `bakeService.svelte.ts`. Fire has TWO halves (render +
-fetch/store); disabling only one invalidates the bisect.
+`FIRE_REFRESH_ENABLED` in `lib/shared/bakeFlags.ts` gates `refreshFires` in
+`bakeService.svelte.ts`; it is back to `true` since the `unionHotspots`
+box-reject fix (30 Aug 2026). Fire has TWO halves (render + fetch/store); any
+future bisect must disable both or it measures nothing.
 State: [`../routes/fires/docs/FIRES.md`](../routes/fires/docs/FIRES.md).
 
 Why it matters: **fire v1 measured ~4,000 MB and 119% CPU on an idle page**;

@@ -145,12 +145,12 @@ the online child.
    `offlineDownloadGateStats`, `wallLabelLayers`, and the whole of
    `lib/shared/mapboxErrorCapture.ts`. Wire or delete.
 
-6. **FIRES IS A NO-OP.** The Fires switch renders and clicks but its `ids`
-   array is empty (`lib/onPhone/render/wallLegend.ts`) — no `v4-fire*` layer is
-   mounted, `FIRE_REFRESH_ENABLED` is `false` (`lib/shared/bakeFlags.ts`), and
-   no `attachFireLayer()` exists anywhere yet. All the fires code is in
-   `routes/fires/`; what is missing is the layer that connects it to the map.
-   Done = that switch turns real fire features on and off.
+6. **FIRES RENDER IS A NO-OP.** The Fires switch renders and clicks but its
+   `ids` array is empty (`lib/onPhone/render/wallLegend.ts`) — no fire layer is
+   mounted. The fetch/store half runs (`FIRE_REFRESH_ENABLED = true` in
+   `lib/shared/bakeFlags.ts`), and `routes/fires/v2/fireLayerV2.ts` exists but
+   nothing imports it yet. Done = that switch turns real fire features on and
+   off.
 
 7. **THE MAP UI HAS NO HOST HERE.** Nothing in this repo mounts `lib/mapUi/` or
    `lib/mapState/` — only ReTreever does, through `retreeverMapPorts.ts`. Five
