@@ -31,17 +31,18 @@ describe("worker tiers", () => {
 		expect(m.DEFAULT_TARGET).toBe("localDev");
 	});
 
-	it("a probe fallback never persists — only a human click writes the override", async () => {
+	it("only a human click moves the target — the machine-fallback mode is gone", async () => {
 		const store = new Map<string, string>();
 		vi.stubGlobal("sessionStorage", {
 			getItem: (k: string) => store.get(k) ?? null,
 			setItem: (k: string, v: string) => void store.set(k, v),
 		});
 		const m = await import("./local_dev/tilesHost");
-		m.setWorkerTarget("production", { fallback: true });
-		expect(m.getWorkerTarget()).toBe("production");
-		// nothing written — the next boot starts back at DEFAULT_TARGET, not the machine's guess
-		expect(store.size).toBe(0);
+		// no override written → the local-first default holds, even with every worker down
+		expect(m.getWorkerTarget()).toBe(m.DEFAULT_TARGET);
+		// ⛔ the old `{ fallback: true }` second parameter must stay deleted — it let boot
+		// code auto-select production, which billed the maintainer's R2 on fresh installs
+		expect(m.setWorkerTarget.length).toBe(1);
 		m.setWorkerTarget("r2Dev");
 		expect(store.get("rt_worker_target")).toBe("r2Dev");
 		expect(m.getWorkerTarget()).toBe("r2Dev");

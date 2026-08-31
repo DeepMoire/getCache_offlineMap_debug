@@ -3,7 +3,6 @@ import "$rig/dev/devCard.css";
 /** CONFIG — the right-hand rail's Workers/layers switches (only things that change what the map talks to or draws; the pin picker is not config, see PinLibrary.svelte). ⚠️ DEV-ONLY BY CONSTRUCTION — the worker override lives behind `import.meta.env.DEV` in tilesHost.ts (compile-time), so a shipped build cannot switch it; that's what makes this panel safe to publish at a public URL. */
 import { onMount } from "svelte";
 import {
-	DEFAULT_TARGET,
 	getWorkerTarget,
 	LOCAL_DEV_HOST,
 	probeTarget,
@@ -38,9 +37,10 @@ let {
 
 // THREE tiers: r2_prod / r2_dev (cloud, Chris's Cloudflare account) and local_dev (developer's own machine) — see WorkerTarget in tilesHost.ts.
 // ⚠️ Don't remove local_dev — it's the only tier an outside contributor can reach without the Bitwarden-only Cloudflare key (removed 27 Aug, restored same day).
-// This list is the ONLY place a row is declared — probing, greying-out, and fallback all read from it; adding a tier is one entry.
+// This list is the ONLY place a row is declared — probing and greying-out read from it; adding a tier is one entry.
 // Changing the target re-points the NEXT request; in-flight ones finish where they started.
-let target = $state<WorkerTarget>("production");
+// ⚠️ init from getWorkerTarget(), never a literal — a hardcoded "production" painted prod-selected until onMount ran.
+let target = $state<WorkerTarget>(getWorkerTarget());
 
 const TARGETS: {
 	id: WorkerTarget;
@@ -141,26 +141,17 @@ async function probeAll() {
 	for (const t of TARGETS) {
 		await probeTarget(t.id);
 	}
-	// If the CURRENT target is gone, fall back to any tier that IS answering rather than sit pointed at nothing. ⛔ A guard of `reachable.production !== false` made this impossible in the one case it existed for (measured 27 Aug 2026: all three tiers down, selected-and-unreachable, no row's click could fix it) — try tiers in preference order instead, and if nothing answers, stay put and say so.
+	// ⛔ never auto-switch tiers — local-first holds even when local is dead ("point at
+	// the broken one and fix it while pointed at it"); an auto-pick of production
+	// silently bills the maintainer's R2 on every fresh install. Rows stay clickable,
+	// dead or not, so nobody can be stuck here.
 	if (reach(target) === "err") {
-		const alive = (["production", "r2Dev", "localDev"] as WorkerTarget[]).find(
-			(t) => reach(t) === "ok",
+		console.warn(
+			`[tiles] ${target} is not answering — nothing will download until it does. ` +
+				(target === "localDev"
+					? "Start it: cd workers/local_dev && npm install && npm run dev:local — or click another tier."
+					: "Check VITE_TILES_HOST resolves, or click another tier."),
 		);
-		if (alive) {
-			// ⚠️ fallback, never pickTarget — pickTarget persists, and a persisted machine
-			// guess kept every boot on production even after local_dev came alive.
-			console.info(
-				`[tiles] ${target} is unreachable — using ${alive} for now (not saved: next reload tries ${DEFAULT_TARGET} first).`,
-			);
-			setWorkerTarget(alive, { fallback: true });
-			target = alive;
-		} else {
-			console.warn(
-				"[tiles] NO worker is reachable — nothing will download. Tried: " +
-					TARGETS.map((t) => t.id).join(", ") +
-					". Check VITE_TILES_HOST resolves, or start a local worker on :8787.",
-			);
-		}
 	}
 }
 
