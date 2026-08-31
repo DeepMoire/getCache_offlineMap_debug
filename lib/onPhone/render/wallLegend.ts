@@ -104,15 +104,16 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 		feed: "pack",
 		reads: [{ layer: "pois", kinds: ["hospital"] }],
 	},
-	// Fires: the SWITCH exists on Chris's 24 Aug 2026 instruction, but `ids` is
-	// empty because no v4-fire* layer exists in wallStyle.ts / wallLabels.ts
-	// yet — attaching one is separate work (see attachFireLayer() in the
-	// fire-layer index). Until then this row renders and is clickable but has
-	// nothing to show/hide, i.e. toggling it is a no-op on the map. Wire the
-	// real layer ids into `ids` here the day attachFireLayer() lands on this
-	// route — don't add a second fires entry. Ordinary toggle, no expiry (that
-	// rule is for the field-facing MapLegend.svelte only, not this debugger).
-	{ key: "fires", label: "Fires", ids: [], hint: "cluster", feed: "fires" },
+	// Fires draw dynamically — attachFireLayer() (fireLayer.ts) adds these ids
+	// on map ready, so they are NOT in wallStyle.ts. Ordinary toggle, no expiry
+	// (that rule is for the field-facing MapLegend.svelte only, not this debugger).
+	{
+		key: "fires",
+		label: "Fires",
+		ids: ["v4-fire-cluster", "v4-fire-cluster-count", "v4-fire-flame"],
+		hint: "cluster",
+		feed: "fires",
+	},
 ] as const;
 
 /** Toggle keys `resetLayersAllOn()` must NOT force back on. Empty here —

@@ -19,10 +19,10 @@
  * something, and hits `export json` for an AI-debuggable report. None of that
  * needs the private repo.
  *
- * WHAT'S DELIBERATELY MISSING. No `fires` port and no `gps` port, so no hotspots
- * are fetched and there is no live anchor. The engine treats both as valid
- * configurations rather than degraded ones, and their absence here is the
- * demonstration.
+ * WHAT'S DELIBERATELY MISSING. No `gps` port, so there is no live anchor. The
+ * engine treats its absence as a valid configuration, not a degraded one.
+ * `fires` IS supplied — with the child's own cache and fetch, nothing
+ * proprietary — because a fire layer nobody can see defeats the demo.
  *
  * PINNED TO FIXED LOCATIONS, ON PURPOSE. The tile Worker edge-caches /pack by
  * build, so these few areas stay hot and repeat visits cost ~nothing. A
@@ -66,7 +66,19 @@ import { watchPaint } from "./onPhone/render/paintWatch";
 import { cameraFromUrl } from "./shared/cameraFromUrl";
 import { attachDoubleTapToPin } from "./shared/doubleTapToPin";
 import { startOfflineBakeService } from "./onPhone/bake/bakeService.svelte";
-import { resetCircuits } from "./shared/workMeter.svelte";
+import { resetCircuits, subscribeCircuits } from "./shared/workMeter.svelte";
+import { attachFireLayer } from "./onPhone/render/fireLayer";
+import {
+	deleteFireCache,
+	FIRE_CACHE_VERSION,
+	fireCoverage,
+	isCoverageFresh,
+	isFresh as fireIsFresh,
+	readFireCache,
+	writeFireCache,
+} from "../routes/fires/fireCache";
+import { noteFireArrival, takeFireArrival } from "../routes/fires/fireArrival";
+import { fetchAreaFires } from "./r2Worker/local_dev/fires/fireFetch";
 import type { HostPorts } from "./shared/hostPorts";
 import OfflineWorkMeter from "./shared/OfflineWorkMeter.svelte";
 import OfflineBlobPanel from "./panels/OfflineBlobPanel.svelte";
@@ -155,7 +167,24 @@ const fixturePorts: HostPorts = {
 	// Hydrated the moment the module evaluates — the array is right there.
 	// NOT the same question as "has places"; see hostPorts.ts.
 	ready: () => true,
-	// No `fires`, no `gps` — both optional, both ReTreever's business.
+	// The fire port, from the child's OWN cache + fetch — the same shape
+	// retreeverPorts.ts builds, minus everything TinyBase. `gps` stays absent.
+	fires: {
+		fetchArea: (lng, lat) => fetchAreaFires(lng, lat),
+		arrival: () => noteFireArrival(),
+		takeArrival: () => takeFireArrival("bake"),
+		read: (key) => readFireCache(key),
+		// writeFireCache stamps cacheVersion itself; hotspots are COPIED because
+		// the port hands a readonly view and the cache entry owns a mutable array.
+		write: (key, rec) => writeFireCache(key, { ...rec, hotspots: [...rec.hotspots] }),
+		delete: (key) => deleteFireCache(key),
+		// fireIsFresh's param is the full stored entry; the engine's record has no
+		// cacheVersion, so supply the current one.
+		isFresh: (rec) =>
+			fireIsFresh({ ...rec, cacheVersion: FIRE_CACHE_VERSION, hotspots: [...rec.hotspots] }),
+		coverage: () => fireCoverage(),
+		isCoverageFresh: (c) => isCoverageFresh(c),
+	},
 };
 
 
@@ -425,6 +454,8 @@ onMount(() => {
 	let satMount: ReturnType<typeof createSatelliteMount> | undefined;
 	let stopPaintWatch: (() => void) | undefined;
 	let satPoll: ReturnType<typeof setInterval> | undefined;
+	let fireHandle: ReturnType<typeof attachFireLayer> | undefined;
+	let unsubFireCircuit: (() => void) | undefined;
 	try {
 		// WHERE THE MAP OPENS. A coordinate in the query string wins over the
 		// fixture, so `?=58.7986,-122.6761` points BOTH routes at the same
@@ -611,6 +642,16 @@ onMount(() => {
 					satPoll = setInterval(() => void showPhotos(), 20000);
 					stopPaintWatch = watchPaint(map, () => satMount?.mounted() ?? new Set());
 
+					// ── THE FIRES ────────────────────────────────────────
+					// Paints the bake's cached hotspots (see fireLayer.ts).
+					// Repaint when the fires circuit lands, so bytes on disk
+					// become pixels without a reload — same contract as the
+					// raw-wall blind handler above.
+					fireHandle = attachFireLayer(map);
+					unsubFireCircuit = subscribeCircuits((c) => {
+						if (c.key === "fires" && c.state === "ok") fireHandle?.repaint();
+					});
+
 					wallStatus = `wall ok · ${map.getStyle().layers.length} layers`;
 				} catch (err) {
 					// LOUD, not swallowed: a wall map that fails to mount is the
@@ -628,6 +669,8 @@ onMount(() => {
 		detachTap?.();
 		clearInterval(satPoll);
 		stopPaintWatch?.();
+		unsubFireCircuit?.();
+		fireHandle?.();
 		// Revoke every photo object-URL. Without this each unmount strands
 		// the blob in memory — the steady RAM climb.
 		satMount?.dispose();
