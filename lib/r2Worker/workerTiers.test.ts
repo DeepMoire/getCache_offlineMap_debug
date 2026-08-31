@@ -31,6 +31,23 @@ describe("worker tiers", () => {
 		expect(m.DEFAULT_TARGET).toBe("localDev");
 	});
 
+	it("a probe fallback never persists — only a human click writes the override", async () => {
+		const store = new Map<string, string>();
+		vi.stubGlobal("sessionStorage", {
+			getItem: (k: string) => store.get(k) ?? null,
+			setItem: (k: string, v: string) => void store.set(k, v),
+		});
+		const m = await import("./local_dev/tilesHost");
+		m.setWorkerTarget("production", { fallback: true });
+		expect(m.getWorkerTarget()).toBe("production");
+		// nothing written — the next boot starts back at DEFAULT_TARGET, not the machine's guess
+		expect(store.size).toBe(0);
+		m.setWorkerTarget("r2Dev");
+		expect(store.get("rt_worker_target")).toBe("r2Dev");
+		expect(m.getWorkerTarget()).toBe("r2Dev");
+		vi.unstubAllGlobals();
+	});
+
 	it("keeps every r2Worker copy identical on the tier surface", async () => {
 		const [a, b, c] = await Promise.all([
 			import("./local_dev/tilesHost"),

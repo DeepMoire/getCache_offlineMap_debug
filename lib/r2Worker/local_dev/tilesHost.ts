@@ -40,6 +40,12 @@ export const DEFAULT_TARGET: WorkerTarget = "localDev";
 // ⛔ override exists only in a DEV build — import.meta.env.DEV is compile-time, so this branch is dead code on a phone.
 const OVERRIDE_KEY = "rt_worker_target";
 
+// ⚠️ Two authorities, two homes: a HUMAN click persists (sessionStorage); the boot
+// fallback is memory-only, so every reload starts back at DEFAULT_TARGET (local-first).
+// Persisting the fallback let a machine guess masquerade as a choice — the panel then
+// opened on production every time, looking like the local-first default never landed.
+let fallbackTarget: WorkerTarget | null = null;
+
 export function getWorkerTarget(): WorkerTarget {
 	if (!import.meta.env.DEV) return "production";
 	try {
@@ -48,11 +54,15 @@ export function getWorkerTarget(): WorkerTarget {
 	} catch {
 		// codestyle-allow-swallow: sessionStorage unavailable in SSR/private mode
 	}
-	return DEFAULT_TARGET;
+	return fallbackTarget ?? DEFAULT_TARGET;
 }
 
-export function setWorkerTarget(t: WorkerTarget): void {
+export function setWorkerTarget(t: WorkerTarget, opts?: { fallback?: boolean }): void {
 	if (!import.meta.env.DEV) return;
+	if (opts?.fallback) {
+		fallbackTarget = t;
+		return;
+	}
 	try {
 		sessionStorage.setItem(OVERRIDE_KEY, t);
 	} catch {

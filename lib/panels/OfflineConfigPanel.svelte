@@ -3,6 +3,7 @@ import "$rig/dev/devCard.css";
 /** CONFIG — the right-hand rail's Workers/layers switches (only things that change what the map talks to or draws; the pin picker is not config, see PinLibrary.svelte). ⚠️ DEV-ONLY BY CONSTRUCTION — the worker override lives behind `import.meta.env.DEV` in tilesHost.ts (compile-time), so a shipped build cannot switch it; that's what makes this panel safe to publish at a public URL. */
 import { onMount } from "svelte";
 import {
+	DEFAULT_TARGET,
 	getWorkerTarget,
 	LOCAL_DEV_HOST,
 	probeTarget,
@@ -146,10 +147,13 @@ async function probeAll() {
 			(t) => reach(t) === "ok",
 		);
 		if (alive) {
+			// ⚠️ fallback, never pickTarget — pickTarget persists, and a persisted machine
+			// guess kept every boot on production even after local_dev came alive.
 			console.info(
-				`[tiles] ${target} is unreachable — switching to ${alive}.`,
+				`[tiles] ${target} is unreachable — using ${alive} for now (not saved: next reload tries ${DEFAULT_TARGET} first).`,
 			);
-			pickTarget(alive);
+			setWorkerTarget(alive, { fallback: true });
+			target = alive;
 		} else {
 			console.warn(
 				"[tiles] NO worker is reachable — nothing will download. Tried: " +
@@ -190,6 +194,9 @@ onMount(() => {
 			{/if}
 			{#if target === t.id}
 				{@const l = lightOf(`worker:${t.id}`, PACK_LAYERS)}
+				{#if dlWords(l)}
+					<span class="dl">{dlWords(l)}</span>
+				{/if}
 				<span class="circ {l.state}" title={circTitle("last pack request", l)}></span>
 			{:else}
 				<span class="circ blank"></span>
@@ -225,6 +232,9 @@ onMount(() => {
 				{/if}
 				{#if FEED_OF[l.key]}
 					{@const lt = lightOf(FEED_OF[l.key], [l.key])}
+					{#if dlWords(lt)}
+						<span class="dl">{dlWords(lt)}</span>
+					{/if}
 					<span class="circ {lt.state}" title={circTitle(`${FEED_OF[l.key]} download`, lt)}></span>
 				{:else}
 					<span class="circ blank"></span>
@@ -309,6 +319,14 @@ onMount(() => {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+/* THE DL LABEL — sits left of the circle. margin-left:auto so it right-aligns on worker rows (no hint to take the slack); on layer rows the growing hint already ate it. Never coloured — the circle owns state. */
+.dl {
+	flex: 0 0 auto;
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 0.85em;
+	white-space: nowrap;
 }
 /* THE CIRCLE — sits left of the switch; grey until asked, then the last call's state. Muted grey (not black) so "never asked" doesn't read as failure. `ok` (on disk) is deliberately the SAME yellow as transit — to the user it is still "not there yet". */
 .circ {
