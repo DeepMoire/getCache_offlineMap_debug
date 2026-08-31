@@ -103,25 +103,37 @@ function circTitle(what: string, l: Light): string {
 	return bits.join(" · ");
 }
 
+/** Inline dl label beside the circle — the hover card's transit time promoted to always-visible.
+ * Yellow-transit reads "dl pending…"; once bytes land the time shows even while the dot is still
+ * yellow (download done ≠ painted — the dot owns that distinction, not this label). */
+const dlWords = (l: Light): string => {
+	if (l.state === "transit") return "dl pending…";
+	if ((l.state === "ok" || l.state === "drawn") && l.transitMs != null)
+		return `dl ${secs(l.transitMs)}`;
+	return "";
+};
+
 /** A tier currently being re-probed, so its row can say so. */
 let retrying = $state<WorkerTarget | null>(null);
 
 async function pickTarget(t: WorkerTarget) {
-	// ⛔ A dead row RE-PROBES on click, never `disabled` — a disabled row can trap you on a dead tier permanently (measured 27 Aug 2026: Chris got stuck off production after one stale probe). Refuse a dead target, but never permanently.
+	// Selecting a DEAD tier is allowed — pointing at the broken local worker and
+	// fixing it while pointed at it IS the workflow. The click still re-probes so
+	// the row's light stays honest, and rows are never `disabled`, so an alive
+	// tier is always one click away (the 27 Aug "stuck off production" trap came
+	// from disabling rows, not from selecting dead ones).
+	setWorkerTarget(t);
+	target = t;
 	if (reach(t) === "err") {
 		retrying = t;
 		const alive = await probeTarget(t);
 		retrying = null;
 		if (!alive) {
 			console.warn(
-				`[tiles] ${t} still not answering. Click again to retry.`,
+				`[tiles] ${t} selected while not answering — start it, or click another tier.`,
 			);
-			return;
 		}
-		console.info(`[tiles] ${t} is back — switching to it.`);
 	}
-	setWorkerTarget(t);
-	target = t;
 }
 
 async function probeAll() {

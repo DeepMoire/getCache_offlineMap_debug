@@ -153,7 +153,16 @@ the online child.
    nothing imports it yet. Done = that switch turns real fire features on and
    off.
 
-7. **THE MAP UI HAS NO HOST HERE.** Nothing in this repo mounts `lib/mapUi/` or
+7. **THE WORKER TRUSTS EVERYONE.** Every request to `tiles-prod` is anonymous —
+   the app has no more standing than a stranger's `curl`, so a third party
+   could build their own service on the tile Worker. Add a shared token: the
+   client sends a header read from `rapper/.env` (beside `VITE_TILES_HOST`),
+   the Worker rejects requests without it. The token ships in a public web
+   bundle, so this is a fence, not a lock — the win is rotation: change the
+   token and freeloaders go dark while the app updates. Build and test it
+   against `local_dev`; no Cloudflare account needed.
+
+8. **THE MAP UI HAS NO HOST HERE.** Nothing in this repo mounts `lib/mapUi/` or
    `lib/mapState/` — only ReTreever does, through `retreeverMapPorts.ts`. Five
    of them (`SnakeRuler`, `userLocation`, `vertexDrag`, `overlayManager`,
    `pinMarkers`) import `getCache_OnlineMap`, so they need that sibling
