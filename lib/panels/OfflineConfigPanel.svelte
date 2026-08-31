@@ -104,18 +104,22 @@ function circTitle(what: string, l: Light): string {
 	return bits.join(" · ");
 }
 
-/** Inline dl label beside the circle — the hover card's transit time promoted to always-visible.
- * Yellow-transit reads "dl pending…"; once bytes land the time shows even while the dot is still
- * yellow (download done ≠ painted — the dot owns that distinction, not this label). */
+/** The dl STOPWATCH (Chris, 31 Aug 2026: "you just count until you're done, and then it's
+ * over" — done = the user can SEE it). Counts live from the ask while anything is still on
+ * its way to the screen — bytes on disk is NOT done — then freezes at ask→seen. Never show
+ * a settled number before green: that read "dl 1.8s" over a map with no blob on it. */
 const dlWords = (l: Light): string => {
-	if (l.state === "transit") return "dl pending…";
-	if ((l.state === "ok" || l.state === "drawn") && l.transitMs != null)
-		return `dl ${secs(l.transitMs)}`;
+	if (l.state === "drawn") return l.seenMs == null ? "" : `dl ${secs(l.seenMs)}`;
+	if (l.state === "transit" || l.state === "ok")
+		return l.circuit?.askedAt == null ? "dl …" : `dl ${secs(now - l.circuit.askedAt)}…`;
 	return "";
 };
 
 /** A tier currently being re-probed, so its row can say so. */
 let retrying = $state<WorkerTarget | null>(null);
+
+/** Drives the counting dl labels — 500ms so the tenths digit visibly moves. */
+let now = $state(Date.now());
 
 async function pickTarget(t: WorkerTarget) {
 	// Selecting a DEAD tier is allowed — pointing at the broken local worker and
@@ -159,6 +163,8 @@ onMount(() => {
 	target = getWorkerTarget();
 	// Unlike the ⚙, this panel is always visible, so probe on mount rather than on open.
 	void probeAll();
+	const tick = setInterval(() => (now = Date.now()), 500);
+	return () => clearInterval(tick);
 });
 </script>
 

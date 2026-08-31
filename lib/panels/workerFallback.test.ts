@@ -2,29 +2,23 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// ⚠️ don't gate the fallback on `reachable.production !== false` — that clause is only reached when production IS the dead target, so it's always false exactly when the recovery path is needed.
+// ⚠️ the tier auto-fallback is DELETED, not dormant — probeAll used to switch to the
+// first alive tier (production first), landing every fresh install without a local
+// worker on the maintainer's R2 and hiding the local-first default. Local-first holds
+// even when local is dead; a dead tier says how to start it.
 
 const PANEL = readFileSync(join(__dirname, "OfflineConfigPanel.svelte"), "utf8");
 
-describe("worker tier fallback", () => {
-	it("does not gate the fallback on production being alive", () => {
-		// Matched as CODE, not prose — a bare substring check would also match the fix's own comment quoting the old guard, so comment lines are filtered out first.
-		const code = PANEL.split("\n")
-			.filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
-			.join("\n");
-		expect(code).not.toContain("reachable.production !== false");
+describe("no worker tier auto-switch", () => {
+	it("boot never switches tiers by itself — the fallback machinery is gone", () => {
+		expect(PANEL).not.toContain("{ fallback: true }");
+		const probe = PANEL.slice(PANEL.indexOf("async function probeAll"));
+		expect(probe).not.toMatch(/setWorkerTarget\(/);
 	});
 
-	it("considers every tier when the current one is dead, not just production", () => {
-		const fallback = PANEL.slice(PANEL.indexOf('if (reach(target) === "err")'));
-		for (const tier of ["production", "r2Dev", "localDev"]) {
-			expect(fallback).toContain(tier);
-		}
-	});
-
-	it("says something when no tier answers, instead of failing silently", () => {
+	it("a dead current tier is announced, never failed silently", () => {
 		// A dead panel with a silent console is a failure shape this subsystem keeps reproducing. [[no-silent-fallbacks]]
-		expect(PANEL).toContain("NO worker is reachable");
+		expect(PANEL).toContain("is not answering");
 	});
 });
 

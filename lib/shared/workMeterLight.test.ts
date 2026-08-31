@@ -27,17 +27,20 @@ describe("light(): green only after a paint that follows the arrival", () => {
 		expect(l.paintLagMs).toBeGreaterThanOrEqual(0);
 	});
 
-	it("a paint taken BEFORE a new arrival does not count for it", async () => {
-		noteCircuit("pack", "ok", "old");
+	it("a paint taken BEFORE the arrival does not count for it", async () => {
+		// stale pixels from before this ask must not vouch for bytes that came later
 		notePaint("vector", "pack", 12);
 		await new Promise((r) => setTimeout(r, 2));
 		noteCircuit("pack", "ok", "new");
 		expect(light("pack", ["vector"]).state).toBe("ok");
 	});
 
-	it("a new ask forgets the old arrival — yellow again", () => {
+	it("after a reset, a new ask starts yellow with no remembered arrival", () => {
+		// mid-session a delivered circuit is LATCHED (see workMeter.test.ts) — only the
+		// next user ask (resetCircuits = pin drop) or an err arms a fresh measurement
 		noteCircuit("pack", "ok", "old");
 		notePaint("vector", "pack", 12);
+		resetCircuits();
 		noteCircuit("pack", "transit");
 		expect(light("pack", ["vector"]).state).toBe("transit");
 		expect(light("pack", ["vector"]).circuit?.arrivedAt).toBeNull();

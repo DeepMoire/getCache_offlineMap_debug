@@ -110,17 +110,27 @@ export function noteCircuit(
 	areaKey?: string,
 ): void {
 	if (focusArea && areaKey && areaKey !== focusArea) return;
+	// DELIVERED-LATCH: once bytes arrived since the user's ask (resetCircuits = the pin
+	// drop), only an err or the next reset may touch this circuit. Background re-bakes
+	// and reconciles re-note transit/ok for data the user already has — letting them
+	// through restarted the stopwatch ("dl 8.9s" snapping back to "dl 1.0s") and
+	// un-arrived the bytes, flashing a delivered row back to yellow.
+	if (circuits.get(key)?.arrivedAt != null && state !== "err") return;
+	// One stamp, captured NOW — the deferred settle below must not stamp hold-expiry
+	// as the arrival: that read exactly 1.0s for every request faster than the hold.
+	const stamp = Date.now();
 	const write = () => {
 		const prev = circuits.get(key);
-		const now = Date.now();
 		const next: CircuitStat = {
 			key,
 			state,
-			at: now,
+			at: stamp,
 			note,
-			askedAt: state === "transit" ? now : (prev?.askedAt ?? null),
-			// A new ask forgets the old arrival, or the row could stay green on last time's bytes.
-			arrivedAt: state === "ok" ? now : state === "transit" ? null : (prev?.arrivedAt ?? null),
+			askedAt: state === "transit" ? stamp : (prev?.askedAt ?? null),
+			// A new ask forgets the old arrival, or the row could stay green on last time's
+			// bytes. An err un-delivers too — it clears the delivered-latch above, or a
+			// successful retry after a break could never be recorded and the row stuck red.
+			arrivedAt: state === "ok" ? stamp : (prev?.arrivedAt != null && state === "idle" ? prev.arrivedAt : null),
 		};
 		circuits.set(key, next);
 		for (const fn of circuitListeners) fn(next);
@@ -133,13 +143,13 @@ export function noteCircuit(
 	if (state === "transit") {
 		// A new ask while a settle was pending: the settle is moot; restart the hold only if we weren't already yellow.
 		if (circuits.get(key)?.state !== "transit") {
-			transitSince.set(key, Date.now());
+			transitSince.set(key, stamp);
 			write();
 		}
 		return;
 	}
 	const since = transitSince.get(key);
-	const left = since === undefined ? 0 : TRANSIT_HOLD_MS - (Date.now() - since);
+	const left = since === undefined ? 0 : TRANSIT_HOLD_MS - (stamp - since);
 	if (left > 0) {
 		pendingSettle.set(
 			key,
@@ -194,21 +204,30 @@ export interface Light {
 	transitMs: number | null;
 	/** ms from bytes on disk to first sighting in the viewport — the gap this whole model exists to expose. */
 	paintLagMs: number | null;
+	/** ms from ask to first sighting on SCREEN — the user's whole wait; null until drawn. */
+	seenMs: number | null;
 }
 /** THE COLOUR OF A ROW. The feed's download state, promoted to `drawn` (green) ONLY when at least one of `layerKeys` was painted after the feed's current arrival. `ok` stays yellow: bytes on disk are not pixels on screen. */
 export function light(circuitKey: string | undefined, layerKeys: readonly string[]): Light {
 	const circuit = circuitKey ? circuits.get(circuitKey) : undefined;
-	if (!circuit) return { state: "idle", transitMs: null, paintLagMs: null };
+	if (!circuit) return { state: "idle", transitMs: null, paintLagMs: null, seenMs: null };
 	const transitMs =
 		circuit.askedAt != null && circuit.arrivedAt != null ? circuit.arrivedAt - circuit.askedAt : null;
-	if (circuit.state !== "ok") return { state: circuit.state, circuit, transitMs, paintLagMs: null };
+	if (circuit.state !== "ok") return { state: circuit.state, circuit, transitMs, paintLagMs: null, seenMs: null };
 	let paint: PaintStat | undefined;
 	for (const k of layerKeys) {
 		const p = paints.get(k);
 		if (p?.drawnAt != null && circuit.arrivedAt != null && p.drawnAt >= circuit.arrivedAt && (!paint || p.drawnAt < paint.drawnAt!)) paint = p;
 	}
-	if (!paint) return { state: "ok", circuit, transitMs, paintLagMs: null };
-	return { state: "drawn", circuit, paint, transitMs, paintLagMs: paint.drawnAt! - circuit.arrivedAt! };
+	if (!paint) return { state: "ok", circuit, transitMs, paintLagMs: null, seenMs: null };
+	return {
+		state: "drawn",
+		circuit,
+		paint,
+		transitMs,
+		paintLagMs: paint.drawnAt! - circuit.arrivedAt!,
+		seenMs: circuit.askedAt != null ? paint.drawnAt! - circuit.askedAt : null,
+	};
 }
 
 /** Back to grey — called the moment a pin is dropped, so circles describe THIS ask, not the last one; a drop that triggers nothing stays grey ("not even asking"). */

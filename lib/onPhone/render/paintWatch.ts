@@ -13,7 +13,7 @@ import type maplibregl from "maplibre-gl";
 
 import { LAYER_TOGGLES } from "./wallLegend";
 import { satLayerId } from "../satellite/mountSatellite";
-import { notePaint, subscribeCircuits } from "../../shared/workMeter.svelte";
+import { circuitFocus, notePaint, subscribeCircuits } from "../../shared/workMeter.svelte";
 
 /** Start counting on idle; returns the stop fn. `satMounted` is the mount's live key set — photo layers are per pin and not in LAYER_TOGGLES.ids. */
 export function watchPaint(
@@ -25,7 +25,11 @@ export function watchPaint(
 		for (const t of LAYER_TOGGLES) {
 			let n = 0;
 			if (t.key === "sat") {
+				// While a pin is focused, only ITS photo counts — an old photo elsewhere in
+				// the viewport turned the row green while the asked-for blob was still missing.
+				const focus = circuitFocus();
 				for (const key of satMounted()) {
+					if (focus && key !== focus) continue;
 					const id = satLayerId(key);
 					const layer = map.getLayer(`${id}-l`);
 					if (!layer || map.getLayoutProperty(`${id}-l`, "visibility") === "none") continue;
