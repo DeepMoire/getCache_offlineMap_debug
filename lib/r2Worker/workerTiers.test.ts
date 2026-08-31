@@ -26,9 +26,9 @@ describe("worker tiers", () => {
 		expect(m.packUrl()).toBeNull();
 	});
 
-	it("defaults to production, so an unset override never picks the sandbox", async () => {
+	it("defaults to localDev in a dev build — a shipped phone is locked to production by the !DEV early return, not by this constant", async () => {
 		const m = await import("./local_dev/tilesHost");
-		expect(m.DEFAULT_TARGET).toBe("production");
+		expect(m.DEFAULT_TARGET).toBe("localDev");
 	});
 
 	it("keeps both r2Worker copies byte-identical on the tier definition", async () => {

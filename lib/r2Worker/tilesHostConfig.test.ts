@@ -13,6 +13,9 @@ async function freshModule() {
 describe("tiles host must be configured by the app", () => {
 	it("answers NOTHING until configured — no default origin is baked in", async () => {
 		const m = await freshModule();
+		// default tier is localDev (baked host, bills nobody) — this test is about
+		// the CLOUD origins never being baked, so pin the tier under test.
+		m.setWorkerTarget("production");
 		expect(m.isTilesHostConfigured()).toBe(false);
 		expect(m.tilesHost()).toBeNull();
 		expect(m.packUrl()).toBeNull();
@@ -21,6 +24,7 @@ describe("tiles host must be configured by the app", () => {
 
 	it("builds both endpoints off the configured origin", async () => {
 		const m = await freshModule();
+		m.setWorkerTarget("production");
 		m.configureTilesHost("https://tiles.example.test");
 		expect(m.isTilesHostConfigured()).toBe(true);
 		expect(m.packUrl()).toBe("https://tiles.example.test/pack");
@@ -29,12 +33,14 @@ describe("tiles host must be configured by the app", () => {
 
 	it("trims trailing slashes so a configured origin cannot produce //pack", async () => {
 		const m = await freshModule();
+		m.setWorkerTarget("production");
 		m.configureTilesHost("https://tiles.example.test///");
 		expect(m.packUrl()).toBe("https://tiles.example.test/pack");
 	});
 
 	it("treats blank configuration as unconfigured, not as an empty origin", async () => {
 		const m = await freshModule();
+		m.setWorkerTarget("production");
 		m.configureTilesHost("   ");
 		// blank config ≠ empty origin — empty would make packUrl() "/pack", a same-origin 404 that reads as a broken map, not a missing setting.
 		expect(m.isTilesHostConfigured()).toBe(false);

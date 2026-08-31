@@ -31,7 +31,11 @@ export function hostFor(t: WorkerTarget): string | null {
 	return configuredHost;
 }
 
-export const DEFAULT_TARGET: WorkerTarget = "production";
+// ⚠️ DEV BUILDS START ON THE DEVELOPER'S OWN MACHINE (Chris, 31 Aug 2026:
+// "point at the local one that's broken and he can fix it"). A shipped build
+// never reads this — getWorkerTarget()'s !DEV early return hard-locks phones
+// to production; THAT line is the safety, not this constant.
+export const DEFAULT_TARGET: WorkerTarget = "localDev";
 
 // ⛔ override exists only in a DEV build — import.meta.env.DEV is compile-time, so this branch is dead code on a phone.
 const OVERRIDE_KEY = "rt_worker_target";

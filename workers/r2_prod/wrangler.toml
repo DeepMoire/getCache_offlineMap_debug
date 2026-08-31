@@ -1,0 +1,34 @@
+name = "offline-tiles"
+main = "src/index.ts"
+compatibility_date = "2026-06-02"
+
+# ⚠️ `routes` is a top-level key — MUST sit above every [table] header or TOML nests it.
+routes = [
+  { pattern = "tiles-prod.getcache.org", custom_domain = true }
+]
+
+# ⛔ NEVER create tiles-prod / tiles-dev by hand in the Cloudflare dashboard — `custom_domain = true` won't adopt an existing record; deploy fails with code 100117 and there is no --force (delete the record, then deploy).
+[[r2_buckets]]
+binding = "TILES"
+bucket_name = "offline-tiles"
+
+# ⚠️ PMTILES_KEY / PACK_PMTILES_KEY must match the uploaded object key in the bucket.
+[vars]
+PMTILES_KEY = "planet.pmtiles"
+PACK_PMTILES_KEY = "planet.pmtiles"
+
+[env.dev]
+name = "offline-tiles-dev"
+routes = [
+  { pattern = "tiles-dev.getcache.org", custom_domain = true }
+]
+
+[[env.dev.r2_buckets]]
+binding = "TILES"
+bucket_name = "offline-tiles"
+
+[env.dev.vars]
+PMTILES_KEY = "planet.pmtiles"
+PACK_PMTILES_KEY = "planet.pmtiles"
+
+# ⚠️ a staging Worker (offline-tiles-staging) may still exist in Cloudflare — deleting config never tears down a live Worker.

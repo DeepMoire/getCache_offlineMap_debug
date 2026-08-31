@@ -10,10 +10,12 @@ NEEDED=(worldBase getcache_DT_bg.webp pin_library_small hand_phoneV3.webp fire_i
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ⚠️ RETREEVER_ASSETS must be checked FIRST, or the override is only consulted after the guesses already failed.
+# ⚠️ ReTreever before $HERE/mobileAssets — in the workspace ReTreever is the source of truth; the committed copy is for clones, where it's the only candidate that exists.
 CANDIDATES=(
   "${RETREEVER_ASSETS:-}"
   "$HERE/../ReTreever/static/mobileAssets"
   "$HERE/../../ReTreever/static/mobileAssets"
+  "$HERE/mobileAssets"
 )
 
 tried=()

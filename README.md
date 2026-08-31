@@ -5,13 +5,14 @@
 ## Day one
 
 ```bash
-npm create @retreever/rapper@latest <folder> -- --child offline
+npm create -y @retreever/rapper@latest <folder> -- --child offline
 cd <folder> && npm install && npm run dev
 ```
 
 That git-clones this repo beside a copied `rapper/` and writes `rapper/.env`
 (`VITE_TILES_HOST=https://tiles-prod.getcache.org` + `VITE_TILES_DEV_HOST`).
-The first `npm run dev` downloads the ~50 MB basemap via `fetchAssets.sh`.
+The ~50 MB basemap ships in this repo (`mobileAssets/`, proprietary — see
+`mobileAssets/LICENSE.md`); the first `npm run dev` copies it into place.
 No key, no account, no npm login. `getCache_OfflineMap/` is a real clone:
 edit, branch, push and open PRs from inside it.
 
@@ -82,9 +83,9 @@ watched while it runs. Do not propose renaming it or a second "shared map" repo.
 | Worker client (tiers, `/pack` download, fires fetch) | `lib/r2Worker/` — `lib/r2Worker/README.md` |
 | Offline map docs (plan, spec, history) | `docs/` — start at `docs/README.md` |
 | Fires docs | `routes/fires/docs/` |
-| Map assets (basemap, pins, `fire_icon.webp`, `fire_intensity/`) | `static/mobileAssets/` — not in git, `fetchAssets.sh` fills it |
+| Map assets (basemap, pins, `fire_icon.webp`, `fire_intensity/`) | `mobileAssets/` (committed, proprietary — `mobileAssets/LICENSE.md`); `fetchAssets.sh` copies it to the serving dir |
 | Storage, bake service, renderer, roads, satellite | `lib/onPhone/` |
-| Tile contract (byte-identical to `worker/src/`) | `lib/contract/` |
+| Tile contract (byte-identical to `workers/local_dev/src/`) | `lib/contract/` |
 | `assetRegion`, `anchors`, `mapKeepOut`, `rendererOf`, `pinDrift`, `ensureMapboxGuards` | `lib/shared/` |
 | Places index + reference | `lib/places/` |
 | `MapPopoverShell`, `mapPopoverGeom`, `measureFormat`, the debug panels | `lib/panels/` |

@@ -7,7 +7,7 @@
  * ══════════════════════════════════════════════════════════════════════════
  *
  * ⛔ WHY THIS IS A CONTRACT, NOT A WORKER CONSTANT. The keep-set used to live
- * only in `worker/src/packBuilder.ts`, and the phone's debug report answered
+ * only in `workers/local_dev/src/packBuilder.ts`, and the phone's debug report answered
  * "does the pack hold this layer?" with `t.key === "vector"` — a hard-coded
  * "roads only" that could never learn otherwise. MEASURED 28 Aug 2026 on a
  * live pack: ONE source layer, `roads`, so Labels / Places / Hospitals all

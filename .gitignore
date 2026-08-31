@@ -3,20 +3,14 @@ node_modules/
 .DS_Store
 *.log
 
-# ── The basemap assets — NEVER commit ───────────────────────────────────────
-# ASSETS.md tells every contributor to run ./fetchAssets.sh, and that script's
-# default destination is static/mobileAssets/ right here. Until this rule
-# existed, following the documented workflow left 51 MB / 3,606 untracked
-# binary files in the working tree of a PUBLIC repo — and gitEr/shipAll.sh:212
-# and gitEr/publishChildren.sh:194 both stage with `git add -A`.
-#
-# Size is the smaller half. ASSETS.md states these are NOT AGPL: they are
-# Ground Truth Data's own imagery and derived basemap data, distributed
-# separately from the code. Committing them here would publish proprietary
-# assets into an AGPL repo.
-#
-# ReTreever/static/mobileAssets stays the single source of truth. Mirrors
-# rapper/.gitignore:144-146, which carries the same rule for the same reason.
+# ── Basemap assets ───────────────────────────────────────────────────────────
+# mobileAssets/ at the repo root IS committed (decision 31 Aug 2026): a clone
+# must work with no downloads. Those files are NOT AGPL — Ground Truth Data's
+# own imagery, see mobileAssets/LICENSE.md. In the fetch workspace,
+# ReTreever/static/mobileAssets remains the source of truth; fetchAssets.sh
+# prefers it and falls back to the committed copy only outside the workspace.
+# static/mobileAssets/ stays ignored — it's fetchAssets.sh's COPY DESTINATION,
+# and gitEr/shipAll.sh + publishChildren.sh stage with `git add -A`.
 static/mobileAssets/
 
 # ── Environment variables & secrets ─────────────────────────────────────────

@@ -38,4 +38,15 @@ else
 	fi
 fi
 
+# THIS FOLDER IS THE RECORD OF WHAT tiles-prod IS RUNNING. Code is edited in
+# ../local_dev only; the sync runs AFTER the confirmation so an aborted deploy
+# leaves the folder still matching the cloud. Replace, never merge.
+rm -rf src
+(cd ../local_dev && find src -type d) | while read -r d; do mkdir -p "$d"; done
+for f in $(cd ../local_dev && find src -type f) wrangler.toml package.json package-lock.json tsconfig.json .gitignore; do
+	cp "../local_dev/$f" "$f"
+done
+
+[ -d node_modules ] || npm install --no-audit --no-fund
+
 npx wrangler deploy

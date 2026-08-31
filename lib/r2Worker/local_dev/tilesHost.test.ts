@@ -23,10 +23,14 @@ beforeEach(() => {
 });
 
 describe("worker target", () => {
-	it("defaults to production, with no stored override", () => {
-		expect(DEFAULT_TARGET).toBe("production");
-		expect(getWorkerTarget()).toBe("production");
-		expect(tilesHost()).toBe(TEST_HOST);
+	it("defaults to localDev in a dev build, with no stored override", () => {
+		// the developer's own machine is the starting tier (Chris, 31 Aug 2026);
+		// a SHIPPED build never reads DEFAULT_TARGET — the !DEV early return in
+		// getWorkerTarget() locks phones to production, and the gating test
+		// below is what protects that.
+		expect(DEFAULT_TARGET).toBe("localDev");
+		expect(getWorkerTarget()).toBe("localDev");
+		expect(tilesHost()).toBe(LOCAL_DEV_HOST);
 	});
 
 	it("switches every URL together — no split-brain", () => {
@@ -52,7 +56,7 @@ describe("worker target", () => {
 	it("ignores a corrupt or hostile stored value", () => {
 		sessionStorage.setItem("rt_worker_target", "https://evil.example.com");
 		expect(getWorkerTarget()).toBe(DEFAULT_TARGET);
-		expect(tilesHost()).toBe(TEST_HOST);
+		expect(tilesHost()).toBe(LOCAL_DEV_HOST);
 	});
 
 	it("the override is gated on import.meta.env.DEV in BOTH directions", () => {

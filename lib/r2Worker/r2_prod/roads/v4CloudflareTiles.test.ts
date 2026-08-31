@@ -136,7 +136,7 @@ describe("THE BLOB — one radius, every zoom", () => {
 	it("the Worker's spec matches the client's, exactly", () => {
 		// ⚠️ a client/Worker zoom mismatch means the phone asks for a tile the Worker never wrote — blank map, no error anywhere.
 		const workerGrid = fileURLToPath(
-			new URL("../../../../worker/src/grid.ts", import.meta.url),
+			new URL("../../../../workers/local_dev/src/grid.ts", import.meta.url),
 		);
 		const workerSrc = readFileSync(workerGrid, "utf8");
 		const reexport = /export \* from ["']([^"']+)["']/.exec(workerSrc)?.[1];

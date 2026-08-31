@@ -5,8 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "./deployProduction.sh",
-    "deploy:dev": "./deployDev.sh",
+    "deploy": "../r2_prod/deployProduction.sh",
+    "deploy:dev": "../r2_dev/deployDev.sh",
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

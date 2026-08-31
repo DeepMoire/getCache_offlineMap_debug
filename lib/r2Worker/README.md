@@ -1,16 +1,19 @@
 # r2Worker — the tile Worker as the app sees it
 
-The Worker itself (Cloudflare, R2, deploy scripts) is `../../worker/` — read
-its README for hosting. This folder is the **client half**: which host the app
-talks to, the `/pack` downloader, the fires fetch.
+The Worker itself is `../../workers/` — one folder per tier, named exactly
+like the CONFIG panel rows: `local_dev/` is the copy you edit and run,
+`r2_dev/` and `r2_prod/` are the record of what each cloud tier is running
+(their deploy scripts sync from local_dev, then deploy). This folder is the
+**client half**: which host the app talks to, the `/pack` downloader, the
+fires fetch.
 
 ## Three tiers, one URL shape
 
 | tier | CONFIG panel | hostname | who creates it |
 |---|---|---|---|
-| prod | `r2_prod` | `tiles-prod.getcache.org` | `npm run deploy` in `worker/` (asks to confirm) |
-| dev | `r2_dev` | `tiles-dev.getcache.org` | `npm run deploy:dev` — same R2 bucket, so a prod/dev difference is always CODE, never data |
-| local | `local_dev` | `tiles-local.getcache.org:8787` → 127.0.0.1 | `npm run dev:local` — no Cloudflare account needed |
+| prod | `r2_prod` | `tiles-prod.getcache.org` | `./deployProduction.sh` in `workers/r2_prod/` (asks to confirm) |
+| dev | `r2_dev` | `tiles-dev.getcache.org` | `./deployDev.sh` in `workers/r2_dev/` — same R2 bucket, so a prod/dev difference is always CODE, never data |
+| local | `local_dev` | `tiles-local.getcache.org:8787` → 127.0.0.1 | `npm run dev:local` in `workers/local_dev/` — no Cloudflare account needed |
 
 `GET /pack?lng=&lat=` returns a map pack; `GET /{z}/{x}/{y}.pbf` a tile.
 
@@ -24,8 +27,10 @@ talks to, the `/pack` downloader, the fires fetch.
   Unset → `null` → the row greys out, and the console warns on the first line.
   A hardcoded default bills the maintainer's R2 account for every stranger who
   installs the package.
-- Default is always prod; the switch only exists in a dev build
-  (`import.meta.env.DEV`), so a shipped phone cannot be left on a sandbox.
+- A dev build defaults to `local_dev` — the developer starts pointed at their
+  own machine and fixes what's in front of them. A shipped phone is locked to
+  prod by `getWorkerTarget()`'s `!import.meta.env.DEV` early return (compile-time
+  dead code on a device), so it can never be left on a sandbox.
 - `tierNaming.test.ts` fails the build on any other tile hostname spelling.
 
 ## A tier looks dead but isn't

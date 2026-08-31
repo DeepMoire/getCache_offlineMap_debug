@@ -167,7 +167,7 @@ onMount(() => {
 			class:retrying={retrying === t.id}
 			onclick={() => pickTarget(t.id)}
 			title={reach(t.id) === "err"
-				? `${t.label} is not answering — CLICK TO RETRY. ${t.id === "localDev" ? "Start it: cd getCache_OfflineMap/worker && npm install && npm run dev:local — no account needed." : "The Worker was unreachable when last checked."}`
+				? `${t.label} is not answering — CLICK TO RETRY. ${t.id === "localDev" ? "Start it: cd getCache_OfflineMap/workers/local_dev && npm install && npm run dev:local — no account needed." : "The Worker was unreachable when last checked."}`
 				: t.hint}
 		>
 			<span class="cfg-label">{t.label}</span>
