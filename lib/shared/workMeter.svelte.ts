@@ -95,6 +95,13 @@ const TRANSIT_HOLD_MS = 1000;
 const transitSince = new Map<string, number>();
 const pendingSettle = new Map<string, ReturnType<typeof setTimeout>>();
 
+/** Give-up horizon (Chris, 31 Aug 2026: "count down to 30 seconds and then stop…
+ *  even 30 seconds is really long") — a transit still unanswered after this long is
+ *  declared err so the counting badge STOPS; a late arrival still lands and un-errs
+ *  the row. */
+const GIVE_UP_MS = 30_000;
+const giveUpTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 /** focusArea: set on pin-drop tap, cleared by resetCircuits() — while set, notes tagged with a different area are ignored (prevents a background reconcile pin overwriting the one just dropped); untagged notes (fires, probes) always land. */
 let focusArea: string | null = null;
 export function focusCircuits(areaKey: string | null): void {
@@ -145,8 +152,23 @@ export function noteCircuit(
 		if (circuits.get(key)?.state !== "transit") {
 			transitSince.set(key, stamp);
 			write();
+			clearTimeout(giveUpTimers.get(key));
+			giveUpTimers.set(
+				key,
+				setTimeout(() => {
+					giveUpTimers.delete(key);
+					if (circuits.get(key)?.state === "transit")
+						noteCircuit(key, "err", `nothing after ${GIVE_UP_MS / 1000}s — gave up waiting`);
+				}, GIVE_UP_MS),
+			);
 		}
 		return;
+	}
+	// An answer of any kind (ok or err) ends the give-up watch.
+	const gu = giveUpTimers.get(key);
+	if (gu) {
+		clearTimeout(gu);
+		giveUpTimers.delete(key);
 	}
 	const since = transitSince.get(key);
 	const left = since === undefined ? 0 : TRANSIT_HOLD_MS - (stamp - since);
@@ -248,6 +270,9 @@ export function resetCircuits(areaKey: string | null = null): void {
 	focusArea = areaKey;
 	for (const t of pendingSettle.values()) clearTimeout(t);
 	pendingSettle.clear();
+	// Stale give-up timers must die with the old ask, or one could red-out the NEXT ask early.
+	for (const t of giveUpTimers.values()) clearTimeout(t);
+	giveUpTimers.clear();
 	transitSince.clear();
 	circuits.clear();
 	paints.clear();

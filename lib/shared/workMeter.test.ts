@@ -82,6 +82,28 @@ describe("circuit stopwatch", () => {
 		expect(l.settledEmpty).toBe(true);
 	});
 
+	it("a transit nobody answers gives up at 30s — the counting stops in red", async () => {
+		const m = await import("./workMeter.svelte");
+		m.noteCircuit("k", "transit");
+		vi.advanceTimersByTime(30_000);
+		const c = m.circuitOf("k")!;
+		expect(c.state).toBe("err");
+		expect(c.note).toContain("gave up");
+		// a LATE arrival still lands and un-errs the row
+		m.noteCircuit("k", "ok");
+		vi.runAllTimers();
+		expect(m.circuitOf("k")!.state).toBe("ok");
+	});
+
+	it("an answered transit never gives up", async () => {
+		const m = await import("./workMeter.svelte");
+		m.noteCircuit("k", "transit");
+		vi.advanceTimersByTime(5_000);
+		m.noteCircuit("k", "ok");
+		vi.advanceTimersByTime(60_000);
+		expect(m.circuitOf("k")!.state).toBe("ok");
+	});
+
 	it("light() reports seenMs = ask → first sighting on screen", async () => {
 		const m = await import("./workMeter.svelte");
 		m.noteCircuit("feed", "transit");
