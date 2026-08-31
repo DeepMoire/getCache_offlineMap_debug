@@ -45,6 +45,33 @@ EOX Sentinel-2.
 **The debugger IS the map.** Same component, one `cards` prop, panels beside it.
 Instruments attached to a stand-in produce confident wrong answers.
 
+## Where the data comes from
+
+| Layer | Source | Always on? | Radius per pin |
+|---|---|---|---|
+| Vector roads — plus water, town labels, hospital/campsite POIs, all in the same blob | One Cloudflare R2 bucket (`offline-tiles`) holding a full-planet OpenStreetMap extract (`planet.pmtiles`); the Worker in `worker/` range-reads it and serves one `/pack` blob per pin | yes | 30 km (`lib/contract/grid.ts`) |
+| Satellite photo | EOX Sentinel-2 cloudless (public WMTS, no key, ~10 m/px), baked on the phone | yes | 2 km per photo; photos along a line overlap into a ribbon (`lib/onPhone/satellite/satelliteImage.ts`) |
+| Fires | NASA FIRMS — VIIRS on NOAA-20, NOAA-21 and Suomi-NPP, last 48 h, proxied through the same Worker's `/fires` route so the API key stays a Worker secret | **not yet** — fetch/store runs, render is Known broken #6 | 500 km (`lib/shared/fireContract.ts`) |
+
+Everything lands in IndexedDB under a 1 GB budget (`OFFLINE_BUDGET_BYTES`)
+and renders with no network.
+
+## The blobs — what good looks like
+
+A blob is the jagged disc of data around a pin: satellite photo at the
+centre, vector roads out to the edge. The bar, in order:
+
+1. **Always on.** Nothing appears or disappears as you zoom. One radius, one
+   packed zoom level (overzoomed above it) — a second radius was tried three
+   times and always reads as a phantom shape (`lib/contract/roadBlob.ts`).
+2. **Arrive fast.** The dl badge is a stopwatch from *asked* to *painted on
+   screen* — that number is the score, never bytes on disk or an open port.
+3. **Render fast, stay small in RAM.** Speed vs memory is the standing
+   trade-off: pack only the layers worth their bytes (~92 kB of water, labels
+   and POIs on a 445 kB roads blob — measured in `lib/contract/packLayers.ts`),
+   hand the renderer URLs instead of live object graphs, and drop parsed data
+   the moment it is stored.
+
 ## THE ONE RULE
 
 There is ONE offline map component:
