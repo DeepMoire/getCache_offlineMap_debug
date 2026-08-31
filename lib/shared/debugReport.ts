@@ -339,6 +339,11 @@ export async function collectDebugReport(
  */
 export interface FocusedBlobReport {
 	schema: typeof DEBUG_REPORT_SCHEMA;
+	/** Plain-English rollup, first thing in the file — for the human holding
+	 *  the report, before the developer sections. DERIVED from the sections
+	 *  below by summarizeFocusedReport(), never measured separately, so the
+	 *  headline can't disagree with the detail. */
+	summary: ReportSummary;
 	capturedAt: string;
 	route: string;
 	env: DebugReport["env"];
@@ -417,6 +422,96 @@ function expectsFor(t: (typeof LAYER_TOGGLES)[number]): string {
 	return `${reads.join("; ")} — ${PACK_WHERE} (pack layers: ${PACK_LAYER_NAMES.join(", ")})`;
 }
 
+/** The plain-English block at the top of an exported report. Every value is a
+ *  full sentence in human units (seconds, MB, "26 min ago") — Chris, 31 Aug
+ *  2026: "right at the top… time to download… clear for a human like me that's
+ *  not super technical." The verbose sections stay; this fronts them. */
+export interface ReportSummary {
+	note: string;
+	timeToDownload: string;
+	onDisk: string;
+	latestArea: string;
+	onScreen: string;
+	workers: string;
+	memory: string;
+}
+
+const FEED_LABEL: Record<string, string> = {
+	sat: "satellite photo",
+	pack: "road pack",
+	fires: "fires",
+};
+
+function fmtMb(b: number): string {
+	return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function agoText(iso: string | null | undefined, from: Date): string {
+	if (!iso) return "never";
+	const mins = Math.round((from.getTime() - new Date(iso).getTime()) / 60000);
+	if (mins < 1) return "just now";
+	if (mins < 60) return `${mins} min ago`;
+	if (mins < 60 * 48) return `${Math.round(mins / 60)} h ago`;
+	return `${Math.round(mins / 60 / 24)} days ago`;
+}
+
+/** Pure derivation — reads ONLY the report, so it stays portable and a test
+ *  can feed it a canned report with no app running. */
+export function summarizeFocusedReport(
+	r: Omit<FocusedBlobReport, "summary">,
+): ReportSummary {
+	const now = new Date(r.capturedAt);
+
+	// One entry per FEED (layers sharing a download share its timing).
+	const feeds = new Map<string, number>();
+	for (const l of r.layers) {
+		if (l.feed && l.transitMs != null && !feeds.has(l.feed))
+			feeds.set(l.feed, l.transitMs);
+	}
+	const newest = r.disk.recentImports[0];
+	const timeToDownload = feeds.size
+		? [...feeds]
+				.map(([f, ms]) => `${FEED_LABEL[f] ?? f} ${(ms / 1000).toFixed(1)}s`)
+				.join(" · ") + " (ask → bytes on disk, this session)"
+		: newest
+			? `nothing downloaded since this page loaded — the map drew from what was already on disk (newest area landed ${agoText(newest.bakedAt, now)})`
+			: "nothing has ever been downloaded on this device";
+
+	const paint = new Map(r.meter.paints.map((p) => [p.key, p.count]));
+	const drawn = r.layers.filter((l) => (paint.get(l.key) ?? 0) > 0);
+	const empty = r.layers.filter((l) => l.on && (paint.get(l.key) ?? 0) === 0);
+	const onScreen =
+		(drawn.length
+			? `on screen: ${drawn.map((l) => `${l.label} (${(paint.get(l.key) ?? 0).toLocaleString()})`).join(", ")}`
+			: "nothing painted yet") +
+		(empty.length ? ` — nothing to draw for ${empty.map((l) => l.label).join(", ")}` : "");
+
+	// a probe can be missing (never checked yet) — that is not "NOT reachable"
+	const p: Record<string, boolean | undefined> = r.meter.probes ?? {};
+	const probe = (v: boolean | undefined, up: string, down: string) =>
+		v == null ? "not checked" : v ? up : down;
+	const workers = [
+		`prod ${probe(p.production, "reachable", "NOT reachable")}`,
+		`dev ${probe(p.r2Dev, "reachable", "NOT reachable")}`,
+		`local ${probe(p.localDev, "running", "not running")}`,
+	].join(" · ");
+
+	return {
+		note: "Plain-English rollup, derived from the detailed sections below — trust the sections if they ever seem to disagree.",
+		timeToDownload,
+		onDisk: `${r.disk.areas} areas cached, ${fmtMb(r.disk.bytes)} of the ${fmtMb(OFFLINE_BUDGET_BYTES)} budget`,
+		latestArea: r.blob
+			? `${fmtMb(r.blob.bytes)} around (${r.blob.pin.lng.toFixed(3)}, ${r.blob.pin.lat.toFixed(3)}) — ${r.blob.hasPhoto ? "photo" : "NO photo"} + ${r.blob.lineCount} road tiles, landed ${agoText(newest?.bakedAt, now)}`
+			: "no areas cached yet",
+		onScreen,
+		workers,
+		memory:
+			r.heap.nowMb != null
+				? `${r.heap.nowMb} MB now, peaked at ${r.heap.peakMb ?? "?"} MB (main thread only)`
+				: "no reading",
+	};
+}
+
 /** Build a report scoped to ONE blob — the LAST SUCCESSFUL IMPORT, the same
  *  row the blob panel hoists as FOCUSED — instead of every area on the device. */
 export async function collectFocusedBlobReport(
@@ -432,7 +527,7 @@ export async function collectFocusedBlobReport(
 				(b.bakedAt ?? b.lastTouched ?? 0) - (a.bakedAt ?? a.lastTouched ?? 0),
 		);
 
-	return {
+	const report: Omit<FocusedBlobReport, "summary"> = {
 		schema: DEBUG_REPORT_SCHEMA,
 		capturedAt: new Date().toISOString(),
 		route: live.route ?? "unknown",
@@ -529,6 +624,9 @@ export async function collectFocusedBlobReport(
 		},
 		blob: sorted.length > 0 ? geometryFor(sorted[0]) : null,
 	};
+	// summary goes SECOND in the file (after schema) — the human block fronts
+	// the developer sections. Spread keeps key order: schema, summary, rest.
+	return { schema: report.schema, summary: summarizeFocusedReport(report), ...report };
 }
 
 /** Stable filename for a saved report. */

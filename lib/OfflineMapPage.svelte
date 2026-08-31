@@ -358,13 +358,6 @@ function addMarker(
 }
 let mapError = $state("");
 let wallStatus = $state("wall not mounted yet");
-/** WHERE THE MAP OPENED, as a string on the SCREEN — not in the console.
- *  A URL camera that only reports itself to devtools is indistinguishable
- *  from one that was ignored: you paste a coordinate, the map shows blank
- *  because nothing is baked there, and "it moved" and "it did nothing" look
- *  identical. This badge is the difference, and it renders on BOTH routes
- *  (outside `{#if showPanels}`) because /offline is where you actually paste. */
-let cameraBadge = $state("");
 /** `lat,lng` at 6 dp (~10 cm) — human order, the one cameraFromUrl parses. */
 const llText = (lat: number, lng: number): string =>
 	`${lat.toFixed(6)},${lng.toFixed(6)}`;
@@ -430,17 +423,6 @@ onMount(() => {
 		// fixture, so `?=58.7986,-122.6761` points BOTH routes at the same
 		// spot — see cameraFromUrl.ts. Absent, the first fixture pin stands.
 		const urlCam = cameraFromUrl(location.search);
-		// The badge states WHICH source won, always — "from the URL" vs the
-		// fixture default. Reporting only the success case would leave the
-		// ignored-param case silent, which is the case worth seeing.
-		// FIXED PRECISION, like the moveend badge below. The literal
-		// `45.061348227515055` printed raw made the nowrap, centre-anchored pill
-		// wider than the phone, and the clipped left edge read `1348227515055,
-		// -76.16…` — an epoch where the latitude should be (28 Aug 2026).
-		cameraBadge = urlCam
-			? `${llText(urlCam.center[1], urlCam.center[0])}` +
-				`${urlCam.zoom !== undefined ? ` · z${urlCam.zoom}` : ""} · from the URL`
-			: `${llText(PINS[0].lngLat[1], PINS[0].lngLat[0])} · z9 · default (no URL coords)`;
 		if (urlCam)
 			console.info(
 				`[map] opening at ${urlCam.center[1]},${urlCam.center[0]}` +
@@ -525,7 +507,6 @@ onMount(() => {
 					const at = llText(c.lat, c.lng);
 					const z = map.getZoom().toFixed(2);
 					history.replaceState(history.state, "", `?at=${at}&z=${z}`);
-					cameraBadge = `${at} · z${z}`;
 				};
 				// ON LOAD, NOT JUST ON MOVE. Writing only from `moveend` meant a
 				// freshly-opened page had a BARE url until you happened to drag —
@@ -709,9 +690,6 @@ onMount(() => {
 			aria-pressed={showPanels}
 			onclick={() => (showPanels = !showPanels)}
 		>debug</button>
-		{#if cameraBadge}
-			<output class="camera-badge" aria-live="polite">{cameraBadge}</output>
-		{/if}
 			{#if mapError}
 				<div class="map-error">
 					<p>Map unavailable</p>
@@ -792,21 +770,6 @@ onMount(() => {
 		background: #e8b923;
 		border-color: #e8b923;
 		color: #111;
-	}
-
-	.camera-badge {
-		position: absolute;
-		top: 40px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 50;
-		padding: 4px 10px;
-		border-radius: 999px;
-		background: rgb(0 0 0 / 0.78);
-		color: #fff;
-		font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-		white-space: nowrap;
-		pointer-events: none;
 	}
 
 :global(html),
