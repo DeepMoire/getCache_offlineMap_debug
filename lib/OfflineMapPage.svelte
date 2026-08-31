@@ -456,6 +456,7 @@ onMount(() => {
 	let satPoll: ReturnType<typeof setInterval> | undefined;
 	let fireHandle: ReturnType<typeof attachFireLayer> | undefined;
 	let unsubFireCircuit: (() => void) | undefined;
+	let firePaintTimer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		// WHERE THE MAP OPENS. A coordinate in the query string wins over the
 		// fixture, so `?=58.7986,-122.6761` points BOTH routes at the same
@@ -648,8 +649,15 @@ onMount(() => {
 					// become pixels without a reload — same contract as the
 					// raw-wall blind handler above.
 					fireHandle = attachFireLayer(map);
+					// ANY fires event, debounced past the meter's TRANSIT_HOLD — the
+					// hold can eat an intermediate `ok` (next area's transit cancels
+					// the pending settle), so keying on `ok` alone left cached
+					// hotspots unpainted until reload. The debounced paint reads
+					// whatever is on disk, which is right for every ordering.
 					unsubFireCircuit = subscribeCircuits((c) => {
-						if (c.key === "fires" && c.state === "ok") fireHandle?.repaint();
+						if (c.key !== "fires") return;
+						clearTimeout(firePaintTimer);
+						firePaintTimer = setTimeout(() => fireHandle?.repaint(), 1300);
 					});
 
 					wallStatus = `wall ok · ${map.getStyle().layers.length} layers`;
@@ -669,6 +677,7 @@ onMount(() => {
 		detachTap?.();
 		clearInterval(satPoll);
 		stopPaintWatch?.();
+		clearTimeout(firePaintTimer);
 		unsubFireCircuit?.();
 		fireHandle?.();
 		// Revoke every photo object-URL. Without this each unmount strands
