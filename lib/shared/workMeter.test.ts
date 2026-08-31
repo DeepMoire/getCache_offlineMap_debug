@@ -1,6 +1,4 @@
-// The dl stopwatch contract: count from the ask until the user can SEE it, then freeze.
-// Each lie below shipped once (31 Aug 2026) — every row reading exactly "dl 1.0s", and
-// a settled number snapping back when a background re-bake restarted the clock.
+// The stopwatch: starts at the ask, stops when the user can SEE it. Each test is a lie that shipped.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
@@ -10,16 +8,15 @@ beforeEach(() => {
 });
 
 describe("circuit stopwatch", () => {
-	it("a settle deferred by the yellow hold records the REAL arrival time, not hold expiry", async () => {
+	it("arrival is stamped the instant it happens — no machinery between event and clock", async () => {
 		const m = await import("./workMeter.svelte");
 		m.noteCircuit("k", "transit");
 		vi.advanceTimersByTime(400);
 		m.noteCircuit("k", "ok", "bytes");
-		vi.advanceTimersByTime(700); // the 1s hold expires; the deferred write runs now
 		const c = m.circuitOf("k")!;
 		expect(c.state).toBe("ok");
-		// the hold delays the COLOUR change, never the clock — stamping at expiry made
-		// every request faster than the hold read exactly 1.0s
+		// the deleted 1s "yellow hold" deferred this write and quantized every fast
+		// download to exactly 1.0s — it must stay deleted
 		expect(c.arrivedAt! - c.askedAt!).toBe(400);
 	});
 

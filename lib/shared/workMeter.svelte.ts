@@ -90,11 +90,6 @@ const paints = new SvelteMap<string, PaintStat>();
 const probes = new SvelteMap<string, boolean>();
 const circuitListeners = new Set<(c: CircuitStat) => void>();
 
-/** Yellow (transit) is held at least TRANSIT_HOLD_MS — a settle landing inside the hold is DEFERRED until it's up; the latest settle wins. */
-const TRANSIT_HOLD_MS = 1000;
-const transitSince = new Map<string, number>();
-const pendingSettle = new Map<string, ReturnType<typeof setTimeout>>();
-
 /** Give-up horizon (Chris, 31 Aug 2026: "count down to 30 seconds and then stop…
  *  even 30 seconds is really long") — a transit still unanswered after this long is
  *  declared err so the counting badge STOPS; a late arrival still lands and un-errs
@@ -117,74 +112,40 @@ export function noteCircuit(
 	areaKey?: string,
 ): void {
 	if (focusArea && areaKey && areaKey !== focusArea) return;
+	const prev = circuits.get(key);
 	// DELIVERED-LATCH: once bytes arrived since the user's ask (resetCircuits = the pin
-	// drop), only an err or the next reset may touch this circuit. Background re-bakes
-	// and reconciles re-note transit/ok for data the user already has — letting them
-	// through restarted the stopwatch ("dl 8.9s" snapping back to "dl 1.0s") and
-	// un-arrived the bytes, flashing a delivered row back to yellow.
-	if (circuits.get(key)?.arrivedAt != null && state !== "err") return;
-	// One stamp, captured NOW — the deferred settle below must not stamp hold-expiry
-	// as the arrival: that read exactly 1.0s for every request faster than the hold.
-	const stamp = Date.now();
-	const write = () => {
-		const prev = circuits.get(key);
-		const next: CircuitStat = {
-			key,
-			state,
-			at: stamp,
-			note,
-			askedAt: state === "transit" ? stamp : (prev?.askedAt ?? null),
-			// A new ask forgets the old arrival, or the row could stay green on last time's
-			// bytes. An err un-delivers too — it clears the delivered-latch above, or a
-			// successful retry after a break could never be recorded and the row stuck red.
-			arrivedAt: state === "ok" ? stamp : (prev?.arrivedAt != null && state === "idle" ? prev.arrivedAt : null),
-		};
-		circuits.set(key, next);
-		for (const fn of circuitListeners) fn(next);
+	// drop), only an err or the next reset may touch this circuit — background re-bakes
+	// restarting the stopwatch is what made "dl 8.9s" snap back to "dl 1.0s".
+	if (prev?.arrivedAt != null && state !== "err") return;
+	// A repeat "asking…" while already yellow is the same ask — t0 stays.
+	if (state === "transit" && prev?.state === "transit") return;
+	// The write is IMMEDIATE: an event happens, its time is recorded, nothing else.
+	// (A 1s cosmetic "yellow hold" used to defer this write; the paint witness could
+	// only credit "seen" after it landed, so every fast download read exactly 1.0s.)
+	const now = Date.now();
+	const next: CircuitStat = {
+		key,
+		state,
+		at: now,
+		note,
+		askedAt: state === "transit" ? now : (prev?.askedAt ?? null),
+		// A new ask forgets the old arrival (or the row stays green on last time's
+		// bytes); an err un-delivers, so a retry after a break can measure again.
+		arrivedAt: state === "ok" ? now : null,
 	};
-	const pend = pendingSettle.get(key);
-	if (pend) {
-		clearTimeout(pend);
-		pendingSettle.delete(key);
-	}
-	if (state === "transit") {
-		// A new ask while a settle was pending: the settle is moot; restart the hold only if we weren't already yellow.
-		if (circuits.get(key)?.state !== "transit") {
-			transitSince.set(key, stamp);
-			write();
-			clearTimeout(giveUpTimers.get(key));
-			giveUpTimers.set(
-				key,
-				setTimeout(() => {
-					giveUpTimers.delete(key);
-					if (circuits.get(key)?.state === "transit")
-						noteCircuit(key, "err", `nothing after ${GIVE_UP_MS / 1000}s — gave up waiting`);
-				}, GIVE_UP_MS),
-			);
-		}
-		return;
-	}
-	// An answer of any kind (ok or err) ends the give-up watch.
-	const gu = giveUpTimers.get(key);
-	if (gu) {
-		clearTimeout(gu);
-		giveUpTimers.delete(key);
-	}
-	const since = transitSince.get(key);
-	const left = since === undefined ? 0 : TRANSIT_HOLD_MS - (stamp - since);
-	if (left > 0) {
-		pendingSettle.set(
+	circuits.set(key, next);
+	for (const fn of circuitListeners) fn(next);
+	clearTimeout(giveUpTimers.get(key));
+	giveUpTimers.delete(key);
+	if (state === "transit")
+		giveUpTimers.set(
 			key,
 			setTimeout(() => {
-				pendingSettle.delete(key);
-				transitSince.delete(key);
-				write();
-			}, left),
+				giveUpTimers.delete(key);
+				if (circuits.get(key)?.state === "transit")
+					noteCircuit(key, "err", `nothing after ${GIVE_UP_MS / 1000}s — gave up waiting`);
+			}, GIVE_UP_MS),
 		);
-		return;
-	}
-	transitSince.delete(key);
-	write();
 }
 /** Called on every circuit write — paintWatch uses it to force a repaint when bytes land, so an already-idle map still gets re-counted. */
 export function subscribeCircuits(fn: (c: CircuitStat) => void): () => void {
@@ -268,12 +229,9 @@ export function light(circuitKey: string | undefined, layerKeys: readonly string
 /** Back to grey — called the moment a pin is dropped, so circles describe THIS ask, not the last one; a drop that triggers nothing stays grey ("not even asking"). */
 export function resetCircuits(areaKey: string | null = null): void {
 	focusArea = areaKey;
-	for (const t of pendingSettle.values()) clearTimeout(t);
-	pendingSettle.clear();
 	// Stale give-up timers must die with the old ask, or one could red-out the NEXT ask early.
 	for (const t of giveUpTimers.values()) clearTimeout(t);
 	giveUpTimers.clear();
-	transitSince.clear();
 	circuits.clear();
 	paints.clear();
 }
