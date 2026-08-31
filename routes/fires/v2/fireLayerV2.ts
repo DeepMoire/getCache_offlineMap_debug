@@ -1,33 +1,13 @@
 /**
- * fireLayerV2 — the wildfire layer, rebuilt around one rule.
+ * fireLayerV2 — the wildfire layer.
  *
- * ══════════════════════════════════════════════════════════════════════════
- * THE RULE: PAINT IS `setData`. NOTHING ELSE.
- * ══════════════════════════════════════════════════════════════════════════
+ * PAINT IS `setData` AND NOTHING ELSE. No geometry on the paint path, ever —
+ * the Worker did that work (`fireFetchV2.ts`). Reintroducing a union, a hull or
+ * a clone here is what made v1 unusable.
  *
- * v1's paint path did, on every pan: a union across all cached discs, a
- * supersede test per (detection × newer disc), a convex-hull rebuild over
- * 12,197 cells, an urban classification pass, and a defensive deep clone of the
- * whole FeatureCollection. A Performance profile of an IDLE page put
- * `paintInner` at **63.6% of total main-thread time**, with `kmBetween` alone
- * at 30.1%, and the tab reached ~4,000 MB before crashing.
- *
- * Here, paint reads three strings off disk, `JSON.parse`s them, and calls
- * `setData` three times. There is no geometry step to get slow, so there is
- * nothing to memoize and nothing to accidentally run per-frame later. The
- * Worker did the work — see `fireFetchV2.ts`.
- *
- * ── WHAT IS IDENTICAL TO V1, ON PURPOSE ──
- * Same layer ids, same colours, same zoom gates, same cluster aggregation, same
- * tap card. A planter must not be able to tell which version is running. Every
- * constant below was tuned against a real field complaint, and each one carries
- * the reason it has the value it has.
- *
- * ── WHAT CHANGED, AND WHY IT IS SAFE ──
- * Clustering still uses Mapbox's NATIVE `cluster: true`, which runs in the GL
- * worker and was never the bottleneck. The Worker's own cluster payload is used
- * only for the zoomed-OUT tiers where shipping every point would be wasteful.
- * The outline arrives as finished polygons instead of being hulled on-device.
+ * Layer ids, colours, zoom gates, cluster aggregation and the tap card must
+ * stay indistinguishable from v1 — a planter cannot be able to tell which
+ * version is running. Every constant below was tuned against a field complaint.
  */
 
 import type * as mapboxgl from "mapbox-gl";
@@ -70,30 +50,23 @@ export const OFFLINE_FIRE_V2_IDS: FireLayerV2Ids = {
 };
 
 /**
- * Zoom at which fire outlines appear.
- *
- * ⛔ THIS IS A TREE-PLANTING APP. The outline is the most "fire app" looking
- * thing on the map, so it gets the strictest gate here.
- *
- * 11 was tried first, reasoning the line should appear with the first single
- * flames. Wrong in practice: at z11 you are surveying a region, and a screen of
- * scattered red polygons over ground you are not standing on reads as
- * pollution. 13 is block scale — the only zoom at which "is the fire inside
- * this line" is a question anyone is actually asking. Nothing is lost by
- * waiting; dots and cluster circles carry the warning at every zoom.
+ * The outline is the most "fire app" looking thing on the map, so it gets the
+ * strictest gate. z11 was tried and rejected: at survey zoom a screen of
+ * scattered red polygons reads as pollution. 13 is block scale — where "is the
+ * fire inside this line" is a question anyone is asking. Dots and clusters
+ * carry the warning at every zoom, so nothing is lost by waiting.
  */
 const OUTLINE_MIN_ZOOM = 13;
 
-/** CONTEXT accent (--palette-terracotta). NEVER red for dots: in this design
- *  system red means a destructive action (the ghost/dismiss colour law), and a
- *  hotspot is information, not a button. */
+/** CONTEXT accent (--palette-terracotta). NEVER red: red is the
+ *  destructive-action colour, and a hotspot is information, not a button. */
 const FIRE_DOT = "#b36940";
 /** The hot end of the intensity ramp — terracotta-hint. Still not red;
  *  severity is a warmer step within the same family. */
 const FIRE_HOT = "#d18a5e";
-/** The ONE red in this layer: the outline. Every wildfire agency draws a fire
- *  boundary in this colour (BC Wildfire included), and matching the convention
- *  is what makes the shape legible at a glance. It is not a control. */
+/** The ONE red in this layer. Wildfire agencies (BC Wildfire included) draw
+ *  boundaries in this colour; matching the convention is what makes the shape
+ *  legible at a glance. */
 const FIRE_OUTLINE_RED = "#d9422b";
 
 /** The flame glyph, registered by the host map's icon loader under this name. */
@@ -115,9 +88,8 @@ export interface AttachFireV2Options {
 	readonly ids?: FireLayerV2Ids;
 	/**
 	 * FALSE for the offline viewer. The app-wide bake service owns every
-	 * download; a second downloader racing it would double-fetch and fight over
-	 * the same cache entries. Passing this is what keeps that true, rather than
-	 * a comment asking nicely.
+	 * download; a second downloader racing it double-fetches and fights over the
+	 * same cache entries.
 	 */
 	readonly canFetch?: boolean;
 	/** Called after a paint that changed what is on screen, with the disc that
@@ -127,8 +99,7 @@ export interface AttachFireV2Options {
 
 export interface FireLayerV2Handle {
 	(): void;
-	/** Force a repaint from disk — for a legend toggle or a bake-generation bump.
-	 *  Cheap by construction: three `setData` calls, no recomputation. */
+	/** Force a repaint from disk — for a legend toggle or a bake-generation bump. */
 	repaint: () => void;
 }
 
@@ -149,9 +120,8 @@ function addFireV2Layers(map: mapboxgl.Map, ids: FireLayerV2Ids): void {
 		layout: { "line-join": "round", "line-cap": "round" },
 		paint: {
 			"line-color": FIRE_OUTLINE_RED,
-			// Thin and UNFILLED: a pencil line, not a hazard zone. A filled shape
-			// would read as a surveyed perimeter, which this is not — it is a hull
-			// around satellite pixels, and claiming more would be dishonest.
+			// Thin and UNFILLED: a filled shape reads as a surveyed perimeter. This
+			// is a hull around satellite pixels; claiming more would be dishonest.
 			"line-width": [
 				"interpolate",
 				["linear"],
@@ -178,7 +148,6 @@ function addFireV2Layers(map: mapboxgl.Map, ids: FireLayerV2Ids): void {
 	});
 
 	// ── DETECTIONS ── native Mapbox clustering, which runs in the GL worker.
-	// This was never the slow part of v1 and is kept exactly as it was.
 	map.addSource(ids.src, {
 		type: "geojson",
 		data: EMPTY_FC,
@@ -186,9 +155,8 @@ function addFireV2Layers(map: mapboxgl.Map, ids: FireLayerV2Ids): void {
 		clusterRadius: 50,
 		clusterMaxZoom: 11,
 		// Clusters do not inherit properties — they must be aggregated explicitly.
-		// MAX, never a sum: colour tracks the single worst fire inside. Merging
-		// many mild fires must not make a cluster read as an inferno; that would
-		// be the map lying.
+		// MAX, never a sum: colour tracks the single worst fire inside, so many
+		// mild fires cannot make a cluster read as an inferno.
 		clusterProperties: {
 			// Industrial FRP is excluded from the heat: a flare stack burning at a
 			// steady 40 MW must not colour the wildfire beside it.
@@ -207,14 +175,11 @@ function addFireV2Layers(map: mapboxgl.Map, ids: FireLayerV2Ids): void {
 		},
 	});
 
-	// Cluster circles: gentle growth with count. "A lot over there", never a
-	// hazard banner covering the block.
-	//
-	// The v1 ramp topped out at 24 px / 0.72 opacity and produced blobs that
-	// swallowed whole valleys at regional zoom — the map read as a fire app
-	// rather than a planting app. Capped at 15 px / 0.55 so terrain, roads and
-	// the user's own pins read straight through. The COUNT carries magnitude;
-	// the circle does not have to shout it too.
+	// Gentle growth with count: "a lot over there", never a hazard banner over
+	// the block. Capped at 15 px / 0.55 so terrain, roads and the user's pins
+	// read straight through — a wider ramp swallows whole valleys at regional
+	// zoom and the map stops looking like a planting app. The COUNT carries
+	// magnitude; the circle does not have to shout it too.
 	map.addLayer({
 		id: ids.cluster,
 		type: "circle",
@@ -273,10 +238,8 @@ function addFireV2Layers(map: mapboxgl.Map, ids: FireLayerV2Ids): void {
 			"icon-ignore-placement": true,
 		},
 		paint: {
-			// An industrial detection is dimmed, never hidden. Suppressing it
-			// outright would be a claim we cannot support from a satellite pixel;
-			// dimming says "we think this is a flare stack" and lets the user
-			// decide. Failing toward SHOWING is the right direction for a hazard.
+			// Dimmed, never hidden — suppressing outright is a claim a satellite
+			// pixel cannot support. For a hazard, fail toward SHOWING.
 			"icon-opacity": [
 				"case",
 				["==", ["coalesce", ["get", "ind"], 0], 1],
@@ -288,13 +251,8 @@ function addFireV2Layers(map: mapboxgl.Map, ids: FireLayerV2Ids): void {
 }
 
 /**
- * THE PAINT. Three `setData` calls and nothing else.
- *
- * Metered so the WORK panel counts fire paints. In v1 this same meter read
- * `fire paint 10 · 26ms`; the cost was never the meter, it was everything
- * `paintInner` did before reaching `setData`.
- *
- * Returns the disc that supplied the pixels, or null when nothing is cached.
+ * Three `setData` calls and nothing else. Metered so the WORK panel counts fire
+ * paints. Returns the disc that supplied the pixels, or null when none is cached.
  */
 async function paintV2(
 	map: mapboxgl.Map,
@@ -305,9 +263,8 @@ async function paintV2(
 	const done = beginWork("fire paint");
 	try {
 		const disc = await readFireDisc(fireDiscKey(center));
-		// The map can be destroyed during that await — a route change disposes it
-		// while the IndexedDB read is in flight. The guard taken on ENTRY would be
-		// stale here, which is exactly the crash v1 shipped:
+		// A route change can dispose the map while the IndexedDB read is in flight,
+		// so the guard taken on ENTRY is stale here:
 		//   TypeError: Cannot read properties of undefined (reading 'getOwnSource')
 		// Re-check liveness AFTER every await, never before.
 		if (!isLive()) return null;
@@ -324,11 +281,9 @@ async function paintV2(
 			return null;
 		}
 
-		// `JSON.parse` of a stored string yields a plain object with no `$state`
-		// proxies — which is precisely what the GL worker boundary needs (proxies
-		// corrupt the transfer and features silently vanish). v1 needed a
-		// defensive deep clone on every paint; here the stored form is already
-		// safe, so this is a parse and not a parse-then-clone.
+		// Parsing a stored string yields a plain object with no `$state` proxies,
+		// which is what the GL worker boundary needs — a proxy corrupts the
+		// transfer and the features silently vanish.
 		src.setData(JSON.parse(disc.pointsJson) as GeoJSON.FeatureCollection);
 		outlineSrc.setData(
 			JSON.parse(disc.outlinesJson) as GeoJSON.FeatureCollection,
@@ -363,18 +318,16 @@ export function attachFireLayerV2(
 		const c = map.getCenter();
 		const centre: [number, number] = [c.lng, c.lat];
 
-		// Which stored disc covers where we are LOOKING? Answered from the LIGHT
-		// index — centres and times only, never payloads. v1 answered this same
-		// question by loading full records and a profile put that read at 616 MB.
+		// Which stored disc covers where we are LOOKING? Answer from the LIGHT
+		// index — centres and times only. Loading full records to decide this cost
+		// 616 MB.
 		const index = await fireDiscIndex();
 		if (!isLive()) return;
 		let best: { key: string; center: readonly [number, number] } | null = null;
 		let bestKm = Number.POSITIVE_INFINITY;
 		for (const d of index) {
-			// One distance call per STORED DISC — tens of them, once per pan. This
-			// is the only distance arithmetic left in the v2 fire path, and it is
-			// bounded by the disc count, never by the detection count. v1's
-			// equivalent ran per (detection × disc) and measured 7,982 ms.
+			// The only distance arithmetic left on this path, and it must stay
+			// bounded by the DISC count — per (detection × disc) measured 7,982 ms.
 			const km = kmBetween(centre, [d.center[0], d.center[1]]);
 			if (km < bestKm && km < FIRE_TRIGGER_KM) {
 				bestKm = km;
@@ -392,10 +345,8 @@ export function attachFireLayerV2(
 			vlog("fire", "offline — showing cached disc, no fetch attempted");
 			return;
 		}
-		// Fetching is owned by the bake service in v2 as well; the online map's
-		// job is to render what is on disk and say so. A map that downloads is a
-		// second downloader racing the first, which is the bug `canFetch` exists
-		// to prevent — kept as a single code path rather than two.
+		// No fetch here by design: the bake service owns every download, and a map
+		// that downloads races it.
 	};
 
 	void ensure();
