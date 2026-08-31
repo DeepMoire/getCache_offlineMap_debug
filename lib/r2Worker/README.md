@@ -39,11 +39,11 @@ A resolver asked about a hostname before it existed caches NXDOMAIN for up
 to 30 min. `dig +short tiles-prod.getcache.org @1.1.1.1` is the truth; if it
 prints IPs and your own resolver doesn't, wait it out.
 
-## Two folders — `local_dev/` and `r2_prod/`
+## Three folders — `local_dev/`, `r2_dev/` and `r2_prod/`
 
 ⛔ **Do not delete or merge them because they look identical.** `local_dev/`
-is what the app imports and what you edit; `r2_prod/` is the copy that
-matches what is deployed. Same code at two moments in time — the gap is time,
-not content. `r2WorkerEnvironments.test.ts` fails if either goes missing; fix
-the folder, not the test. Renaming means updating every import
-(`rg -l r2Worker`).
+is what the app imports and what you edit; `r2_dev/` and `r2_prod/` are the
+copies that match what each cloud tier serves. Same code at three moments in
+time — the gap is time, not content. `r2WorkerEnvironments.test.ts` fails if
+any goes missing; fix the folder, not the test. Renaming means updating every
+import (`rg -l r2Worker`).

@@ -31,12 +31,14 @@ describe("worker tiers", () => {
 		expect(m.DEFAULT_TARGET).toBe("localDev");
 	});
 
-	it("keeps both r2Worker copies byte-identical on the tier definition", async () => {
-		const [a, b] = await Promise.all([
+	it("keeps every r2Worker copy identical on the tier surface", async () => {
+		const [a, b, c] = await Promise.all([
 			import("./local_dev/tilesHost"),
+			import("./r2_dev/tilesHost"),
 			import("./r2_prod/tilesHost"),
 		]);
-		// ⛔ local_dev/ and r2_prod/ must export the same tier surface — a tier added to only one is the drift this catches.
+		// ⛔ all three copies must export the same tier surface — a tier added to only one is the drift this catches.
 		expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
+		expect(Object.keys(a).sort()).toEqual(Object.keys(c).sort());
 	});
 });
