@@ -67,6 +67,21 @@ describe("circuit stopwatch", () => {
 		expect(m.circuitOf("k")!.askedAt).toBe(Date.now());
 	});
 
+	it("settles to '0 in view' when an idle AFTER arrival counts zero — never before", async () => {
+		const m = await import("./workMeter.svelte");
+		m.notePaint("layer", "feed", 0); // a count from BEFORE the ask proves nothing
+		m.noteCircuit("feed", "transit");
+		vi.advanceTimersByTime(2000);
+		m.noteCircuit("feed", "ok");
+		expect(m.light("feed", ["layer"]).settledEmpty).toBe(false);
+		// the post-arrival idle counted zero: the area holds none — freeze, don't count forever
+		vi.advanceTimersByTime(100);
+		m.notePaint("layer", "feed", 0);
+		const l = m.light("feed", ["layer"]);
+		expect(l.state).toBe("ok");
+		expect(l.settledEmpty).toBe(true);
+	});
+
 	it("light() reports seenMs = ask → first sighting on screen", async () => {
 		const m = await import("./workMeter.svelte");
 		m.noteCircuit("feed", "transit");
