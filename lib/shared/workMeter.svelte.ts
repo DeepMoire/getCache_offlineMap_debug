@@ -206,6 +206,11 @@ export interface Light {
 	paintLagMs: number | null;
 	/** ms from ask to first sighting on SCREEN — the user's whole wait; null until drawn. */
 	seenMs: number | null;
+	/** true when bytes arrived and a LATER idle counted ZERO of this row's features —
+	 *  the wait may never end because the area holds none. The row should say so
+	 *  instead of counting forever (an eternal "dl 43s…" sends readers hunting a
+	 *  phantom rendering bug). */
+	settledEmpty?: boolean;
 }
 /** THE COLOUR OF A ROW. The feed's download state, promoted to `drawn` (green) ONLY when at least one of `layerKeys` was painted after the feed's current arrival. `ok` stays yellow: bytes on disk are not pixels on screen. */
 export function light(circuitKey: string | undefined, layerKeys: readonly string[]): Light {
@@ -219,7 +224,15 @@ export function light(circuitKey: string | undefined, layerKeys: readonly string
 		const p = paints.get(k);
 		if (p?.drawnAt != null && circuit.arrivedAt != null && p.drawnAt >= circuit.arrivedAt && (!paint || p.drawnAt < paint.drawnAt!)) paint = p;
 	}
-	if (!paint) return { state: "ok", circuit, transitMs, paintLagMs: null, seenMs: null };
+	if (!paint) {
+		let settledEmpty = false;
+		if (circuit.arrivedAt != null)
+			for (const k of layerKeys) {
+				const p = paints.get(k);
+				if (p && p.at >= circuit.arrivedAt) settledEmpty = true;
+			}
+		return { state: "ok", circuit, transitMs, paintLagMs: null, seenMs: null, settledEmpty };
+	}
 	return {
 		state: "drawn",
 		circuit,

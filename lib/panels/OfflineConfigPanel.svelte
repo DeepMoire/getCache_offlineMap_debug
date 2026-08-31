@@ -110,6 +110,10 @@ function circTitle(what: string, l: Light): string {
  * a settled number before green: that read "dl 1.8s" over a map with no blob on it. */
 const dlWords = (l: Light): string => {
 	if (l.state === "drawn") return l.seenMs == null ? "" : `dl ${secs(l.seenMs)}`;
+	// Arrived, and an idle since counted ZERO in view — the count would never end
+	// (the area holds none of this feature), so freeze at the download time and say why.
+	if (l.state === "ok" && l.settledEmpty && l.transitMs != null)
+		return `dl ${secs(l.transitMs)} · 0 in view`;
 	if (l.state === "transit" || l.state === "ok")
 		return l.circuit?.askedAt == null ? "dl …" : `dl ${secs(now - l.circuit.askedAt)}…`;
 	return "";

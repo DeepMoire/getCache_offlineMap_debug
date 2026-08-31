@@ -148,10 +148,16 @@ the online child.
 
 6. **FIRES RENDER IS A NO-OP.** The Fires switch renders and clicks but its
    `ids` array is empty (`lib/onPhone/render/wallLegend.ts`) — no fire layer is
-   mounted. The fetch/store half runs (`FIRE_REFRESH_ENABLED = true` in
-   `lib/shared/bakeFlags.ts`), and `routes/fires/v2/fireLayerV2.ts` exists but
-   nothing imports it yet. Done = that switch turns real fire features on and
-   off.
+   mounted, so the CONFIG row shows dead with a "not yet" tag. The fetch/store
+   half runs (`FIRE_REFRESH_ENABLED = true` in `lib/shared/bakeFlags.ts`), and
+   `routes/fires/v2/fireLayerV2.ts` exists but nothing imports it yet. Also:
+   the Worker's `/fires` route needs a NASA FIRMS Area API key (a Worker
+   secret; free at firms.modaps.eosdis.nasa.gov) — the local_dev sample setup
+   ships none, so expect `/fires` to fail until you add one with
+   `wrangler secret put`. Done = that switch turns real fire features on and
+   off. Hospitals and Places are NOT in this bucket — they already ride in the
+   `/pack` blob per pin (see `lib/contract/packLayers.ts`); a row reading
+   "dl Ns · 0 in view" means the download worked and the area simply has none.
 
 7. **THE WORKER TRUSTS EVERYONE.** Every request to `tiles-prod` is anonymous —
    the app has no more standing than a stranger's `curl`, so a third party
@@ -170,21 +176,14 @@ the online child.
 
 ## Test baseline — what red is NORMAL
 
-`npm test` here (30 Aug 2026): 8 files / 36 tests fail, 41 skip. Anything
+`npm test` here (31 Aug 2026): 4 files / 27 tests fail, 41 skip. Anything
 else is yours.
 
 - `lib/onPhone/bake/bakeService.test.ts` ×25, `lib/mapState/lastMapRoute.svelte.test.ts`,
   `lib/mapState/overlayRenderCacheKey.test.ts` — `$state is not defined`: this
   repo's bare vitest has no Svelte plugin, so rune files only run under a
   parent's suite
-- `routes/fires/fireCache.test.ts` ×2 — perf assertions (trig-call counts)
-- `routes/fires/v2/fireCostV2.test.ts` ×4 — v2 render layer not landed
 - `lib/onPhone/offlineDownloadGate.test.ts` ×2 — prompt-count assertions
-- `lib/panels/workerFallback.test.ts` ×2 — asserts `routes/+layout.svelte`
-  names `configureTilesDevHost` / `VITE_TILES_DEV_HOST` literally; the layout
-  now calls `configureTilesFromEnv()`, which does both. The test is stale.
-- `lib/r2Worker/r2WorkerEnvironments.test.ts` — `tilesFromEnv.ts` exists only
-  in `local_dev/`, not `r2_prod/`
 - `routes/fires/masks/urbanExclusion.test.ts` SKIPS until `./fetchAssets.sh`
   has run (needs `static/mobileAssets/worldBase/`)
 

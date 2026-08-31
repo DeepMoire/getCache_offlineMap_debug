@@ -409,6 +409,13 @@ const layers = $derived(
 		hint: t.hint,
 		on: layerOn[t.key],
 		toggle: () => toggleLayer(t.key, t.ids),
+		// ids: [] = the switch can show/hide nothing (fires, until attachFireLayer
+		// lands) — render it dead rather than let it pretend. README open-question 6.
+		disabled: t.ids.length === 0,
+		disabledHint:
+			t.ids.length === 0
+				? `${t.label} isn't drawn on this route yet — the switch has no layers to flip (README: "FIRES RENDER IS A NO-OP")`
+				: undefined,
 	})),
 );
 

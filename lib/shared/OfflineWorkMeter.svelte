@@ -448,7 +448,7 @@ function fmtKb(kb: number): string {
 					no bake pass has run yet
 				</div>
 				<div class="foot">
-					<span class="dim">run counts</span>
+					<span class="dim">DROP PIN TO START · LONG PRESS ON MAP</span>
 					<button onclick={resetWorkStats}>clear counts</button>
 				</div>
 			{:else}
@@ -457,8 +457,8 @@ function fmtKb(kb: number): string {
 						{#each rows as r (r.name)}
 							<tr class:hot={r.startedAt !== null}>
 								<td class="name">{r.name}</td>
-								<td class="num">{r.runs}</td>
-								<td class="num">{secs(r.lastMs)}</td>
+								<td class="num" title="runs">{r.runs}</td>
+								<td class="num" title="last run">{secs(r.lastMs)}</td>
 								<td class="num dim" title="worst run">{secs(r.maxMs)}</td>
 								<td class="flags">
 									{#if r.startedAt !== null}
@@ -484,7 +484,7 @@ function fmtKb(kb: number): string {
 					</tbody>
 				</table>
 				<div class="foot">
-					<span class="dim">runs · last · worst</span>
+					<span class="dim">DROP PIN TO START · LONG PRESS ON MAP</span>
 					<button onclick={resetWorkStats}>reset</button>
 				</div>
 			{/if}
