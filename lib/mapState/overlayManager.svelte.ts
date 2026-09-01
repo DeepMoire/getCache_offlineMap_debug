@@ -6,8 +6,8 @@ import type {
 } from "../shared/mapHostPorts";
 import { overlayOpacity } from "./overlayOpacity.svelte";
 import { overlayVisibility } from "./overlayVisibility.svelte";
-import type { Coord } from "$parent/siblings/getCache_OnlineMap/lib/coord";
-import { toCoord } from "$parent/siblings/getCache_OnlineMap/lib/coord";
+import type { Coord } from "@ground-truth/getcache-onlinemap/lib/coord";
+import { toCoord } from "@ground-truth/getcache-onlinemap/lib/coord";
 
 /** Mapbox corner order [TL,TR,BR,BL]; a null slot means non-finite/out-of-range input (NaN defence) — caller skips the overlay. */
 type OverlayQuad = [Coord | null, Coord | null, Coord | null, Coord | null];
@@ -105,7 +105,7 @@ export function createOverlayManager(
 		if (!m) return;
 		const targetMapKey = mapStore.activeMap?.mapKey ?? null;
 		const features = activeOverlayFeatures();
-		const overlay = await import("$parent/siblings/getCache_OnlineMap/lib/mobMapOverlay");
+		const overlay = await import("@ground-truth/getcache-onlinemap/lib/mobMapOverlay");
 		overlay.removeMapOverlay(m);
 		activeOverlay = null;
 		if (features.length === 0) return;
@@ -130,7 +130,7 @@ export function createOverlayManager(
 
 	async function mountOverlayFeature(
 		m: MapboxMap,
-		overlay: typeof import("$parent/siblings/getCache_OnlineMap/lib/mobMapOverlay"),
+		overlay: typeof import("@ground-truth/getcache-onlinemap/lib/mobMapOverlay"),
 		feature: MapSessionFeature,
 		slot: string | undefined,
 		targetMapKey: string | null,
@@ -191,7 +191,7 @@ export function createOverlayManager(
 						});
 					}
 					// Wait for the WebP to actually PAINT before hiding the waiting box — hiding on addMapOverlay's resolve (source added, image still decoding) flashes blank basemap.
-					void import("$parent/siblings/getCache_OnlineMap/lib/mobMapWaitingBox").then(
+					void import("@ground-truth/getcache-onlinemap/lib/mobMapWaitingBox").then(
 						({ hideWaitingBoxOnceRendered }) => hideWaitingBoxOnceRendered(m),
 					);
 				}
@@ -242,7 +242,7 @@ export function createOverlayManager(
 		}
 		try {
 			const overlay = await import(
-				"$parent/siblings/getCache_OnlineMap/lib/mobMapOverlay"
+				"@ground-truth/getcache-onlinemap/lib/mobMapOverlay"
 			);
 			const swapped = await overlay.swapMapOverlayImage(m, {
 				key: feature.overlayStorageKey,
@@ -280,7 +280,7 @@ export function createOverlayManager(
 			const m = getMap();
 			if (!m) return;
 			// Reads the CURRENT store value (not reactive) — the host's `$effect` owns the reactive read and re-fires this on change.
-			void import("$parent/siblings/getCache_OnlineMap/lib/mobMapOverlay").then(
+			void import("@ground-truth/getcache-onlinemap/lib/mobMapOverlay").then(
 				(overlay) => overlay.setMapOverlayVisibility(m, overlayVisibility.pdf),
 			);
 		},
@@ -293,7 +293,7 @@ export function createOverlayManager(
 			// Applier pattern, not a reactive read — cross-module Svelte rune tracking is flaky.
 			// Applies to EVERY mounted overlay — one slider governs all sheets, matching the single MAP OPACITY control.
 			return overlayOpacity.register((opacity) => {
-				void import("$parent/siblings/getCache_OnlineMap/lib/mobMapOverlay").then(
+				void import("@ground-truth/getcache-onlinemap/lib/mobMapOverlay").then(
 					(overlay) => overlay.setMapOverlayOpacity(m, opacity),
 				);
 			});
@@ -330,7 +330,7 @@ export function createOverlayManager(
 		showWaiting(corners) {
 			const m = getMap();
 			if (!m) return;
-			void import("$parent/siblings/getCache_OnlineMap/lib/mobMapWaitingBox").then(
+			void import("@ground-truth/getcache-onlinemap/lib/mobMapWaitingBox").then(
 				({ showWaitingBox }) => {
 					const map = getMap();
 					if (map) showWaitingBox(map, corners);
@@ -340,7 +340,7 @@ export function createOverlayManager(
 		hideWaiting() {
 			const m = getMap();
 			if (!m) return;
-			void import("$parent/siblings/getCache_OnlineMap/lib/mobMapWaitingBox").then(
+			void import("@ground-truth/getcache-onlinemap/lib/mobMapWaitingBox").then(
 				({ hideWaitingBox }) => {
 					const map = getMap();
 					if (map) hideWaitingBox(map);

@@ -2,8 +2,8 @@ import * as Sentry from "@sentry/sveltekit";
 import type { Feature } from "geojson";
 import mapboxgl from "mapbox-gl";
 import type { Map as MapboxMap } from "mapbox-gl";
-import { getAreaLabelRects } from "$parent/siblings/getCache_OnlineMap/lib/areaLabels";
-import { isFiniteCoord } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
+import { getAreaLabelRects } from "@ground-truth/getcache-onlinemap/lib/areaLabels";
+import { isFiniteCoord } from "@ground-truth/getcache-onlinemap/lib/safeMap";
 // Pins render on BOTH Mapbox (online) and MapLibre (offline /mobile/offlinev4) — a Mapbox Marker attached to a MapLibre map throws and takes the whole map down.
 // plotByGpsKey arrives via the optional ports.q704 — absent on hosts without inspections, so callers must optional-chain it.
 import { markerCtor } from "../shared/rendererOf";

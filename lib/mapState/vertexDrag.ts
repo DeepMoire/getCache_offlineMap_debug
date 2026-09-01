@@ -10,9 +10,9 @@ import type { Feature } from "geojson";
 import {
     buildCompletedFC,
     type Lnglat,
-} from "$parent/siblings/getCache_OnlineMap/lib/mapDraw";
-import { syncAreaLabels } from "$parent/siblings/getCache_OnlineMap/lib/areaLabels";
-import { isFiniteLngLat } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
+} from "@ground-truth/getcache-onlinemap/lib/mapDraw";
+import { syncAreaLabels } from "@ground-truth/getcache-onlinemap/lib/areaLabels";
+import { isFiniteLngLat } from "@ground-truth/getcache-onlinemap/lib/safeMap";
 import type { MapHostStore as MapStore } from "../shared/mapHostPorts";
 
 type GeomKind = "LineString" | "Polygon";

@@ -22,7 +22,7 @@
  * precisely the person this is for.
  *
  * WHAT IS ALLOWED
- * The alias. `$parent/siblings/...` names no parent — it is a seam each parent fills
+ * The package name. `@ground-truth/<child>/...` names no parent — the workspace resolves it
  * in for itself, which is the whole mechanism. And this child's OWN name may
  * contain "ReTreever" (ReTreever_who_what), so a bare match on the word is
  * wrong; what is banned is naming a parent as a LOCATION.
@@ -181,14 +181,14 @@ describe("the child names no parent", () => {
 				`side on one machine, it DOES resolve. It stops resolving the ` +
 				`moment this folder is published on its own, which is the point ` +
 				`of the folder.\n\n` +
-				`Reach a parent through the alias ($parent/siblings/...), or take what you ` +
+				`Import a sibling by its package name (@ground-truth/<child>/...), or take what you ` +
 				`need as a prop. Never by name.`,
 		).toEqual([]);
 	});
 
 	it("the check bites — a parent-named path is detected", () => {
 		// Without this, a broken regex silently passes everything above.
-		const ok = 'import x from "$parent/siblings/getCache_OnlineMap/lib/foo";';
+		const ok = 'import x from "@ground-truth/getcache-onlinemap/lib/foo";';
 		expect([...ok.matchAll(PARENT_AS_LOCATION)].length).toBe(0);
 
 		/**
