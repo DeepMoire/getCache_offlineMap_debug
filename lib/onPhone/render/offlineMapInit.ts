@@ -3,7 +3,7 @@
  *
  * ── WHY A SEPARATE INITIALIZER ───────────────────────────────────────────
  *
- * The online map keeps using Mapbox (`@ground-truth/getcache-onlinemap/lib/mapInit`,
+ * The online map keeps using Mapbox (`$parent/siblings/getCache_OnlineMap/lib/mapInit`,
  * 842 lines) because it genuinely needs Mapbox-only features: globe
  * projection, `setTerrain`, `setFog`, Mapbox-hosted styles, the hospital layer.
  *
