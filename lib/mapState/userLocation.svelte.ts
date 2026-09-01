@@ -3,7 +3,7 @@ import mapboxgl from "mapbox-gl";
 import { toast } from "svelte-sonner";
 import { Capacitor } from "@capacitor/core";
 import { Geolocation } from "@capacitor/geolocation";
-import { safeFlyTo } from "@ground-truth/getcache-onlinemap/lib/safeMap";
+import { safeFlyTo } from "$parent/siblings/getCache_OnlineMap/lib/safeMap";
 import type { MapHostPorts } from "../shared/mapHostPorts";
 
 const isNative = Capacitor.isNativePlatform();
