@@ -18,6 +18,7 @@ bucket_name = "offline-tiles"
 [vars]
 PMTILES_KEY = "planet.pmtiles"
 PACK_PMTILES_KEY = "planet.pmtiles"
+HOSPITALS_KEY = "hospitals-world.v1.pack"
 
 [env.dev]
 name = "offline-tiles-dev"
@@ -32,5 +33,6 @@ bucket_name = "offline-tiles"
 [env.dev.vars]
 PMTILES_KEY = "planet.pmtiles"
 PACK_PMTILES_KEY = "planet.pmtiles"
+HOSPITALS_KEY = "hospitals-world.v1.pack"
 
 # ⚠️ a staging Worker (offline-tiles-staging) may still exist in Cloudflare — deleting config never tears down a live Worker.

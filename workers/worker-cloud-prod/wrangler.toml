@@ -12,10 +12,13 @@ routes = [
 binding = "TILES"
 bucket_name = "offline-tiles"
 
-# ⚠️ PMTILES_KEY / PACK_PMTILES_KEY must match the uploaded object key in the bucket.
+# ⚠️ PMTILES_KEY / PACK_PMTILES_KEY must match the uploaded object key in the
+# bucket — a mismatch silently reads as "no tiles". Comma-separated list allowed;
+# `wrangler dev` overrides these with the generated .dev.vars (setupLocalTiles.sh).
 [vars]
 PMTILES_KEY = "planet.pmtiles"
 PACK_PMTILES_KEY = "planet.pmtiles"
+HOSPITALS_KEY = "hospitals-world.v1.pack"
 
 [env.dev]
 name = "offline-tiles-dev"
@@ -30,5 +33,6 @@ bucket_name = "offline-tiles"
 [env.dev.vars]
 PMTILES_KEY = "planet.pmtiles"
 PACK_PMTILES_KEY = "planet.pmtiles"
+HOSPITALS_KEY = "hospitals-world.v1.pack"
 
 # ⚠️ a staging Worker (offline-tiles-staging) may still exist in Cloudflare — deleting config never tears down a live Worker.

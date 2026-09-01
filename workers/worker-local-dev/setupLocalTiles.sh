@@ -117,6 +117,15 @@ for entry in $SAMPLES; do
 	KEYS="${KEYS:+$KEYS,}$file"
 done
 
+# World hospitals pack (workers/bakeHospitals.mjs output) — /hospitals answers
+# a loud 502 without it; tiles and packs are unaffected.
+if [ -f "../hospitals-world.v1.pack" ]; then
+	echo "Loading hospitals-world.v1.pack into the LOCAL R2 simulator…"
+	npx wrangler r2 object put "$BUCKET/hospitals-world.v1.pack" --file ../hospitals-world.v1.pack --local
+else
+	echo "ℹ️ no ../hospitals-world.v1.pack — /hospitals will 502 locally (bake it with: node ../bakeHospitals.mjs)"
+fi
+
 # `wrangler dev` reads .dev.vars over wrangler.toml [vars] — so the keys the
 # Worker serves are exactly the samples this run uploaded, defined once, here.
 cat > .dev.vars <<EOF

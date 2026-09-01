@@ -28,3 +28,9 @@ secrets/
 # Cloudflare Workers local secrets + state.
 .dev.vars
 .wrangler/
+
+# ── World hospitals bake (workers/bakeHospitals.mjs) ─────────────────────────
+# The pack's home is the offline-tiles bucket, not git; the region cache is a
+# resumable download scratch (~100 MB).
+workers/hospitals-world.v*.pack
+workers/.bake-cache/

@@ -77,6 +77,14 @@ export function firesUrl(): string | null {
 	return h === null ? null : `${h}/fires`;
 }
 
+/** Full /hospitals URL for one anchor — the online map's world hospital layer.
+ *  The child receives this READY-MADE (mapTypes.ts `hospitalsUrl` option):
+ *  route names and hosts are ours, never baked into a published child. */
+export function hospitalsUrl(lng: number, lat: number): string | null {
+	const h = tilesHost();
+	return h === null ? null : `${h}/hospitals?lng=${lng}&lat=${lat}`;
+}
+
 export const TILES_HOST_LABEL = "see tilesHost()";
 
 // ⚠️ probe with an OPTIONS preflight — never /bench as a liveness check (500 range reads by default).

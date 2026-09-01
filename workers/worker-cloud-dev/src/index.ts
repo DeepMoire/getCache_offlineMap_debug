@@ -14,22 +14,35 @@ import {
   MAX_RADIUS_KM,
 } from "../../../lib/worker/firesWorker"; // beside fireFetch.ts, same repo
 import { buildPack } from "./packBuilder";
+import {
+  cellKeysForDisc,
+  HOSPITAL_RADIUS_KM,
+  type HospitalEntry,
+  hospitalsCollection,
+  type HospitalsIndex,
+} from "./hospitals";
 
 /** Bump whenever the PACK CONTENTS change. Part of the edge cache key, so a
  *  new build can never be masked by a year-old immutable cache entry. */
-const PACK_BUILD = "v32-pack-layers-contract-points";
+const PACK_BUILD = "v33-oob-pin-guard";
 
 interface Env {
   /** R2 bucket binding (see wrangler.toml [[r2_buckets]]). */
   TILES: R2Bucket;
-  /** Object key of the .pmtiles archive the /{z}/{x}/{y}.pbf tile route reads. */
+  /** Object key(s) of the .pmtiles archive the /{z}/{x}/{y}.pbf tile route reads.
+   *  Comma-separated list allowed — local dev serves several bbox samples
+   *  (.dev.vars, written by setupLocalTiles.sh) where prod has one planet archive. */
   PMTILES_KEY: string;
-  /** Object key of the .pmtiles archive the /pack downloader route reads (the
-   *  Ontario extract the phone currently range-reads directly). */
+  /** Object key(s) of the .pmtiles archive the /pack downloader route reads.
+   *  Same comma-separated list rule as PMTILES_KEY. */
   PACK_PMTILES_KEY: string;
   /** NASA FIRMS Area API key for /fires. A Worker SECRET (`wrangler secret put
    *  FIRMS_MAP_KEY`), never a [vars] entry — it must never reach the app bundle. */
   FIRMS_MAP_KEY: string;
+  /** Object key of the world-hospitals pack /hospitals reads (baked by
+   *  workers/bakeHospitals.mjs). Re-bakes ship under a NEW key — the key is in
+   *  the edge cache key, so bumping it IS the cache invalidation. */
+  HOSPITALS_KEY: string;
 }
 
 /**
@@ -117,6 +130,40 @@ const cache = new ResolvedValueCache(64, undefined, decompress);
 
 
 const TILE_PATH = /^\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.pbf$/;
+
+// Parsed hospitals-pack index, cached per isolate. The pack object is
+// immutable — a re-bake ships under a NEW key, and the key mismatch below is
+// what invalidates this cache; no TTL needed.
+let hospitalsIndexCache: {
+  key: string;
+  index: HospitalsIndex;
+  dataOrigin: number;
+} | null = null;
+
+async function loadHospitalsIndex(
+  env: Env,
+): Promise<{ index: HospitalsIndex; dataOrigin: number }> {
+  if (hospitalsIndexCache?.key === env.HOSPITALS_KEY) return hospitalsIndexCache;
+  const head = await env.TILES.get(env.HOSPITALS_KEY, {
+    range: { offset: 0, length: 4 },
+  });
+  if (head === null) {
+    throw new Error(`hospitals pack not found in R2: ${env.HOSPITALS_KEY}`);
+  }
+  const indexLen = new DataView(await head.arrayBuffer()).getUint32(0, true);
+  const idx = await env.TILES.get(env.HOSPITALS_KEY, {
+    range: { offset: 4, length: indexLen },
+  });
+  if (idx === null) {
+    throw new Error(`hospitals pack truncated: ${env.HOSPITALS_KEY}`);
+  }
+  const index = JSON.parse(await idx.text()) as HospitalsIndex;
+  hospitalsIndexCache = { key: env.HOSPITALS_KEY, index, dataOrigin: 4 + indexLen };
+  return hospitalsIndexCache;
+}
+
+const archiveKeys = (v: string): string[] =>
+  v.split(",").map((s) => s.trim()).filter(Boolean);
 
 /**
  * Edge-cache key version for /fires. See the long note at the cache-key build
@@ -355,10 +402,43 @@ export default {
         // Wire the PMTiles reader to R2 here (index.ts owns R2); packBuilder is
         // pure logic over the reader. Time the header fetch + the build for X-Diag.
         const stats: ReadStats = { reads: 0, bytes: 0 };
-        const source = new R2Source(env.TILES, env.PACK_PMTILES_KEY, stats);
-        const archive = new PMTiles(source, cache, decompress);
         const tH = Date.now();
-        await archive.getHeader(); // surface a bad archive as a thrown error → 502
+        // First archive whose own bounds contain the pin wins.
+        // ⛔ a pin outside every archive's bounds must FAIL LOUD, never build an
+        // empty pack — 200-OK-empty is indistinguishable from "no roads here" and
+        // gets edge-cached immutable. Local dev serves bbox SAMPLES (see
+        // setupLocalTiles.sh), so this is the guard that says "wrong sample", not
+        // "no data". Second occurrence of this bug class: the Firenze seed, then
+        // the northern-BC seed with every fixture pin outside it (31 Aug 2026).
+        let archive: PMTiles | undefined;
+        const coverages: string[] = [];
+        for (const key of archiveKeys(env.PACK_PMTILES_KEY)) {
+          const candidate = new PMTiles(
+            new R2Source(env.TILES, key, stats),
+            cache,
+            decompress,
+          );
+          const header = await candidate.getHeader(); // surface a bad archive as a thrown error → 502
+          if (
+            lng >= header.minLon && lng <= header.maxLon &&
+            lat >= header.minLat && lat <= header.maxLat
+          ) {
+            archive = candidate;
+            break;
+          }
+          coverages.push(
+            `${key} covers ${header.minLon},${header.minLat} → ${header.maxLon},${header.maxLat}`,
+          );
+        }
+        if (archive === undefined) {
+          return new Response(
+            `Pin ${lng},${lat} is outside every archive's coverage:\n` +
+              coverages.map((c) => `  ${c}`).join("\n") +
+              `\nLocal dev serves sample extracts — add or widen a bbox in ` +
+              `setupLocalTiles.sh and restart, or switch the CONFIG panel to a cloud tier.`,
+            { status: 422, headers: CORS_HEADERS },
+          );
+        }
         const tLoop = Date.now();
         pack = await buildPack(archive, lng, lat, corridor, diag);
         diag.r2Reads = stats.reads;
@@ -403,9 +483,89 @@ export default {
       });
     }
 
+    // ── /hospitals?lng=&lat= — WORLD hospitals within 200 km of a point ──
+    //
+    // Serves the online map's safety layer from the baked world pack (see
+    // hospitals.ts for why the pack, not planet.pmtiles, is the read source).
+    // The radius filter runs HERE so the phone downloads a region's worth of
+    // hospitals, never the world's.
+    if (url.pathname === "/hospitals") {
+      const lng = Number(url.searchParams.get("lng"));
+      const lat = Number(url.searchParams.get("lat"));
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        return new Response("Bad Request — expected ?lng=<num>&lat=<num>", {
+          status: 400,
+          headers: CORS_HEADERS,
+        });
+      }
+      // Snap like /fires: nearby users share one cached answer; 0.25° is
+      // immaterial against a 200 km radius.
+      const snap = (v: number): string => (Math.round(v * 4) / 4).toFixed(2);
+      const cacheUrl = new URL(url.toString());
+      // HOSPITALS_KEY is in the KEY — a re-bake (new object, new key) mints a
+      // fresh key space instead of waiting out a TTL (the /fires lesson).
+      cacheUrl.search = `?key=${env.HOSPITALS_KEY}&lng=${snap(lng)}&lat=${snap(lat)}`;
+      const hospCacheKey = new Request(cacheUrl.toString(), { method: "GET" });
+      const hospEdge = caches.default;
+      const hospHit = await hospEdge.match(hospCacheKey);
+      if (hospHit) {
+        return request.method === "HEAD"
+          ? new Response(null, { status: 200, headers: hospHit.headers })
+          : hospHit;
+      }
+
+      let hospBody: string;
+      try {
+        const { index, dataOrigin } = await loadHospitalsIndex(env);
+        const cellArrays: HospitalEntry[][] = [];
+        await Promise.all(
+          cellKeysForDisc(lng, lat, index.cellDeg, HOSPITAL_RADIUS_KM).map(
+            async (k) => {
+              const span = index.cells[k];
+              if (!span) return; // open ocean / empty cell
+              const obj = await env.TILES.get(env.HOSPITALS_KEY, {
+                range: { offset: dataOrigin + span[0], length: span[1] },
+              });
+              if (obj === null) {
+                throw new Error(`hospitals pack unreadable: ${env.HOSPITALS_KEY}`);
+              }
+              cellArrays.push(JSON.parse(await obj.text()) as HospitalEntry[]);
+            },
+          ),
+        );
+        hospBody = JSON.stringify(hospitalsCollection(cellArrays, lng, lat));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // 502, never an empty 200 — "no hospitals near you" is the most
+        // dangerous lie this layer can tell (same law as /fires).
+        return new Response(`Hospitals fetch failed: ${message}`, {
+          status: 502,
+          headers: CORS_HEADERS,
+        });
+      }
+
+      const hospHeaders = {
+        ...CORS_HEADERS,
+        "Content-Type": "application/json",
+        // Immutable is safe: the answer only changes with a re-bake, and a
+        // re-bake changes HOSPITALS_KEY, which is in the cache key above.
+        "Cache-Control": "public, max-age=31536000, immutable",
+      };
+      ctx.waitUntil(
+        hospEdge.put(
+          hospCacheKey,
+          new Response(hospBody, { status: 200, headers: hospHeaders }),
+        ),
+      );
+      return new Response(request.method === "HEAD" ? null : hospBody, {
+        status: 200,
+        headers: hospHeaders,
+      });
+    }
+
     const match = TILE_PATH.exec(url.pathname);
     if (match === null) {
-      return new Response("Not Found — expected /{z}/{x}/{y}.pbf, /pack?lng=&lat=, or /fires?lng=&lat=", {
+      return new Response("Not Found — expected /{z}/{x}/{y}.pbf, /pack?lng=&lat=, /fires?lng=&lat=, or /hospitals?lng=&lat=", {
         status: 404,
         headers: CORS_HEADERS,
       });
@@ -415,29 +575,33 @@ export default {
     const x = Number(match[2]);
     const y = Number(match[3]);
 
-    const source = new R2Source(env.TILES, env.PMTILES_KEY);
-    const archive = new PMTiles(source, cache, decompress);
-
-    // Validate the archive is readable up front → a clear 502 instead of a confusing 204.
-    try {
-      await archive.getHeader();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return new Response(`Failed to read PMTiles archive: ${message}`, {
-        status: 502,
-        headers: CORS_HEADERS,
-      });
-    }
-
+    // First archive that holds the tile wins (several bbox samples locally,
+    // one planet archive in prod).
     let tile: RangeResponse | undefined;
-    try {
-      tile = await archive.getZxy(z, x, y);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return new Response(`Tile lookup failed: ${message}`, {
-        status: 500,
-        headers: CORS_HEADERS,
-      });
+    for (const key of archiveKeys(env.PMTILES_KEY)) {
+      const archive = new PMTiles(new R2Source(env.TILES, key), cache, decompress);
+
+      // Validate the archive is readable up front → a clear 502 instead of a confusing 204.
+      try {
+        await archive.getHeader();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return new Response(`Failed to read PMTiles archive ${key}: ${message}`, {
+          status: 502,
+          headers: CORS_HEADERS,
+        });
+      }
+
+      try {
+        tile = await archive.getZxy(z, x, y);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return new Response(`Tile lookup failed: ${message}`, {
+          status: 500,
+          headers: CORS_HEADERS,
+        });
+      }
+      if (tile !== undefined) break;
     }
 
     // Missing tile -> 204 so the map renderer overzooms cleanly instead of logging 404 noise.
@@ -458,3 +622,4 @@ export default {
     return new Response(body, { status: 200, headers: responseHeaders });
   },
 } satisfies ExportedHandler<Env>;
+
