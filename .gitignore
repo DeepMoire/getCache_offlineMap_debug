@@ -30,7 +30,7 @@ secrets/
 .wrangler/
 
 # ── World hospitals bake (workers/bakeHospitals.mjs) ─────────────────────────
-# The pack's home is the offline-tiles bucket, not git; the region cache is a
-# resumable download scratch (~100 MB).
-workers/hospitals-world.v*.pack
+# The baked pack itself (workers/*/src/hospitalsWorld.v*.bin) IS committed —
+# it ships inside the Worker bundle. Only the resumable Overpass download
+# scratch (~100 MB) stays out.
 workers/.bake-cache/

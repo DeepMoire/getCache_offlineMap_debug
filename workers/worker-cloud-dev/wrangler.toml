@@ -7,6 +7,12 @@ routes = [
   { pattern = "tiles-prod.getcache.org", custom_domain = true }
 ]
 
+# /hospitals reads the world pack BUNDLED into the script (src/hospitalsWorld.v*.bin,
+# baked by ../bakeHospitals.mjs) — the R2 bucket stays roads-only.
+rules = [
+  { type = "Data", globs = ["**/*.bin"], fallthrough = true }
+]
+
 # ⛔ NEVER create tiles-prod / tiles-dev by hand in the Cloudflare dashboard — `custom_domain = true` won't adopt an existing record; deploy fails with code 100117 and there is no --force (delete the record, then deploy).
 [[r2_buckets]]
 binding = "TILES"
@@ -18,7 +24,6 @@ bucket_name = "offline-tiles"
 [vars]
 PMTILES_KEY = "planet.pmtiles"
 PACK_PMTILES_KEY = "planet.pmtiles"
-HOSPITALS_KEY = "hospitals-world.v1.pack"
 
 [env.dev]
 name = "offline-tiles-dev"
@@ -33,6 +38,5 @@ bucket_name = "offline-tiles"
 [env.dev.vars]
 PMTILES_KEY = "planet.pmtiles"
 PACK_PMTILES_KEY = "planet.pmtiles"
-HOSPITALS_KEY = "hospitals-world.v1.pack"
 
 # ⚠️ a staging Worker (offline-tiles-staging) may still exist in Cloudflare — deleting config never tears down a live Worker.

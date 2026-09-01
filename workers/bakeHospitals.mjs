@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
- * bakeHospitals.mjs — one-time bake of the WORLD hospital pack the tiles
- * Worker's /hospitals route serves (see workers/<tier>/src/hospitals.ts).
+ * bakeHospitals.mjs — bake of the WORLD hospital pack the tiles Worker's
+ * /hospitals route serves (see workers/<tier>/src/hospitals.ts). The pack is
+ * BUNDLED INTO THE WORKER (a wrangler Data module) — never uploaded to the R2
+ * bucket, which holds roads only.
  *
  * Source: OSM `amenity=hospital` via Overpass — the same OpenStreetMap data
  * `planet.pmtiles` is built from. The archive itself cannot be the extraction
@@ -10,7 +12,7 @@
  * z12 holds 13 of 30), and no local copy of the 127 GB archive exists to walk.
  * Overpass also carries `emergency=*`, which Protomaps' pois layer drops.
  *
- * Output: hospitals-world.v1.pack —
+ * Output: worker-local-dev/src/hospitalsWorld.v1.bin —
  *   [uint32 LE indexLen][index JSON][cell JSON blobs, concatenated]
  *   index = { v, cellDeg, count, generated, cells: { "cy_cx": [offset, len] } }
  *   offsets are relative to the first byte AFTER the index. Each cell blob is
@@ -19,14 +21,12 @@
  * so both sides of the bucket speak one dialect.
  *
  * Run:      node bakeHospitals.mjs
- * Then:     npx wrangler r2 object put offline-tiles/hospitals-world.v1.pack \
- *             --file hospitals-world.v1.pack --remote        (from any worker dir)
- * Local:    setupLocalTiles.sh loads the pack into the local R2 simulator
- *           automatically when this file sits beside it.
- *
- * A re-bake (OSM moves on) ships under a NEW filename (v2, …) + a
- * HOSPITALS_KEY bump in the wrangler.tomls — the responses are edge-cached
- * immutable, so the key IS the cache buster.
+ * Then:     set HOSPITALS_BUILD in worker-local-dev/src/index.ts to the value
+ *           this script prints, and deploy — the responses are edge-cached
+ *           immutable, so that const IS the cache buster. A re-bake that
+ *           changes the pack FORMAT ships under a new filename (v2, …).
+ *           The deploy scripts sync worker-local-dev/src into the cloud
+ *           folders, .bin included — edit/bake in worker-local-dev only.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -59,7 +59,7 @@ const ENDPOINTS = [
 ];
 
 const CELL_DEG = 5;
-const OUT = new URL("./hospitals-world.v1.pack", import.meta.url).pathname;
+const OUT = new URL("./worker-local-dev/src/hospitalsWorld.v1.bin", import.meta.url).pathname;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -179,5 +179,5 @@ console.log(
 	`\n✅ ${OUT}\n   ${index.count} hospitals, ${cells.size} cells, ${(out.byteLength / 1e6).toFixed(1)} MB`,
 );
 console.log(
-	"\nUpload:  npx wrangler r2 object put offline-tiles/hospitals-world.v1.pack --file hospitals-world.v1.pack --remote",
+	`\nSet in worker-local-dev/src/index.ts:  const HOSPITALS_BUILD = "v1-${index.count}-${index.generated.replaceAll("-", "")}";\nThen deploy (deployDev.sh → smoke → deployProduction.sh).`,
 );

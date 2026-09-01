@@ -19,8 +19,17 @@ import {
   HOSPITAL_RADIUS_KM,
   type HospitalEntry,
   hospitalsCollection,
-  type HospitalsIndex,
+  parseHospitalsPack,
+  readCellEntries,
 } from "./hospitals";
+// The WHOLE world's hospitals ride inside the Worker bundle (3.4 MB gzipped,
+// well under the paid plan's 10 MB script limit) — the R2 bucket is roads only.
+import hospitalsPack from "./hospitalsWorld.v1.bin";
+
+/** Edge-cache buster for /hospitals — the bundled pack has no object key, so
+ *  this const plays HOSPITALS_KEY's old role. Bump it with every re-bake
+ *  (bakeHospitals.mjs prints the value to use). */
+const HOSPITALS_BUILD = "v1-216117-20260901";
 
 /** Bump whenever the PACK CONTENTS change. Part of the edge cache key, so a
  *  new build can never be masked by a year-old immutable cache entry. */
@@ -39,10 +48,6 @@ interface Env {
   /** NASA FIRMS Area API key for /fires. A Worker SECRET (`wrangler secret put
    *  FIRMS_MAP_KEY`), never a [vars] entry — it must never reach the app bundle. */
   FIRMS_MAP_KEY: string;
-  /** Object key of the world-hospitals pack /hospitals reads (baked by
-   *  workers/bakeHospitals.mjs). Re-bakes ship under a NEW key — the key is in
-   *  the edge cache key, so bumping it IS the cache invalidation. */
-  HOSPITALS_KEY: string;
 }
 
 /**
@@ -131,35 +136,12 @@ const cache = new ResolvedValueCache(64, undefined, decompress);
 
 const TILE_PATH = /^\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.pbf$/;
 
-// Parsed hospitals-pack index, cached per isolate. The pack object is
-// immutable — a re-bake ships under a NEW key, and the key mismatch below is
-// what invalidates this cache; no TTL needed.
-let hospitalsIndexCache: {
-  key: string;
-  index: HospitalsIndex;
-  dataOrigin: number;
-} | null = null;
-
-async function loadHospitalsIndex(
-  env: Env,
-): Promise<{ index: HospitalsIndex; dataOrigin: number }> {
-  if (hospitalsIndexCache?.key === env.HOSPITALS_KEY) return hospitalsIndexCache;
-  const head = await env.TILES.get(env.HOSPITALS_KEY, {
-    range: { offset: 0, length: 4 },
-  });
-  if (head === null) {
-    throw new Error(`hospitals pack not found in R2: ${env.HOSPITALS_KEY}`);
-  }
-  const indexLen = new DataView(await head.arrayBuffer()).getUint32(0, true);
-  const idx = await env.TILES.get(env.HOSPITALS_KEY, {
-    range: { offset: 4, length: indexLen },
-  });
-  if (idx === null) {
-    throw new Error(`hospitals pack truncated: ${env.HOSPITALS_KEY}`);
-  }
-  const index = JSON.parse(await idx.text()) as HospitalsIndex;
-  hospitalsIndexCache = { key: env.HOSPITALS_KEY, index, dataOrigin: 4 + indexLen };
-  return hospitalsIndexCache;
+// The bundled pack's parsed index, lazy per isolate — parsing 11 MB once per
+// isolate is cheap; per request it is not.
+let hospitalsParsed: ReturnType<typeof parseHospitalsPack> | null = null;
+function hospitalsIndex(): ReturnType<typeof parseHospitalsPack> {
+  hospitalsParsed ??= parseHospitalsPack(hospitalsPack);
+  return hospitalsParsed;
 }
 
 const archiveKeys = (v: string): string[] =>
@@ -485,10 +467,10 @@ export default {
 
     // ── /hospitals?lng=&lat= — WORLD hospitals within 200 km of a point ──
     //
-    // Serves the online map's safety layer from the baked world pack (see
-    // hospitals.ts for why the pack, not planet.pmtiles, is the read source).
-    // The radius filter runs HERE so the phone downloads a region's worth of
-    // hospitals, never the world's.
+    // Serves the online map's safety layer from the pack BUNDLED with this
+    // Worker (see hospitals.ts for why neither R2 nor planet.pmtiles is the
+    // read source). The radius filter runs HERE so the phone downloads a
+    // region's worth of hospitals, never the world's.
     if (url.pathname === "/hospitals") {
       const lng = Number(url.searchParams.get("lng"));
       const lat = Number(url.searchParams.get("lat"));
@@ -502,9 +484,9 @@ export default {
       // immaterial against a 200 km radius.
       const snap = (v: number): string => (Math.round(v * 4) / 4).toFixed(2);
       const cacheUrl = new URL(url.toString());
-      // HOSPITALS_KEY is in the KEY — a re-bake (new object, new key) mints a
-      // fresh key space instead of waiting out a TTL (the /fires lesson).
-      cacheUrl.search = `?key=${env.HOSPITALS_KEY}&lng=${snap(lng)}&lat=${snap(lat)}`;
+      // HOSPITALS_BUILD is in the KEY — a re-bake mints a fresh key space
+      // instead of waiting out a TTL (the /fires lesson).
+      cacheUrl.search = `?build=${HOSPITALS_BUILD}&lng=${snap(lng)}&lat=${snap(lat)}`;
       const hospCacheKey = new Request(cacheUrl.toString(), { method: "GET" });
       const hospEdge = caches.default;
       const hospHit = await hospEdge.match(hospCacheKey);
@@ -516,23 +498,13 @@ export default {
 
       let hospBody: string;
       try {
-        const { index, dataOrigin } = await loadHospitalsIndex(env);
+        const { index, dataOrigin } = hospitalsIndex();
         const cellArrays: HospitalEntry[][] = [];
-        await Promise.all(
-          cellKeysForDisc(lng, lat, index.cellDeg, HOSPITAL_RADIUS_KM).map(
-            async (k) => {
-              const span = index.cells[k];
-              if (!span) return; // open ocean / empty cell
-              const obj = await env.TILES.get(env.HOSPITALS_KEY, {
-                range: { offset: dataOrigin + span[0], length: span[1] },
-              });
-              if (obj === null) {
-                throw new Error(`hospitals pack unreadable: ${env.HOSPITALS_KEY}`);
-              }
-              cellArrays.push(JSON.parse(await obj.text()) as HospitalEntry[]);
-            },
-          ),
-        );
+        for (const k of cellKeysForDisc(lng, lat, index.cellDeg, HOSPITAL_RADIUS_KM)) {
+          const span = index.cells[k];
+          if (!span) continue; // open ocean / empty cell
+          cellArrays.push(readCellEntries(hospitalsPack, dataOrigin, span));
+        }
         hospBody = JSON.stringify(hospitalsCollection(cellArrays, lng, lat));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -548,7 +520,7 @@ export default {
         ...CORS_HEADERS,
         "Content-Type": "application/json",
         // Immutable is safe: the answer only changes with a re-bake, and a
-        // re-bake changes HOSPITALS_KEY, which is in the cache key above.
+        // re-bake bumps HOSPITALS_BUILD, which is in the cache key above.
         "Cache-Control": "public, max-age=31536000, immutable",
       };
       ctx.waitUntil(
