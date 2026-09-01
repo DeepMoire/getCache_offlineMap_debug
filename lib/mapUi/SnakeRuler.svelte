@@ -11,7 +11,7 @@ import type { Map as MapboxMap } from "mapbox-gl";
 import { area, length as turfLength } from "@turf/turf";
 // Runs on BOTH maps (Mapbox online, MapLibre offline) — a Marker from the wrong library throws "_addMarker is not a function" on addTo.
 import { markerCtor } from "../shared/rendererOf";
-import type { Lnglat } from "$parent/siblings/getCache_OnlineMap/lib/mapDraw";
+import type { Lnglat } from "@ground-truth/getcache-onlinemap/lib/mapDraw";
 import { formatHectares, formatMeasureDist } from "../panels/measureFormat";
 import { type Rect, mapKeepOutRects, shiftClear } from "../shared/mapKeepOut";
 // Icon and SharePicker render as ports.ui.*; copyToClipboard is ports.ui.copyToClipboard; ShareFormat is the contract's MapShareRow, MapShareFormat is in the contract.

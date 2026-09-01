@@ -13,11 +13,20 @@ const RAPPER = join(FETCH, "rapper");
 /** The one file every tier must land on. */
 const COMPONENT = join(CHILD, "lib/OfflineMapPage.svelte");
 
-/** Resolves an import specifier the way the bundler does; `$parent/siblings/<child>` means `../<child>` from a parent. */
+/** A sibling's package name -> its folder, read from the manifests beside this child (never a table that drifts). */
+const FOLDER_OF: Record<string, string> = Object.fromEntries(
+	readdirSync(FETCH, { withFileTypes: true })
+		.filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+		.filter((e) => existsSync(join(FETCH, e.name, "package.json")))
+		.map((e) => [JSON.parse(readFileSync(join(FETCH, e.name, "package.json"), "utf8")).name, join(FETCH, e.name)]),
+);
+
+/** Resolves an import specifier the way the bundler does; `@ground-truth/<child>/...` is a sibling folder via the workspace symlink. */
 function resolveSpecifier(spec: string, fromFile: string): string | null {
 	let path: string;
-	if (spec.startsWith("$parent/siblings/")) {
-		path = join(FETCH, spec.slice("$parent/siblings/".length));
+	const pkg = Object.keys(FOLDER_OF).find((n) => spec.startsWith(`${n}/`));
+	if (pkg) {
+		path = join(FOLDER_OF[pkg], spec.slice(pkg.length + 1)).replace(/\.js$/, "");
 	} else if (spec.startsWith(".")) {
 		path = resolve(dirname(fromFile), spec);
 	} else {
