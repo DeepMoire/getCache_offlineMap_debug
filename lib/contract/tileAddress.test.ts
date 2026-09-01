@@ -1,6 +1,6 @@
 /** ⚠️ splitting a pin-addressed key on "/" silently returns NaN z/x/y instead of throwing — this suite locks the fix. */
 import { describe, expect, it } from "vitest";
-import { parseTileAddress } from "../r2Worker/local_dev/roads/packDownload";
+import { parseTileAddress } from "../worker/worker-local-dev/roads/packDownload";
 import { pinTileKey } from "./grid";
 
 describe("parseTileAddress — never emit NaN", () => {

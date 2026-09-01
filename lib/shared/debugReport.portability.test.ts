@@ -13,7 +13,7 @@ const ALLOWED = [
 	"./",
 	"../contract",
 	"../onPhone/store/coverageRegistry",
-	"../r2Worker/local_dev/tilesHost",
+	"../worker/worker-local-dev/tilesHost",
 	// wallLegend: a literal switches table (key/label/ids/feed) — no UI/store/runtime, safe to allow.
 	"../onPhone/render/wallLegend",
 ];

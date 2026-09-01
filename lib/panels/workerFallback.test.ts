@@ -22,14 +22,14 @@ describe("no worker tier auto-switch", () => {
 	});
 });
 
-// ⚠️ r2_dev must be configured in the same place as production (configureTilesDevHost) or it's dead by construction — configuredDevHost stays null until called. Both hosts are configured via configureTilesFromEnv(), called from the child's boot.
+// ⚠️ worker-cloud-dev must be configured in the same place as production (configureTilesDevHost) or it's dead by construction — configuredDevHost stays null until called. Both hosts are configured via configureTilesFromEnv(), called from the child's boot.
 const LAYOUT = readFileSync(join(__dirname, "..", "..", "routes", "+layout.svelte"), "utf8");
 const TILES_FROM_ENV = readFileSync(
-	join(__dirname, "..", "r2Worker", "local_dev", "tilesFromEnv.ts"),
+	join(__dirname, "..", "worker", "worker-local-dev", "tilesFromEnv.ts"),
 	"utf8",
 );
 
-describe("r2_dev tier is configurable", () => {
+describe("worker-cloud-dev tier is configurable", () => {
 	it("the child's boot configures the dev host, not only production", () => {
 		expect(LAYOUT).toContain("configureTilesFromEnv()");
 		expect(TILES_FROM_ENV).toContain("configureTilesDevHost");

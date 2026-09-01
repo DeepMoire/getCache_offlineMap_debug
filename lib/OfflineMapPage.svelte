@@ -22,7 +22,7 @@
     import grabCursorUrl from "$gc/assets/hand_shovel_cursor_100.webp";
     import { initializeOfflineMap } from "./onPhone/render/offlineMapInit";
     import { buildOfflineBaseStyle } from "./onPhone/render/offlineBaseStyle";
-    import { v4TransformRequest } from "./r2Worker/local_dev/roads/packDownload";
+    import { v4TransformRequest } from "./worker/worker-local-dev/roads/packDownload";
     import {
         installRawWallProtocol,
         rawSourceSpec,
@@ -55,7 +55,7 @@
         noteFireArrival,
         takeFireArrival,
     } from "../routes/fires/fireArrival";
-    import { fetchAreaFires } from "./r2Worker/local_dev/fires/fireFetch";
+    import { fetchAreaFires } from "./worker/worker-local-dev/fires/fireFetch";
     import type { HostPorts } from "./shared/hostPorts";
     import OfflineWorkMeter from "./shared/OfflineWorkMeter.svelte";
     import OfflineBlobPanel from "./panels/OfflineBlobPanel.svelte";

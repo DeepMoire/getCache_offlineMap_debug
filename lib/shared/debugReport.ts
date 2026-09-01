@@ -55,7 +55,7 @@ import {
 	getWorkerTarget,
 	tilesHost,
 	type WorkerTarget,
-} from "../r2Worker/local_dev/tilesHost";
+} from "../worker/worker-local-dev/tilesHost";
 import {
 	payloadStats,
 	workStats,
@@ -130,7 +130,7 @@ export interface DebugReport {
 		/** "(unconfigured)" when no app called configureTilesHost() — a real
 		 *  state worth seeing in a report, not an absent field. */
 		tilesHost: string;
-		/** WHICH worker served this session — production / localDev.
+		/** WHICH worker served this session — worker-cloud-prod / worker-local-dev.
 		 *  Without it a report is ambiguous: identical-looking bad output from
 		 *  the two could be different bugs. */
 		workerTarget: WorkerTarget;
@@ -491,9 +491,9 @@ export function summarizeFocusedReport(
 	const probe = (v: boolean | undefined, up: string, down: string) =>
 		v == null ? "not checked" : v ? up : down;
 	const workers = [
-		`prod ${probe(p.production, "reachable", "NOT reachable")}`,
-		`dev ${probe(p.r2Dev, "reachable", "NOT reachable")}`,
-		`local ${probe(p.localDev, "running", "not running")}`,
+		`prod ${probe(p["worker-cloud-prod"], "reachable", "NOT reachable")}`,
+		`dev ${probe(p["worker-cloud-dev"], "reachable", "NOT reachable")}`,
+		`local ${probe(p["worker-local-dev"], "running", "not running")}`,
 	].join(" · ");
 
 	return {

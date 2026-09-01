@@ -14,7 +14,7 @@ import {
 } from "./fireCacheV2";
 
 // don't hardcode the host — a second spelling is exactly the drift tilesHost.ts prevents (roads from staging + fires from prod reads as "it works sometimes").
-import { firesUrl } from "../../../lib/r2Worker/local_dev/tilesHost";
+import { firesUrl } from "../../../lib/worker/worker-local-dev/tilesHost";
 
 /** Wall-clock cap for one fetch — generous for a cold Worker on a slow link, short enough a wedged request can't stall the queue behind it. */
 const FIRE_V2_TIMEOUT_MS = 20_000;

@@ -305,7 +305,7 @@ decides WHERE the 1 GB line falls. Being briefly over 1 GB is fine.
   directly — it calls the Worker's `/pack` endpoint, which reads edge-side via
   its R2 binding. Worker source, deploy and the three tiers
   (prod/dev/local): [`../worker/README.md`](../worker/README.md); client half:
-  [`../lib/r2Worker/README.md`](../lib/r2Worker/README.md).
+  [`../lib/worker/README.md`](../lib/worker/README.md).
 - **Freshness = a snapshot.** Each build is frozen at its date — fine for a
   basemap. No per-user sync, no cache invalidation.
 

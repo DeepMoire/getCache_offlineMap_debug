@@ -41,7 +41,7 @@ import {
 	getAllTileKeys,
 	PACK_FORMAT_VERSION,
 	purgeEmptyTilesOnce,
-} from "../../r2Worker/local_dev/roads/packDownload";
+} from "../../worker/worker-local-dev/roads/packDownload";
 import { GRID_RADIUS_KM } from "../../contract/blob";
 import { BLOB_TILE_Z } from "../../contract/grid";
 import { FIRE_RADIUS_KM } from "../../shared/fireContract";

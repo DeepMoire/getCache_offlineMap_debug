@@ -41,7 +41,7 @@ const workerGrid = fileURLToPath(
 	// names no parent any more and the skip below is only ever hit by a
 	// checkout that dropped worker/ on purpose. Its grid.ts is now a one-line
 	// re-export of THIS file — one definition, not two copies held in step.
-	new URL("../../workers/local_dev/src/grid.ts", import.meta.url),
+	new URL("../../workers/worker-local-dev/src/grid.ts", import.meta.url),
 );
 const clientGrid = fileURLToPath(new URL("./grid.ts", import.meta.url));
 

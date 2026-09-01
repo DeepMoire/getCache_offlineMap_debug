@@ -2,7 +2,7 @@
 import Layout from "$rig/Layout.svelte";
 import PhoneRig from "$gc/PhoneRig.svelte";
 import logoUrl from "$gc/assets/GC_fly_logo_transparent.webp";
-import { configureTilesFromEnv } from "../lib/r2Worker/local_dev/tilesFromEnv";
+import { configureTilesFromEnv } from "../lib/worker/worker-local-dev/tilesFromEnv";
 
 configureTilesFromEnv();
 

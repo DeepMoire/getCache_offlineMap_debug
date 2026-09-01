@@ -18,7 +18,7 @@ function cannedReport(overrides: Partial<Body> = {}): Body {
 		route: "debug/map",
 		env: {
 			tilesHost: "https://tiles-prod.getcache.org",
-			workerTarget: "production",
+			workerTarget: "worker-cloud-prod",
 			blobTileZ: 8,
 			gridRadiusKm: 30,
 			userAgent: "test",
@@ -43,7 +43,7 @@ function cannedReport(overrides: Partial<Body> = {}): Body {
 				{ key: "labels", count: 0, at: 0, drawnAt: null, atIso: "", drawnAtIso: null },
 				{ key: "fires", count: 0, at: 0, drawnAt: null, atIso: "", drawnAtIso: null },
 			],
-			probes: { production: true, r2Dev: true, localDev: false },
+			probes: { "worker-cloud-prod": true, "worker-cloud-dev": true, "worker-local-dev": false },
 		},
 		disk: {
 			areas: 9,

@@ -1,6 +1,0 @@
-node_modules/
-*.pmtiles
-.wrangler/
-.pmtiles-cli/
-.dev.vars
-sampleBasemap.bbox

@@ -11,7 +11,7 @@ import { vlog } from "../../shared/verboseLog";
 
 import { BLOB_MAX_Z } from "../../contract/roadBlob";
 
-import { idbGetTileForAddress } from "../../r2Worker/local_dev/roads/packDownload";
+import { idbGetTileForAddress } from "../../worker/worker-local-dev/roads/packDownload";
 
 /**
  * THE source id — ONE disc, ONE source, every zoom.

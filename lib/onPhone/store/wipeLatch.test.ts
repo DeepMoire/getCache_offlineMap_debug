@@ -50,7 +50,7 @@ describe("the wipe latch", () => {
 		const src = readFileSync(
 			fileURLToPath(
 				new URL(
-					"../../r2Worker/local_dev/roads/packDownload.ts",
+					"../../worker/worker-local-dev/roads/packDownload.ts",
 					import.meta.url,
 				),
 			),

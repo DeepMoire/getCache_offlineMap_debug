@@ -14,8 +14,8 @@ in signal the cache is topped up, and the UI must say how old it is.
 
 | Half | Where | Status |
 |---|---|---|
-| Worker `GET /fires?lng=&lat=&km=` | `worker/src/index.ts` (route) + `lib/r2Worker/firesWorker.ts` (pure FIRMS logic) | **live**, v1 payload only |
-| Phone fetch + IndexedDB (v1) | `lib/r2Worker/{local_dev,r2_prod}/fires/fireFetch.ts`, `routes/fires/fireCache.ts` (`rt-fire-cache`) | works; **refresh switched off** |
+| Worker `GET /fires?lng=&lat=&km=` | `worker/src/index.ts` (route) + `lib/worker/firesWorker.ts` (pure FIRMS logic) | **live**, v1 payload only |
+| Phone fetch + IndexedDB (v1) | `lib/worker/{worker-local-dev,worker-cloud-prod}/fires/fireFetch.ts`, `routes/fires/fireCache.ts` (`rt-fire-cache`) | works; **refresh switched off** |
 | Bake-loop refresh | `refreshFires()` in `lib/onPhone/bake/bakeService.svelte.ts` | **on** — `FIRE_REFRESH_ENABLED = true` in `lib/shared/bakeFlags.ts` since the `unionHotspots` box-reject fix (30 Aug) |
 | Render layer | `routes/fires/v2/fireLayerV2.ts` | restored from ReTreever git history (30 Aug), **unwired** — nothing mounts it yet. v1's `fireLayer.ts` went with the online map move (28 Aug); the Fires switch in `lib/onPhone/render/wallLegend.ts` has `ids: []` and is a no-op |
 | Phone v2 (`routes/fires/v2/`) | `fireCacheV2.ts` (`rt-fire-v2`), `fireFetchV2.ts` | written, tested, **inert** — throws a named error because the Worker has no `?v=2` |

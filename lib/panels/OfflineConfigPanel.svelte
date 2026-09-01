@@ -8,7 +8,7 @@ import {
 	probeTarget,
 	setWorkerTarget,
 	type WorkerTarget,
-} from "../r2Worker/local_dev/tilesHost";
+} from "../worker/worker-local-dev/tilesHost";
 import {
 	allCircuits,
 	allPaints,
@@ -39,7 +39,7 @@ let {
 // ⚠️ Don't remove worker-local-dev — it's the only worker an outside contributor can reach without the Bitwarden-only Cloudflare key (removed 27 Aug, restored same day).
 // This list is the ONLY place a row is declared — probing and greying-out read from it; adding a tier is one entry.
 // Changing the target re-points the NEXT request; in-flight ones finish where they started.
-// ⚠️ init from getWorkerTarget(), never a literal — a hardcoded "production" painted prod-selected until onMount ran.
+// ⚠️ init from getWorkerTarget(), never a literal — a hardcoded "worker-cloud-prod" painted prod-selected until onMount ran.
 let target = $state<WorkerTarget>(getWorkerTarget());
 
 const TARGETS: {
@@ -52,20 +52,20 @@ const TARGETS: {
 	// label starting with "r2_" read as "which data", the exact confusion that
 	// cost the "roads don't work on dev" day. worker-<where>-<flavor>, always.
 	{
-		id: "production",
+		id: "worker-cloud-prod",
 		label: "worker-cloud-prod",
 		hint: "tiles-prod.getcache.org — what every shipped phone talks to. Reads THE one R2 bucket. Deployed by ./deployProduction.sh, which asks for confirmation first.",
 	},
 	{
-		id: "r2Dev",
+		id: "worker-cloud-dev",
 		label: "worker-cloud-dev",
 		hint: "tiles-dev.getcache.org — a DEPLOYED sandbox worker reading the SAME one R2 bucket as prod, so any difference between them is code, never data. No shipped phone ever reads it.",
 	},
 	{
-		id: "localDev",
+		id: "worker-local-dev",
 		label: "worker-local-dev",
 		// ⚠️ Interpolated, never retyped — a hardcoded hostname here drifts from the constant (this row said "127.0.0.1:8787" stale for a day).
-		hint: `${LOCAL_DEV_HOST} — \`npm run dev:local\` in workers/local_dev serves a free sample slice (no Cloudflare account); \`npm run dev:cloud\` runs the SAME local code against the one real R2 bucket (needs wrangler login). Greyed out until that terminal is running, which is expected, not broken.`,
+		hint: `${LOCAL_DEV_HOST} — \`npm run dev:local\` in workers/worker-local-dev serves a free sample slice (no Cloudflare account); \`npm run dev:cloud\` runs the SAME local code against the one real R2 bucket (needs wrangler login). Greyed out until that terminal is running, which is expected, not broken.`,
 	},
 ];
 
@@ -160,8 +160,8 @@ async function probeAll() {
 	if (reach(target) === "err") {
 		console.warn(
 			`[tiles] ${target} is not answering — nothing will download until it does. ` +
-				(target === "localDev"
-					? "Start it: cd workers/local_dev && npm install && npm run dev:local — or click another tier."
+				(target === "worker-local-dev"
+					? "Start it: cd workers/worker-local-dev && npm install && npm run dev:local — or click another tier."
 					: "Check VITE_TILES_HOST resolves, or click another tier."),
 		);
 	}
@@ -188,7 +188,7 @@ onMount(() => {
 			class:retrying={retrying === t.id}
 			onclick={() => pickTarget(t.id)}
 			title={reach(t.id) === "err"
-				? `${t.label} is not answering — CLICK TO RETRY. ${t.id === "localDev" ? "Start it: cd getCache_OfflineMap/workers/local_dev && npm install && npm run dev:local — no account needed." : "The Worker was unreachable when last checked."}`
+				? `${t.label} is not answering — CLICK TO RETRY. ${t.id === "worker-local-dev" ? "Start it: cd getCache_OfflineMap/workers/worker-local-dev && npm install && npm run dev:local — no account needed." : "The Worker was unreachable when last checked."}`
 				: t.hint}
 		>
 			<span class="cfg-label">{t.label}</span>

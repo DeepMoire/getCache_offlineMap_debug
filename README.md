@@ -1,11 +1,31 @@
 # Get Cache offline map — handoff
 
-**Watch first:** https://youtu.be/ksRR6UpchDc
+Get Cache is a mobile app used in the reforestation industry. See it on the
+[App Store (iPhone)](https://apps.apple.com/ca/app/get-cache/id6765921100) and the
+[Play Store (Android)](https://play.google.com/store/apps/details?id=com.retreever.map).
+
+The feature in question is an offline map. Its like an offline preview, you can see what data is stored localy on the phone (/browser since its a capacitor app). The vector roads and satalite tile “blobs” are downloaded dynamically based on the users location and pins/polygons added to the map.
+Here are the repos you can see yourself:
+[offline map GitHub](https://github.com/Ground-Truth-Data/getCache_offlineMap) ·
+[rapper GitHub](https://github.com/Ground-Truth-Data/rapper)
+
+Also to setup can simply run:
+npm create @retreever/rapper@latest rapper -- --offline
+
+I made an [explainer video about the “blobs”](https://youtu.be/ksRR6UpchDc).
+ Very basically I want the "blobs" to be 1) Always on (nothing appears or disapears as you zoom in or out, like satelite images but just the minimal vectored roads) 2) tiles should arrive fast as possible 3) tiles should render fast as possible
+
+[What blobs are meant to look like](https://drive.google.com/file/d/1oriasZR-0QLkTWlDmD74hvC07HX9tGMt/view?usp=sharing)
+You can see it has a jagged circle/radius of satellite images and vector roads around it. 3km and 30km respectively. Vector “roads” tiles come from a Cloudflare R2 bucket and processed by a cloudflare worker (you run a local worker to test tho ); satellite photos from EOX Sentinel-2. Fire data comes from the [NASA FIRMS API](https://firms.modaps.eosdis.nasa.gov/api).
+
+It downloads map tiles and satellite photos, stores them in the browser's IndexedDB, and renders them with no network. 
+Let me know if you have any questions.
+
 
 ## Day one
 
 ```bash
-npm create -y @retreever/rapper@latest <folder> -- --child offline
+npm create -y @retreever/rapper@latest <folder> -- --getCache_OfflineMap
 cd <folder> && npm install && npm run dev
 ```
 
@@ -27,13 +47,13 @@ missing or wrong — the console says so on the first line
 toggle on the map itself, not a second URL. One view, one address.
 
 The Cloudflare Worker that serves tiles lives in this repo at `worker/`. To
-run it locally: `cd worker && npm run dev:local`, then pick the `local_dev`
-tier in the map's CONFIG panel (`lib/r2Worker/README.md`).
+run it locally: `cd worker && npm run dev:local`, then pick the `worker-local-dev`
+tier in the map's CONFIG panel (`lib/worker/README.md`).
 
 Repos:
 
-- https://github.com/Ground-Truth-Data/rapper
-- https://github.com/Ground-Truth-Data/getCache_offlineMap
+- [offline map GitHub](https://github.com/Ground-Truth-Data/getCache_offlineMap)
+- [rapper GitHub](https://github.com/Ground-Truth-Data/rapper)
 
 ## What this is
 
@@ -105,14 +125,14 @@ watched while it runs. Do not propose renaming it or a second "shared map" repo.
 |---|---|
 | The map component | `lib/OfflineMapPage.svelte` |
 | Fires engine (v1 + v2 + masks) | `routes/fires/` — read `routes/fires/docs/FIRES.md` before touching v2 |
-| Fires Worker half | `lib/r2Worker/firesWorker.ts` — `worker/src/index.ts` imports it relatively |
+| Fires Worker half | `lib/worker/firesWorker.ts` — `worker/src/index.ts` imports it relatively |
 | Tile Worker (Cloudflare, R2) | `worker/` — `worker/README.md` |
-| Worker client (tiers, `/pack` download, fires fetch) | `lib/r2Worker/` — `lib/r2Worker/README.md` |
+| Worker client (tiers, `/pack` download, fires fetch) | `lib/worker/` — `lib/worker/README.md` |
 | Offline map docs (plan, spec, history) | `docs/` — start at `docs/README.md` |
 | Fires docs | `routes/fires/docs/` |
 | Map assets (basemap, pins, `fire_icon.webp`, `fire_intensity/`) | `mobileAssets/` (committed, proprietary — `mobileAssets/LICENSE.md`); `fetchAssets.sh` copies it to the serving dir |
 | Storage, bake service, renderer, roads, satellite | `lib/onPhone/` |
-| Tile contract (byte-identical to `workers/local_dev/src/`) | `lib/contract/` |
+| Tile contract (byte-identical to `workers/worker-local-dev/src/`) | `lib/contract/` |
 | `assetRegion`, `anchors`, `mapKeepOut`, `rendererOf`, `pinDrift`, `ensureMapboxGuards` | `lib/shared/` |
 | Places index + reference | `lib/places/` |
 | `MapPopoverShell`, `mapPopoverGeom`, `measureFormat`, the debug panels | `lib/panels/` |
@@ -153,7 +173,7 @@ the online child.
 ## Known broken — pick any of these up
 
 1. **LOCAL WORKER SERVES ITALY.** `worker/setupLocalTiles.sh` seeds the local
-   R2 with a Florence sample archive, so the `local_dev` tier returns empty
+   R2 with a Florence sample archive, so the `worker-local-dev` tier returns empty
    packs for every North American pin. Replace with a Canadian extract.
 
 2. **AN EMPTY ANSWER LOOKS LIKE SUCCESS.** The Worker returns HTTP 200 with an
@@ -179,7 +199,7 @@ the online child.
    half runs (`FIRE_REFRESH_ENABLED = true` in `lib/shared/bakeFlags.ts`), and
    `routes/fires/v2/fireLayerV2.ts` exists but nothing imports it yet. Also:
    the Worker's `/fires` route needs a NASA FIRMS Area API key (a Worker
-   secret; free at firms.modaps.eosdis.nasa.gov) — the local_dev sample setup
+   secret; free at firms.modaps.eosdis.nasa.gov) — the worker-local-dev sample setup
    ships none, so expect `/fires` to fail until you add one with
    `wrangler secret put`. Done = that switch turns real fire features on and
    off. Hospitals and Places are NOT in this bucket — they already ride in the
@@ -193,7 +213,7 @@ the online child.
    the Worker rejects requests without it. The token ships in a public web
    bundle, so this is a fence, not a lock — the win is rotation: change the
    token and freeloaders go dark while the app updates. Build and test it
-   against `local_dev`; no Cloudflare account needed.
+   against `worker-local-dev`; no Cloudflare account needed.
 
 8. **THE MAP UI HAS NO HOST HERE.** Nothing in this repo mounts `lib/mapUi/` or
    `lib/mapState/` — only ReTreever does, through `retreeverMapPorts.ts`. Five

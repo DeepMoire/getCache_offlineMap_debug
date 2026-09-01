@@ -52,7 +52,7 @@ let features: Array<{
 }> = [];
 // The engine reaches only the HOST PORT (testPorts below), never mapStore/anchors/liveFix directly — a fake port would make every tripwire here bake nothing and fail.
 
-vi.mock("../../r2Worker/local_dev/roads/packDownload", () => ({
+vi.mock("../../worker/worker-local-dev/roads/packDownload", () => ({
 	downloadV4Area: h.downloadV4Area,
 	areaCentreCovered: vi.fn(async (lng: number, lat: number) =>
 		h.tiles.has(h.key(lng, lat)),
@@ -155,7 +155,7 @@ import type {
 	FireRecord,
 	HostPorts,
 } from "../../shared/hostPorts";
-import { configureTilesHost } from "../../r2Worker/local_dev/tilesHost";
+import { configureTilesHost } from "../../worker/worker-local-dev/tilesHost";
 import { reconcileOnceForTest } from "./bakeService.svelte";
 
 const testPorts: HostPorts = {

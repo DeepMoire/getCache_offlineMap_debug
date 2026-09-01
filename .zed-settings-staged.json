@@ -1,0 +1,203 @@
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+//
+// Carried over from Devin/Windsurf on 2026-08-17. The originals are still at
+// ~/Library/Application Support/Devin/User/settings.json if anything is missing.
+// Pre-import backup of this file: settings.json.bak-2026-08-17
+{
+  // Coloured file icons, like material-icon-theme in Devin. Zed's built-in
+  // icons are monochrome; this needs the "Material Icon Theme" EXTENSION
+  // installed first (cmd-shift-x → search "Material Icon Theme" → Install).
+  // Until it is installed Zed falls back to its own set, so this line is
+  // harmless either way.
+  "agent_servers": {
+    "claude-acp": {
+      "type": "registry"
+    }
+  },
+  "proxy": "",
+  "icon_theme": {
+    "mode": "dark",
+    "light": "Material Icon Theme",
+    "dark": "Material Icon Theme"
+  },
+
+  // ── Panel sides ───────────────────────────────────────────────────────
+  // File tree on the LEFT, AI chat on the RIGHT — the Devin/VS Code layout.
+  // Zed defaults the agent panel to the right already, but it opened left
+  // here, so both are pinned explicitly.
+  "project_panel": {
+    "dock": "left",
+    "default_width": 260
+  },
+  "agent": {
+    // ── Tool permissions (the cmd-y "Allow" prompts) ────────────────────
+    //
+    // Added 2026-09-01. Zed ≥ 0.224.0 (this machine runs 1.17.2) gates every
+    // agent tool call on `agent.tool_permissions`. The old boolean for this
+    // was `always_allow_tool_actions`; it no longer does anything.
+    //
+    // "default": "allow" auto-approves tool calls instead of prompting.
+    // The `tools` block below carves out the handful of things that should
+    // STILL stop and ask, because they are destructive or touch secrets.
+    //
+    // Precedence, highest → lowest:
+    //   built-in rules (rm -rf / etc, cannot be overridden)
+    //   → always_deny → always_confirm → always_allow
+    //   → tools.<tool>.default → tool_permissions.default
+    //
+    // Patterns are Rust regex, case-insensitive unless "case_sensitive": true.
+    // Note that `edit_file`/`write_file`/`delete_path` patterns match the PATH,
+    // `terminal` matches the command string, and `fetch` matches the URL.
+    //
+    // To go fully hands-off, delete the whole "tools" block below and keep
+    // only "default": "allow". To go back to the old behaviour, change
+    // "default" to "confirm".
+    //
+    // ⚠️ This is NOT the same system as "sandbox_permissions" further down.
+    // tool_permissions = "may the agent call this tool at all".
+    // sandbox_permissions = "once the command is running, what may it touch".
+    // Turning one off does not silence the other, and edits to files inside
+    // Zed's own settings directories always prompt regardless.
+    "tool_permissions": {
+      "default": "allow",
+      "tools": {
+        "terminal": {
+          "always_confirm": [
+            { "pattern": "\\bsudo\\b" },
+            { "pattern": "\\bgit\\s+push\\b.*(--force|-f\\b)" },
+            { "pattern": "\\bgit\\s+reset\\s+--hard\\b" },
+            { "pattern": "\\bgit\\s+clean\\b.*-[a-z]*f" }
+          ],
+          "always_deny": [
+            // Pipe-an-internet-script-straight-into-a-shell.
+            { "pattern": "\\b(curl|wget)\\b[^|]*\\|\\s*(sudo\\s+)?(ba|z|fi)?sh\\b" }
+          ]
+        },
+        // Deletions are rare and unrecoverable, so they keep asking.
+        "delete_path": {
+          "default": "confirm"
+        },
+        "edit_file": {
+          "always_deny": [
+            { "pattern": "(^|/)\\.env" },
+            { "pattern": "(^|/)\\.ssh/" },
+            { "pattern": "\\.(pem|key|p12|keystore)$" },
+            { "pattern": "(^|/)secrets?/" }
+          ]
+        },
+        "write_file": {
+          "always_deny": [
+            { "pattern": "(^|/)\\.env" },
+            { "pattern": "(^|/)\\.ssh/" },
+            { "pattern": "\\.(pem|key|p12|keystore)$" },
+            { "pattern": "(^|/)secrets?/" }
+          ]
+        }
+      }
+    },
+    "sandbox_permissions": {
+      "write_paths": [
+        {
+          "requested": "/Users/chrisharris/DEV/fetch/~/.config/zed/bin",
+          "resolved": "/Users/chrisharris/DEV/fetch/~/.config/zed/bin"
+        },
+        {
+          "requested": "/Users/chrisharris/.config/zed",
+          "resolved": "/Users/chrisharris/.config/zed"
+        }
+      ],
+      "network_hosts": [
+        "zed.dev",
+        "raw.githubusercontent.com",
+        "api.github.com"
+      ]
+    },
+    "default_model": {
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "enable_thinking": true,
+      "effort": "high"
+    },
+    "favorite_models": [
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-5",
+        "enable_thinking": true,
+        "effort": "high"
+      }
+    ],
+    "dock": "right",
+    "default_width": 420
+  },
+  "outline_panel": {
+    "dock": "left"
+  },
+  "base_keymap": "VSCode",
+  "ui_font_size": 20.0,
+  "buffer_font_size": 15,
+  // Abyss, ported from Windsurf/Devin along with the 22 hand-tuned colour
+  // overrides that were in "workbench.colorCustomizations" there (selection
+  // purple, the find-match reds, the #1e1e3d terminal, the gold ansi yellows).
+  // The theme file is ~/.config/zed/themes/abyss-chris.json — a LOCAL theme,
+  // not an extension, so it survives without a marketplace install.
+  "theme": {
+    "mode": "dark",
+    "light": "Ayu Light",
+    "dark": "Ayu Dark"
+  },
+
+  // ── carried from Devin settings.json ──────────────────────────────────
+  // "editor.formatOnSave": true
+  "format_on_save": "on",
+
+  // "files.autoSave": "afterDelay" + "files.autoSaveDelay": 1000
+  "autosave": { "after_delay": { "milliseconds": 1000 } },
+
+  // Devin had "editor.fontSize": 13. Zed renders text natively rather than
+  // through a browser engine, so the same number reads smaller here — 15 above
+  // is the visual match. Adjust buffer_font_size if it looks wrong.
+
+  // The terminal lives in iTerm, not the editor.
+  "terminal": {
+    "font_size": 13
+  },
+
+  // ── Formatters & linters ──────────────────────────────────────────────
+  //
+  // Zed has NO formatter or linter of its own. It delegates:
+  //   "formatter": "language_server"  → whichever LSP owns the file formats it
+  //   "formatter": { "external": … }  → pipe the buffer through any CLI
+  //   "formatter": "prettier"         → the one formatter Zed actually bundles
+  // Linting is the same: every squiggle comes from a language server, so
+  // "which linter" is really "which language server is attached".
+  //
+  // This project (/Users/chrisharris/DEV/fetch) uses BIOME and nothing else —
+  // no .prettierrc, no root eslint config. So Biome formats and lints, and
+  // Prettier stays out of the way.
+  //
+  // ⚠️ Biome does NOT cover .svelte files. Two independent reasons:
+  //   1. biome.json's `files.includes` is only src/**/*, **/*.ts, **/*.js
+  //   2. Biome 2.x cannot parse Svelte single-file components at all
+  // So Svelte formatting comes from svelte-language-server instead. This is a
+  // SPLIT config on purpose — do not "simplify" it by pointing .svelte at
+  // Biome, it will silently stop formatting.
+  "languages": {
+    // Biome owns everything it can actually parse.
+    "TypeScript": { "formatter": { "language_server": { "name": "biome" } } },
+    "TSX": { "formatter": { "language_server": { "name": "biome" } } },
+    "JavaScript": { "formatter": { "language_server": { "name": "biome" } } },
+    "JSON": { "formatter": { "language_server": { "name": "biome" } } },
+    "JSONC": { "formatter": { "language_server": { "name": "biome" } } },
+    "CSS": { "formatter": { "language_server": { "name": "biome" } } },
+
+    // Svelte formats via its own language server — see the ⚠️ above.
+    "Svelte": { "formatter": "language_server" }
+  }
+}

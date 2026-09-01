@@ -8,7 +8,7 @@ vi.mock("../../../lib/onPhone/store/downloadGuard", () => ({
 	guardPackDownload: vi.fn(),
 }));
 
-import { configureTilesHost } from "../../../lib/r2Worker/local_dev/tilesHost";
+import { configureTilesHost } from "../../../lib/worker/worker-local-dev/tilesHost";
 
 // literal, not imported — host is module state set at boot, and a child may not import $lib.
 const TILES_HOST = "https://tiles-prod.getcache.org";
