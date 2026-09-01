@@ -327,9 +327,13 @@ export async function downloadV4Area(
 		throw err;
 	}
 	if (!res.ok) {
-		lit("err", `${res.status} ${res.statusText}`);
+		// The body is the Worker speaking plainly (e.g. the 422 names the archive's
+		// coverage and the fix) — the circuit note must carry it, not just the bare
+		// statusText the debugger can't act on.
+		const body = (await res.text().catch(() => "")).slice(0, 200);
+		lit("err", `${res.status} ${body || res.statusText}`);
 		throw new Error(
-			`[v4] pack fetch failed: ${res.status} ${res.statusText} — ${await res.text().catch(() => "")}`,
+			`[v4] pack fetch failed: ${res.status} ${res.statusText} — ${body}`,
 		);
 	}
 

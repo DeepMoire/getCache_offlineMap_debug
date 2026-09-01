@@ -315,11 +315,11 @@ describe("KIND_ALLOWLIST is the contract, not a Worker constant", () => {
       ]),
     );
     const rule = KIND_ALLOWLIST.places as { key: string; kinds: ReadonlySet<string> };
-    const { bytes } = filterLayerFeaturesByKind(l, "keep", rule.kinds, rule.key);
+    const bytes = filterLayerFeaturesByKind(l, rule.kinds, rule.key);
     expect(featureIds(bytes)).toEqual([1, 2]);
     // and the OLD way — matching `kind` — keeps nothing, which is the bug
-    const wrong = filterLayerFeaturesByKind(l, "keep", rule.kinds, "kind");
-    expect(featureIds(wrong.bytes)).toEqual([]);
+    const wrong = filterLayerFeaturesByKind(l, rule.kinds, "kind");
+    expect(featureIds(wrong)).toEqual([]);
   });
 
   it("filterMvtToLayers applies the contract by default — no allowlist passed", () => {
@@ -344,11 +344,11 @@ describe("KIND_ALLOWLIST is the contract, not a Worker constant", () => {
       { name: "earth", features: [{ id: 9, kind: "earth" }] },
     ]);
     const r = filterMvtToLayers(data, new Set(PACK_LAYER_NAMES));
-    expect(getLayer(r.data, "earth")).toBeNull();
-    expect(featureIds(getLayer(r.data, "roads")!)).toEqual([1]); // nothing dropped by kind
-    expect(featureIds(getLayer(r.data, "water")!)).toEqual([2, 4]); // stream dropped
-    expect(featureIds(getLayer(r.data, "places")!)).toEqual([5]); // bare locality dropped
-    expect(featureIds(getLayer(r.data, "pois")!)).toEqual([7]); // cafe dropped
+    expect(getLayer(r, "earth")).toBeNull();
+    expect(featureIds(getLayer(r, "roads")!)).toEqual([1]); // nothing dropped by kind
+    expect(featureIds(getLayer(r, "water")!)).toEqual([2, 4]); // stream dropped
+    expect(featureIds(getLayer(r, "places")!)).toEqual([5]); // bare locality dropped
+    expect(featureIds(getLayer(r, "pois")!)).toEqual([7]); // cafe dropped
   });
 });
 
@@ -362,7 +362,7 @@ describe("filterLayerFeaturesByKind", () => {
         { id: 4, kind: "bench" },
       ]),
     );
-    const { bytes } = filterLayerFeaturesByKind(l, "keep", ALLOW.pois);
+    const bytes = filterLayerFeaturesByKind(l, ALLOW.pois);
     expect(featureKinds(bytes).sort()).toEqual(["camp_site", "hospital"]);
   });
 
@@ -375,21 +375,8 @@ describe("filterLayerFeaturesByKind", () => {
         { id: 4, kind: "suburb" },
       ]),
     );
-    const { bytes } = filterLayerFeaturesByKind(l, "keep", ALLOW.places);
+    const bytes = filterLayerFeaturesByKind(l, ALLOW.places);
     expect(featureKinds(bytes).sort()).toEqual(["city", "town"]);
-  });
-
-  it("roads drop path → path gone, major_road kept", () => {
-    const l = new Uint8Array(
-      layer("roads", [
-        { id: 1, kind: "major_road" },
-        { id: 2, kind: "path" },
-        { id: 3, kind: "minor_road" },
-        { id: 4, kind: "path" },
-      ]),
-    );
-    const { bytes } = filterLayerFeaturesByKind(l, "drop", new Set(["path"]));
-    expect(featureKinds(bytes).sort()).toEqual(["major_road", "minor_road"]);
   });
 
   it("layer with no kind key → returned untouched", () => {
@@ -399,7 +386,7 @@ describe("filterLayerFeaturesByKind", () => {
         { id: 2, extraKeys: { name: "Oak Ave" } },
       ]),
     );
-    const { bytes } = filterLayerFeaturesByKind(l, "keep", ALLOW.pois);
+    const bytes = filterLayerFeaturesByKind(l, ALLOW.pois);
     expect(bytes).toEqual(l); // byte-identical, nothing nuked
     expect(countFeatures(bytes)).toBe(2);
   });
@@ -411,12 +398,12 @@ describe("filterLayerFeaturesByKind", () => {
         { id: 7, kind: "cafe" },
       ]),
     );
-    const { bytes } = filterLayerFeaturesByKind(l, "keep", ALLOW.pois);
+    const bytes = filterLayerFeaturesByKind(l, ALLOW.pois);
     // the hospital feature must survive intact (1 feature, kind hospital)
     expect(featureKinds(bytes)).toEqual(["hospital"]);
     // and re-running keep is idempotent
-    const again = filterLayerFeaturesByKind(bytes, "keep", ALLOW.pois);
-    expect(again.bytes).toEqual(bytes);
+    const again = filterLayerFeaturesByKind(bytes, ALLOW.pois);
+    expect(again).toEqual(bytes);
   });
 });
 
@@ -435,58 +422,12 @@ describe("filterMvtToLayers", () => {
       { name: "earth", features: [{ id: 5, kind: "land" }] },
     ]);
     const keep = new Set(["roads", "water", "pois"]); // earth absent
-    const r = filterMvtToLayers(data, keep, { allowlist: ALLOW });
+    const r = filterMvtToLayers(data, keep, ALLOW);
 
-    expect(getLayer(r.data, "earth")).toBeNull(); // earth gone
-    expect(getLayer(r.data, "water")).not.toBeNull(); // water kept
-    expect(featureKinds(getLayer(r.data, "water")!)).toEqual(["lake"]); // water untouched
-    expect(featureKinds(getLayer(r.data, "pois")!)).toEqual(["hospital"]); // cafe dropped
-  });
-
-  it("measures roads + path bytes; dropPaths strips them", () => {
-    const data = tile([
-      {
-        name: "roads",
-        features: [
-          { id: 1, kind: "major_road" },
-          { id: 2, kind: "path" },
-          { id: 3, kind: "path" },
-        ],
-      },
-    ]);
-    const keep = new Set(["roads"]);
-
-    const measured = filterMvtToLayers(data, keep, { dropPaths: false });
-    expect(measured.pathBytes).toBeGreaterThan(0);
-    expect(measured.roadsBytes).toBeGreaterThan(0);
-    expect(featureKinds(getLayer(measured.data, "roads")!).sort()).toEqual([
-      "major_road",
-      "path",
-      "path",
-    ]);
-
-    const stripped = filterMvtToLayers(data, keep, { dropPaths: true });
-    expect(featureKinds(getLayer(stripped.data, "roads")!)).toEqual(["major_road"]);
-    // stripped roads layer is smaller than measured
-    expect(stripped.roadsBytes).toBeLessThan(measured.roadsBytes);
-  });
-});
-
-describe("roads budget decision — ONE rule: default 40 km, bust → 25 km + drop paths", () => {
-  const BUDGET = 2_000_000;
-  // The worker measures roads bytes at the DEFAULT 40 km disc, then branches once.
-  const decide = (roadBytes40: number) =>
-    roadBytes40 <= BUDGET
-      ? { outerKm: 40, pathStripped: 0 }
-      : { outerKm: 25, pathStripped: 1 };
-
-  it("40 km roads ≤ 2 MB → ship 40 km with paths", () => {
-    expect(decide(300_000)).toEqual({ outerKm: 40, pathStripped: 0 });
-    expect(decide(2_000_000)).toEqual({ outerKm: 40, pathStripped: 0 }); // boundary: ≤ is inclusive
-  });
-  it("40 km roads > 2 MB → shrink to 25 km AND drop all paths (one move)", () => {
-    expect(decide(2_000_001)).toEqual({ outerKm: 25, pathStripped: 1 });
-    expect(decide(5_000_000)).toEqual({ outerKm: 25, pathStripped: 1 });
+    expect(getLayer(r, "earth")).toBeNull(); // earth gone
+    expect(getLayer(r, "water")).not.toBeNull(); // water kept
+    expect(featureKinds(getLayer(r, "water")!)).toEqual(["lake"]); // water untouched
+    expect(featureKinds(getLayer(r, "pois")!)).toEqual(["hospital"]); // cafe dropped
   });
 });
 
@@ -499,19 +440,8 @@ describe("filtered-to-nothing tiles (the 'Unimplemented type: 4' origin)", () =>
       { name: "landcover", features: [{ id: 2, kind: "forest" }] },
     ]);
     expect(data.byteLength).toBeGreaterThan(0); // the input IS a real tile
-    const r = filterMvtToLayers(data, new Set(["roads", "water"]), {
-      dropPaths: false,
-    });
-    expect(r.data.byteLength).toBe(0); // …and the output is a landmine
-  });
-
-  it("a roads-only tile of nothing but paths filters to ZERO bytes when paths drop", () => {
-    const data = tile([
-      { name: "roads", features: [{ id: 1, kind: "path" }, { id: 2, kind: "path" }] },
-    ]);
-    const r = filterMvtToLayers(data, new Set(["roads"]), { dropPaths: true });
-    // Roads layer may survive as an empty husk or vanish — either way it must not ship as a tile.
-    expect(featureKinds(getLayer(r.data, "roads") ?? new Uint8Array()).length).toBe(0);
+    const r = filterMvtToLayers(data, new Set(["roads", "water"]));
+    expect(r.byteLength).toBe(0); // …and the output is a landmine
   });
 
   it("THE GUARD: only non-empty tiles may enter a pack", () => {

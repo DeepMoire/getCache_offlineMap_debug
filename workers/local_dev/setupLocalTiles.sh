@@ -3,11 +3,23 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # CANADIAN sample, extracted from the Protomaps daily planet build (ODbL, no auth).
-# The old seed was a Firenze city sample — every North American pin came back with
-# empty roads while satellite (worldwide) worked, which read as "the map is broken".
-# The bbox covers the northern-BC test area (?at=58.7986,-122.6761).
-BBOX="-126.0,57.0,-120.0,60.0"
+# ⚠️ A pin OUTSIDE this bbox gets a loud 422 from the Worker (index.ts bounds
+# guard), never a silent empty pack. Two seeds have burned us by not covering
+# where anyone actually tested: Firenze, then northern BC (57–60°N) while every
+# fixture pin — Ottawa valley 45°N, Vancouver 49°N, Prince George 54°N — sat
+# outside it and "the map looked broken". This box covers the Ottawa/Montreal
+# corridor incl. the Ottawa-valley fixture pin. Testing elsewhere? Widen or move
+# the box, restart — the extract re-runs when the bbox changes.
+BBOX="-78.0,44.0,-72.5,46.5"
 SAMPLE_FILE="sampleBasemap.pmtiles"
+BBOX_MARKER="sampleBasemap.bbox"
+
+# Re-extract when the box changes — the sample on disk is only valid for the
+# bbox it was cut with.
+if [ -f "$SAMPLE_FILE" ] && [ "$(cat "$BBOX_MARKER" 2>/dev/null)" != "$BBOX" ]; then
+	echo "bbox changed ($(cat "$BBOX_MARKER" 2>/dev/null || echo none) → $BBOX) — re-extracting."
+	rm -f "$SAMPLE_FILE"
+fi
 
 # ⚠️ must match PMTILES_KEY / PACK_PMTILES_KEY in wrangler.toml — a mismatch silently reads as "no tiles", no error.
 OBJECT_KEY="planet.pmtiles"
@@ -69,6 +81,7 @@ if [ ! -f "$SAMPLE_FILE" ]; then
 	echo "Extracting the Canadian sample from ${BUILD_URL} (bbox ${BBOX})…"
 	echo "One-time, a few minutes — it reads only the slice it needs, never the whole planet."
 	"$PMT_BIN" extract "$BUILD_URL" "$SAMPLE_FILE" --bbox="$BBOX"
+	printf '%s' "$BBOX" > "$BBOX_MARKER"
 else
 	echo "Sample basemap already present — skipping extract."
 fi
@@ -85,6 +98,6 @@ echo "Loading into the LOCAL R2 simulator (.wrangler/state — never the cloud)�
 npx wrangler r2 object put "$BUCKET/$OBJECT_KEY" --file "$SAMPLE_FILE" --local
 
 echo
-echo "✅ Local tiles ready (northern BC sample). No Cloudflare account, no API token, no secret."
+echo "✅ Local tiles ready (bbox ${BBOX}). No Cloudflare account, no API token, no secret."
 echo "   Worker:  http://127.0.0.1:8787"
 echo "   In the app's CONFIG panel, pick local_dev."

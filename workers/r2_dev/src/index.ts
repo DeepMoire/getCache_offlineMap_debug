@@ -1,4 +1,4 @@
-// ⚠️ geometry in ./packBuilder.ts MUST stay in lockstep with `tilesForRings()` in ReTreever/src/lib/mobile/offlineV4/v4CloudflareTiles.ts — the phone's `areaTilesPresent` probe must agree on which tiles an area holds.
+// ⚠️ geometry in ./packBuilder.ts + lib/contract/grid.ts MUST stay in lockstep with the phone's probe (ReTreever's v4CloudflareTiles.ts `areaTilesPresent`) — both sides must agree on which tiles an area holds.
 
 import { gunzipSync, gzipSync } from "fflate";
 import {
@@ -13,7 +13,7 @@ import {
   fetchFires,
   MAX_RADIUS_KM,
 } from "../../../lib/r2Worker/firesWorker"; // beside fireFetch.ts, same repo
-import { buildPack, PIN_KEYED_FROM_PV } from "./packBuilder";
+import { buildPack } from "./packBuilder";
 
 /** Bump whenever the PACK CONTENTS change. Part of the edge cache key, so a
  *  new build can never be masked by a year-old immutable cache entry. */
@@ -317,14 +317,6 @@ export default {
       const lat = Number(url.searchParams.get("lat"));
       // LINE corridor: thin roads-only ribbon (its own cache entry — see cacheKey).
       const corridor = url.searchParams.get("ring") === "corridor";
-      // WHICH TILE-KEY SHAPE THIS CLIENT CAN READ. Every shipped client sends
-      // `pv`; a request without one is a probe, so it gets the current shape.
-      // See PIN_KEYED_FROM_PV in packBuilder.ts for why an old phone that is
-      // handed the new key renders no roads at all.
-      const pvRaw = Number(url.searchParams.get("pv"));
-      const packFormatVersion = Number.isFinite(pvRaw)
-        ? pvRaw
-        : PIN_KEYED_FROM_PV;
       if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
         return new Response("Bad Request — expected ?lng=<num>&lat=<num>", {
           status: 400,
@@ -344,16 +336,6 @@ export default {
       // 3,471,606-byte response built by the previous code.
       const keyUrl = new URL(url.toString());
       keyUrl.searchParams.set("build", PACK_BUILD);
-      // ⛔ THE KEY SHAPE IS PART OF THE CACHE KEY. Two fleets now get two
-      // different packs for the SAME (lng,lat), so without this the first
-      // caller of an area poisons it for the other for a year — an old phone
-      // would serve a pin-keyed pack (no roads) or a new phone a cell-keyed
-      // one (the 50 km bug back). Collapsed to the BRANCH, not the raw pv, so
-      // pv 15 and pv 20 still share one entry.
-      keyUrl.searchParams.set(
-        "keyShape",
-        packFormatVersion >= PIN_KEYED_FROM_PV ? "pin" : "cell",
-      );
       const cacheKey = new Request(keyUrl.toString(), { method: "GET" });
       const edge = caches.default;
       const cached = await edge.match(cacheKey);
@@ -378,7 +360,7 @@ export default {
         const tH = Date.now();
         await archive.getHeader(); // surface a bad archive as a thrown error → 502
         const tLoop = Date.now();
-        pack = await buildPack(archive, lng, lat, corridor, diag, packFormatVersion);
+        pack = await buildPack(archive, lng, lat, corridor, diag);
         diag.r2Reads = stats.reads;
         diag.r2Bytes = stats.bytes;
         diag.headerMs = tLoop - tH;
@@ -408,7 +390,7 @@ export default {
         // the response was byte-identical, because the edge replayed a year-old
         // immutable entry).
         "X-Pack-Build": PACK_BUILD,
-        "X-Diag": `disc=${diag.discTiles} reads=${diag.r2Reads} rbytes=${diag.r2Bytes} headerMs=${diag.headerMs} loopMs=${diag.loopMs} outerKm=${diag.outerKm} pathStripped=${diag.pathStripped} roadsBytes=${diag.roadsBytes} pv=${packFormatVersion} keys=${packFormatVersion >= PIN_KEYED_FROM_PV ? "pin" : "cell"}`,
+        "X-Diag": `disc=${diag.discTiles} reads=${diag.r2Reads} rbytes=${diag.r2Bytes} headerMs=${diag.headerMs} loopMs=${diag.loopMs} outerKm=${diag.outerKm} cells=${diag.cells} features=${diag.blobFeatures} bytes=${diag.blobBytes}`,
         "X-Pack-Cache": "MISS",
         "Cache-Control": "public, max-age=31536000, immutable",
       };
