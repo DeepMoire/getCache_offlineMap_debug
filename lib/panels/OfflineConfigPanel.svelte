@@ -35,8 +35,8 @@ let {
 	}[];
 } = $props();
 
-// THREE tiers: r2_prod / r2_dev (cloud, Chris's Cloudflare account) and local_dev (developer's own machine) — see WorkerTarget in tilesHost.ts.
-// ⚠️ Don't remove local_dev — it's the only tier an outside contributor can reach without the Bitwarden-only Cloudflare key (removed 27 Aug, restored same day).
+// THREE WORKERS, ONE BUCKET: worker-cloud-prod / worker-cloud-dev (deployed to Cloudflare) and worker-local-dev (the developer's own machine) — see WorkerTarget in tilesHost.ts.
+// ⚠️ Don't remove worker-local-dev — it's the only worker an outside contributor can reach without the Bitwarden-only Cloudflare key (removed 27 Aug, restored same day).
 // This list is the ONLY place a row is declared — probing and greying-out read from it; adding a tier is one entry.
 // Changing the target re-points the NEXT request; in-flight ones finish where they started.
 // ⚠️ init from getWorkerTarget(), never a literal — a hardcoded "production" painted prod-selected until onMount ran.
@@ -47,21 +47,25 @@ const TARGETS: {
 	label: string;
 	hint: string;
 }[] = [
+	// Labels renamed 31 Aug 2026 on Chris's instruction: these rows pick a WORKER
+	// (the code, where it runs) — there is ONE R2 bucket behind all three, so a
+	// label starting with "r2_" read as "which data", the exact confusion that
+	// cost the "roads don't work on dev" day. worker-<where>-<flavor>, always.
 	{
 		id: "production",
-		label: "r2_prod",
-		hint: "tiles-prod.getcache.org — what every shipped phone talks to. Deployed by ./deployProduction.sh, which asks for confirmation first.",
+		label: "worker-cloud-prod",
+		hint: "tiles-prod.getcache.org — what every shipped phone talks to. Reads THE one R2 bucket. Deployed by ./deployProduction.sh, which asks for confirmation first.",
 	},
 	{
 		id: "r2Dev",
-		label: "r2_dev",
-		hint: "tiles-dev.getcache.org — a DEPLOYED sandbox worker reading the same R2 data as r2_prod, so any difference between them is code, never data. No shipped phone ever reads it.",
+		label: "worker-cloud-dev",
+		hint: "tiles-dev.getcache.org — a DEPLOYED sandbox worker reading the SAME one R2 bucket as prod, so any difference between them is code, never data. No shipped phone ever reads it.",
 	},
 	{
 		id: "localDev",
-		label: "local_dev",
+		label: "worker-local-dev",
 		// ⚠️ Interpolated, never retyped — a hardcoded hostname here drifts from the constant (this row said "127.0.0.1:8787" stale for a day).
-		hint: `${LOCAL_DEV_HOST} — \`npm run dev:local\` in workers/offline-tiles. THE ONLY TARGET A CONTRIBUTOR CAN REACH: that script seeds wrangler's local R2 with a public sample archive, so it needs no Cloudflare account and no key. Greyed out until that terminal is running, which is expected, not broken.`,
+		hint: `${LOCAL_DEV_HOST} — \`npm run dev:local\` in workers/local_dev serves a free sample slice (no Cloudflare account); \`npm run dev:cloud\` runs the SAME local code against the one real R2 bucket (needs wrangler login). Greyed out until that terminal is running, which is expected, not broken.`,
 	},
 ];
 
