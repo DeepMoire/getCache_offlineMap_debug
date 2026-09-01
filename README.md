@@ -10,7 +10,9 @@ Here are the repos you can see yourself:
 [rapper GitHub](https://github.com/Ground-Truth-Data/rapper)
 
 Also to setup can simply run:
+```bash
 npm create @retreever/rapper@latest rapper -- --offline
+```
 
 I made an [explainer video about the “blobs”](https://youtu.be/ksRR6UpchDc).
  Very basically I want the "blobs" to be 1) Always on (nothing appears or disapears as you zoom in or out, like satelite images but just the minimal vectored roads) 2) tiles should arrive fast as possible 3) tiles should render fast as possible
