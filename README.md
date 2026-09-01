@@ -11,8 +11,11 @@ Here are the repos you can see yourself:
 
 Also to setup can simply run:
 ```bash
-npm create @retreever/rapper@latest rapper -- --offline
+npm create --min-release-age=0 @retreever/rapper@latest rapper -- --getCache_OfflineMap
 ```
+(`--min-release-age=0` is needed while the package is under a week old — npm
+hides fresh versions by default and reports `ENOVERSIONS`, as if nothing were
+published. The component name is case-sensitive.)
 
 I made an [explainer video about the “blobs”](https://youtu.be/ksRR6UpchDc).
  Very basically I want the "blobs" to be 1) Always on (nothing appears or disapears as you zoom in or out, like satelite images but just the minimal vectored roads) 2) tiles should arrive fast as possible 3) tiles should render fast as possible
@@ -27,7 +30,7 @@ Let me know if you have any questions.
 ## Day one
 
 ```bash
-npm create -y @retreever/rapper@latest <folder> -- --getCache_OfflineMap
+npm create -y --min-release-age=0 @retreever/rapper@latest <folder> -- --getCache_OfflineMap
 cd <folder> && npm install && npm run dev
 ```
 
