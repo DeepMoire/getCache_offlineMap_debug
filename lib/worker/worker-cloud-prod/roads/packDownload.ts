@@ -10,6 +10,7 @@ import {
 import { BLOB_RADIUS_KM, BLOB_ZOOMS } from "../../../contract/roadBlob";
 import { pinTileKey } from "../../../contract/grid";
 import { keysForAddress } from "../../../onPhone/roads/pinTileLookup";
+import { mergeSameFrameTiles } from "../../../onPhone/roads/tileMerge";
 import { cellTileKey, cellsFor } from "../../../contract/grid";
 import { packUrl } from "../tilesHost";
 
@@ -131,7 +132,7 @@ registerWipeLatch({
 	unlatch: () => {},
 });
 
-/** ⛔ merges EVERY owning pin (byte-concat is valid MVT); null on miss — never another pin's bytes. */
+/** ⛔ merges EVERY owning pin into ONE layer-merged tile (byte-concat keeps only the last same-named layer); null on miss — never another pin's bytes. */
 export async function idbGetTileForAddress(
 	z: number,
 	x: number,
@@ -149,14 +150,8 @@ export async function idbGetTileForAddress(
 	if (!parts.length) return null;
 	if (parts.length === 1) return parts[0];
 
-	const total = parts.reduce((n, b) => n + b.byteLength, 0);
-	const out = new Uint8Array(total);
-	let off = 0;
-	for (const b of parts) {
-		out.set(new Uint8Array(b), off);
-		off += b.byteLength;
-	}
-	return out.buffer;
+	// ⛔ NOT byte-concat: every blob has a layer named `roads`, and the MVT parser indexes layers BY NAME — the LAST duplicate silently wins, so the whole tile flips to one pin (the farthest) whenever another pin lands nearby: roads vanish and appear in axis-aligned strips along the two radius boxes (2026-09-01). Merge at the LAYER level instead — one `roads`, every owner's features, tags re-indexed into merged tables.
+	return mergeSameFrameTiles(parts.map((b) => new Uint8Array(b))).buffer;
 }
 
 export async function idbGetTile(key: string): Promise<ArrayBuffer | null> {
