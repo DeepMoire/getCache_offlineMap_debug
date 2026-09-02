@@ -2,7 +2,7 @@
  * ⚠️ satellite is keyed by pin (`${lng},${lat}`, unique) — roads by grid cell (`${z}/${ix}/${iy}`) would let two pins share one square and serve each other's roads.
  * ⚠️ no I/O decisions in here beyond the key set — pure functions over the keys, testable without a database.
  */
-import { isPinTileKey } from "../../contract/grid";
+import { isPinTileKey, isShallowTileKey, SHALLOW_Z } from "../../contract/grid";
 import { blobHasZoom } from "../../contract/roadBlob";
 
 /** A stored roads key, split into the pin that owns it and the tile it draws. */
@@ -16,6 +16,20 @@ export interface PinTile {
 export function parsePinTileKey(key: string): PinTile | null {
 	if (!isPinTileKey(key)) return null;
 	// pin / "<lng>,<lat>" / z / x / y
+	const parts = key.split("/");
+	if (parts.length !== 5) return null;
+	const [lngStr, latStr] = parts[1].split(",");
+	const lng = Number(lngStr);
+	const lat = Number(latStr);
+	if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+	const address = `${parts[2]}/${parts[3]}/${parts[4]}`;
+	return { key, lng, lat, address };
+}
+
+/** A stored SHALLOW-tier key, split the same way as a pin key. */
+export function parseShallowTileKey(key: string): PinTile | null {
+	if (!isShallowTileKey(key)) return null;
+	// shallow / "<lng>,<lat>" / z / x / y
 	const parts = key.split("/");
 	if (parts.length !== 5) return null;
 	const [lngStr, latStr] = parts[1].split(",");
@@ -114,4 +128,30 @@ export function keyForAddress(
 	y: number,
 ): string | null {
 	return keysForAddress(stored, z, x, y)[0] ?? null;
+}
+
+/**
+ * The SHALLOW tier's owner lookup — the same ALL-owners law as keysForAddress,
+ * but over `shallow/…` keys and ⛔ WITHOUT blobHasZoom: that filter is the main
+ * path's z6 quarantine (pv46), and z6 is this tier's own zoom. Membership here
+ * is z === SHALLOW_Z — anything else in the shallow store is foreign data and
+ * answers nothing, at any request zoom.
+ */
+export function shallowKeysForAddress(
+	stored: Iterable<string>,
+	z: number,
+	x: number,
+	y: number,
+): string[] {
+	const centre = tileCentre(z, x, y);
+	const hits: Array<{ key: string; d: number }> = [];
+	for (const key of stored) {
+		const pt = parseShallowTileKey(key);
+		if (!pt) continue;
+		if (Number(pt.address.split("/")[0]) !== SHALLOW_Z) continue;
+		if (!containsAddress(z, x, y, pt.address)) continue;
+		hits.push({ key, d: d2(centre.lng, centre.lat, pt.lng, pt.lat) });
+	}
+	hits.sort((a, b) => a.d - b.d);
+	return hits.map((h) => h.key);
 }

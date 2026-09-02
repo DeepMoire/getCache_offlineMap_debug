@@ -29,14 +29,26 @@ const LNG = -123.0694;
 const LAT = 49.2606;
 
 describe("buildPack keys every tile by the PIN", () => {
-	it("pin/… keys only — a cell key is shared by neighbouring pins (the 50 km bug)", async () => {
+	it("pin/… or shallow/… keys only — a cell key is shared by neighbouring pins (the 50 km bug)", async () => {
 		const { buildPack } = await import("./packBuilder");
 		const keys = keysOf(await buildPack(archive, LNG, LAT));
 
 		expect(keys.length).toBeGreaterThan(0);
 		for (const k of keys) {
-			expect(k).toMatch(/^pin\/-?[\d.]+,-?[\d.]+\/\d+\/\d+\/\d+$/);
+			expect(k).toMatch(/^(pin|shallow)\/-?[\d.]+,-?[\d.]+\/\d+\/\d+\/\d+$/);
 		}
+	});
+
+	it("the shallow tier ships z6 keys under shallow/ — never in the pin/ namespace (pv46)", async () => {
+		// a z6 in the main namespace is the direction1/pv46 incident: the main
+		// lookup's containment would serve it mis-framed to z8 requests.
+		const { buildPack } = await import("./packBuilder");
+		const keys = keysOf(await buildPack(archive, LNG, LAT));
+		const shallow = keys.filter((k) => k.startsWith("shallow/"));
+		expect(shallow.length).toBeGreaterThanOrEqual(1);
+		for (const k of shallow) expect(k).toMatch(/^shallow\/-?[\d.]+,-?[\d.]+\/6\/\d+\/\d+$/);
+		const pins = keys.filter((k) => k.startsWith("pin/"));
+		for (const k of pins) expect(k).toMatch(/^pin\/-?[\d.]+,-?[\d.]+\/8\/\d+\/\d+$/);
 	});
 
 	it("two different pins never share a key", async () => {

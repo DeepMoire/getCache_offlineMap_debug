@@ -30,6 +30,12 @@
  * (roadBlob.ts). ONE source spans exactly those levels, and every road layer
  * reads it. There is no relay, no band, and no zoom number written here.
  *
+ * The ONE exception (2026-09-02, direction2.3): the SHALLOW tier — a separate
+ * z6 store (grid.ts: SHALLOW_Z) with its OWN source, painted only in the
+ * camera z6–z7 window where the disc is silent by contract. It is a second
+ * STORE, not a band of the disc — the ⛔ below still holds for the disc itself,
+ * whose span stays whole and unwritten here.
+ *
  * ⛔ THERE USED TO BE FOUR SOURCES with hand-written bands (wide z1-12, ring
  * z12-13, mid z13-15, core z15+). That was correct only while the pack held
  * two levels. Once the Worker saved every level, the bands became four ways to
@@ -59,7 +65,10 @@ import {
 } from "./offlineColors";
 import {
 	RAW_SOURCE,
+	SHALLOW_SOURCE,
 } from "../roads/rawWallProtocol";
+import { BLOB_MIN_Z } from "../../contract/roadBlob";
+import { SHALLOW_Z } from "../../contract/grid";
 
 /** The layer per-area satellite photos mount BEFORE — i.e. directly under the
  *  roads, directly over the water fill. The page's reconcile reads this rather
@@ -201,6 +210,27 @@ export function wallLayers(): mapboxgl.LayerSpecification[] {
 		// here and every one read on screen as a second, bigger shape appearing
 		// and vanishing ("an unbelievable tripping hazard"). The Worker derives
 		// both from the same km for exactly this reason.
+		// ── 2a) THE SHALLOW RELAY (camera z6–z7) ────────────────────────────
+		// The z6 tier (grid.ts: SHALLOW_Z, its own IDB store + source via
+		// rtraw://shallow) keeps the pin's roads on screen below the disc's
+		// floor — the disc is silent under BLOB_MIN_Z by contract, and stretching
+		// a z8 tile down was the zoom<8 distortion bug (2026-09-01).
+		// SAME colour law as the disc (kind-based, no zoom term); the window is
+		// DERIVED from the constants, never hand-written. maxzoom = BLOB_MIN_Z
+		// hands over to the disc exactly where its own floor begins — and hides
+		// this layer above z8 so the shallow source is never overzoom-queried
+		// where the disc already paints.
+		{
+			id: "v4-roads-shallow",
+			type: "line",
+			source: SHALLOW_SOURCE,
+			"source-layer": "roads",
+			minzoom: SHALLOW_Z,
+			maxzoom: BLOB_MIN_Z,
+			filter: ROADS_ONLY,
+			paint: { "line-color": ROAD_COLOR, "line-width": ROAD_WIDTH },
+		} as mapboxgl.LayerSpecification,
+
 		// THE ROADS. One layer, one source, no zoom window — the source's own
 		// span (BLOB_MIN_Z→BLOB_MAX_Z) already says exactly which levels exist,
 		// and MapLibre overzooms above the deepest one for free.

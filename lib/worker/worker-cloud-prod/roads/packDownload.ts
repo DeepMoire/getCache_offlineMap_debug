@@ -9,18 +9,30 @@ import {
 } from "../../../shared/sandboxDbNames";
 import { BLOB_RADIUS_KM, BLOB_ZOOMS } from "../../../contract/roadBlob";
 import { pinTileKey } from "../../../contract/grid";
-import { keysForAddress } from "../../../onPhone/roads/pinTileLookup";
+import { keysForAddress, shallowKeysForAddress } from "../../../onPhone/roads/pinTileLookup";
 import { mergeSameFrameTiles } from "../../../onPhone/roads/tileMerge";
-import { cellTileKey, cellsFor } from "../../../contract/grid";
+import {
+	cellTileKey,
+	cellsFor,
+	isShallowTileKey,
+	shallowCellsFor,
+	shallowTileKey,
+} from "../../../contract/grid";
 import { packUrl } from "../tilesHost";
 
 // ⚠️ bump on ANY pack wire/content change — edge cache is immutable, keyed by the full URL
-export const PACK_FORMAT_VERSION = 45;
+// ⚠️ 46 is SKIPPED, never reuse it — poisoned by direction1's z6/z7 packs and the edge cache is immutable; 47 = the shallow z6 tier (fleet-wide re-download, intended rollout)
+export const PACK_FORMAT_VERSION = 47;
 
 // renaming the DB wipes the pile → fleet-wide re-download
 export const DB_NAME = "gc-offlineTiles";
 const STORE = "tiles";
-const DB_VERSION = 1;
+// ⛔ the shallow z6 tier's OWN store — a z6 tile next to `pin/…` z8 keys in one
+// store is the direction1/pv46 incident (the main lookup's containment would
+// serve it mis-framed to z8 requests). Physical isolation beats quarantine.
+const STORE_SHALLOW = "shallowTiles";
+// v2: adds STORE_SHALLOW. Devices upgrade in place; no data moves.
+export const DB_VERSION = 2;
 
 // ⚠️ sweep must run AFTER the migration settles — the source is also a sweep match
 const TILES_MIGRATION_SOURCE = "rt-tiles-v3";
@@ -60,6 +72,8 @@ function openDb(): Promise<IDBDatabase> {
 		req.onupgradeneeded = () => {
 			if (!req.result.objectStoreNames.contains(STORE))
 				req.result.createObjectStore(STORE);
+			if (!req.result.objectStoreNames.contains(STORE_SHALLOW))
+				req.result.createObjectStore(STORE_SHALLOW);
 		};
 		req.onsuccess = () => resolve(req.result);
 		req.onerror = () => reject(req.error);
@@ -75,11 +89,15 @@ async function idbPutMany(
 	if (!items.length) return;
 	const db = await openDb();
 	await new Promise<void>((resolve, reject) => {
-		const tx = db.transaction(STORE, "readwrite");
-		const store = tx.objectStore(STORE);
+		// ⛔ key ROUTER — `shallow/…` keys land in their OWN store, never next to
+		// the z8 `pin/…` pile (pv46). Both stores in ONE transaction: a pack is
+		// all-or-nothing across tiers.
+		const tx = db.transaction([STORE, STORE_SHALLOW], "readwrite");
 		let done = 0;
 		for (const [k, b] of items) {
-			const req = store.put(b, k);
+			const req = tx
+				.objectStore(isShallowTileKey(k) ? STORE_SHALLOW : STORE)
+				.put(b, k);
 			req.onsuccess = () => onStored?.(++done);
 		}
 		tx.oncomplete = () => {
@@ -154,6 +172,12 @@ const MERGED_CACHE_MAX = 512;
 let allKeysCache: Set<string> | null = null;
 let allKeysLoad: Promise<Set<string>> | null = null;
 let allKeysEpoch = 0;
+/** The shallow tier's PARALLEL caches — same shape, own namespace; `shallow/…` keys never touch the z8 caches and vice versa. */
+const shallowMerged = new Map<string, { owners: string[]; buf: ArrayBuffer }>();
+const inFlightShallowReads = new Map<string, Promise<ArrayBuffer | null>>();
+let shallowKeysCache: Set<string> | null = null;
+let shallowKeysLoad: Promise<Set<string>> | null = null;
+let shallowKeysEpoch = 0;
 
 function invalidateTileCaches(): void {
 	allKeysEpoch++;
@@ -161,6 +185,11 @@ function invalidateTileCaches(): void {
 	allKeysLoad = null;
 	mergedTiles.clear();
 	inFlightReads.clear();
+	shallowKeysEpoch++;
+	shallowKeysCache = null;
+	shallowKeysLoad = null;
+	shallowMerged.clear();
+	inFlightShallowReads.clear();
 }
 
 /**
@@ -175,12 +204,20 @@ function dropTilesFor(keys: Iterable<string>): void {
 			return;
 		}
 		mergedTiles.delete(`${addr.z}/${addr.x}/${addr.y}`);
+		shallowMerged.delete(`${addr.z}/${addr.x}/${addr.y}`);
 	}
 }
 
 function noteKeysWritten(keys: readonly string[]): void {
-	if (!allKeysCache) return;
-	for (const k of keys) allKeysCache.add(k);
+	// route by key host — a shallow key written into allKeysCache would make the
+	// MAIN lookup's zoom filter see it (and a pin key in the shallow set is foreign)
+	for (const k of keys) {
+		if (isShallowTileKey(k)) {
+			if (shallowKeysCache) shallowKeysCache.add(k);
+		} else if (allKeysCache) {
+			allKeysCache.add(k);
+		}
+	}
 	dropTilesFor(keys);
 }
 
@@ -294,6 +331,65 @@ export async function idbGetTile(key: string): Promise<ArrayBuffer | null> {
 		};
 		req.onerror = () => resolve(null);
 	});
+}
+
+/** The shallow tier's raw read — same long-lived handle, its OWN store. */
+export async function idbGetShallowTile(key: string): Promise<ArrayBuffer | null> {
+	if (!rawDb) {
+		rawDb = await openDb();
+		// a version change can close this out from under us — reopen on next read
+		rawDb.onclose = () => {
+			rawDb = null;
+		};
+	}
+	const db = rawDb;
+	return new Promise<ArrayBuffer | null>((resolve) => {
+		let tx: IDBTransaction;
+		try {
+			tx = db.transaction(STORE_SHALLOW, "readonly");
+		} catch {
+			rawDb = null;
+			resolve(null);
+			return;
+		}
+		const req = tx.objectStore(STORE_SHALLOW).get(key);
+		req.onsuccess = () => {
+			// never hand 0 bytes to the protobuf parser
+			const b = req.result as ArrayBuffer | undefined;
+			resolve(b?.byteLength ? b : null);
+		};
+		req.onerror = () => resolve(null);
+	});
+}
+
+/**
+ * The SHALLOW store's key set — cached exactly like the main one. Probes and the
+ * shallow read path never re-open IndexedDB per call.
+ */
+export async function getAllShallowTileKeys(): Promise<Set<string>> {
+	if (shallowKeysCache) return shallowKeysCache;
+	if (!shallowKeysLoad) {
+		const epoch = shallowKeysEpoch;
+		shallowKeysLoad = (async () => {
+			const db = await openDb();
+			const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+				const tx = db.transaction(STORE_SHALLOW, "readonly");
+				const req = tx.objectStore(STORE_SHALLOW).getAllKeys();
+				req.onsuccess = () => resolve(req.result);
+				req.onerror = () => reject(req.error);
+			});
+			db.close();
+			const loaded = new Set(keys.map(String));
+			// a wipe/reset that fired DURING the load must not resurrect a stale set
+			if (epoch === shallowKeysEpoch) shallowKeysCache = loaded;
+			return loaded;
+		})();
+	}
+	try {
+		return await shallowKeysLoad;
+	} finally {
+		shallowKeysLoad = null;
+	}
 }
 
 async function idbCount(): Promise<number> {
@@ -457,6 +553,11 @@ export interface V4LayerStat {
 	bytes: number;
 }
 
+/** The shallow tier's own area keys — `shallow/…` pin-prefixed z6 (coverage probes / deletes). */
+export function shallowAreaTileKeys(lng: number, lat: number): string[] {
+	return shallowCellsFor(lng, lat).map((c) => shallowTileKey(lng, lat, c));
+}
+
 export function areaTileKeys(lng: number, lat: number): string[] {
 	// ⛔ keyed by the PIN, not the bare cell — a shared cell key served one pin's roads to another
 	return cellsFor(lng, lat).map((c) => pinTileKey(lng, lat, c));
@@ -513,7 +614,10 @@ export function parseTileAddress(
 	key: string,
 ): { z: number; x: number; y: number } | null {
 	const parts = key.split("/");
-	const tail = parts.length === 5 && parts[0] === "pin" ? parts.slice(2) : parts;
+	const tail =
+		parts.length === 5 && (parts[0] === "pin" || parts[0] === "shallow")
+			? parts.slice(2)
+			: parts;
 	if (tail.length !== 3) return null;
 	const [z, x, y] = tail.map(Number);
 	if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y))
@@ -639,6 +743,84 @@ export async function getAllTileKeys(): Promise<Set<string>> {
 		return await allKeysLoad;
 	} finally {
 		allKeysLoad = null;
+	}
+}
+
+/**
+ * The shallow tier's address read — the SAME laws as idbGetTileForAddress (all
+ * owners layer-merged, memoized, fresh copy per caller) but over `shallow/…`
+ * keys in their own store. Serves `rtraw://shallow/{z}/{x}/{y}` at camera z6–z7.
+ */
+export async function idbGetShallowTileForAddress(
+	z: number,
+	x: number,
+	y: number,
+): Promise<ArrayBuffer | null> {
+	const addr = `${z}/${x}/${y}`;
+	const job = inFlightShallowReads.get(addr) ?? computeShallowTileForAddress(z, x, y, addr);
+	const buf = await job;
+	// ⚠️ a fresh copy per caller — MapLibre TRANSFERS the buffer to its worker, detaching it
+	return buf ? buf.slice(0) : null;
+}
+
+function computeShallowTileForAddress(
+	z: number,
+	x: number,
+	y: number,
+	addr: string,
+): Promise<ArrayBuffer | null> {
+	const job = (async () => {
+		const keys = shallowKeysForAddress(await getAllShallowTileKeys(), z, x, y);
+		if (!keys.length) return null;
+		const cached = shallowMerged.get(addr);
+		if (
+			cached &&
+			cached.owners.length === keys.length &&
+			cached.owners.every((k, i) => k === keys[i])
+		) {
+			return cached.buf; // same owner set → the merged bytes are still the union
+		}
+		if (keys.length === 1) {
+			const solo = await idbGetShallowTile(keys[0]);
+			if (!solo) return null;
+			cacheShallowTile(addr, keys, solo);
+			return solo;
+		}
+		const parts: ArrayBuffer[] = [];
+		for (const k of keys) {
+			const b = await idbGetShallowTile(k);
+			if (b?.byteLength) parts.push(b);
+		}
+		if (!parts.length) return null;
+		if (parts.length === 1) {
+			cacheShallowTile(addr, keys, parts[0]);
+			return parts[0];
+		}
+		// ⛔ layer-merge, never byte-concat — same last-layer-wins law as the main path (2026-09-01 strips bug)
+		if (!mergedReads.has(`shallow:${addr}`)) {
+			mergedReads.add(`shallow:${addr}`);
+			console.warn(`[roads/shallow] merged ${parts.length} pins' blobs at ${addr}`);
+		}
+		const merged = mergeSameFrameTiles(parts.map((b) => new Uint8Array(b))).buffer;
+		cacheShallowTile(addr, keys, merged);
+		return merged;
+	})();
+	inFlightShallowReads.set(addr, job);
+	void job
+		.catch(() => {})
+		.then(() => {
+			if (inFlightShallowReads.get(addr) === job) inFlightShallowReads.delete(addr);
+		});
+	return job;
+}
+
+/** Insertion-order LRU for the shallow tier — same cap law as cacheMergedTile. */
+function cacheShallowTile(addr: string, owners: string[], buf: ArrayBuffer): void {
+	shallowMerged.delete(addr);
+	shallowMerged.set(addr, { owners, buf });
+	if (shallowMerged.size > MERGED_CACHE_MAX) {
+		const oldest = shallowMerged.keys().next();
+		if (!oldest.done) shallowMerged.delete(oldest.value);
 	}
 }
 

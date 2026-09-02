@@ -245,11 +245,16 @@ space. No decoding, no re-projection.
 ### 6.1 ⛔ MapLibre CANNOT carry a GPS point in a tile request
 
 This is the central fact of the whole subsystem and it was undocumented for
-five months. A tile source has exactly one URL template:
+five months. A tile source has exactly one URL template — and since
+direction2.3 there are TWO tiers, each its own template, store and source:
 ```
-rtraw://disc/{z}/{x}/{y}        (RAW_TILE_URL, lib/onPhone/roads/rawWallProtocol.ts)
+rtraw://disc/{z}/{x}/{y}       (RAW_TILE_URL — the z8+ main disc)
+rtraw://shallow/{z}/{x}/{y}     (SHALLOW_TILE_URL — the z6 tier, its own IDB store)
 ```
 MapLibre fills in three integers and asks. **There is nowhere to put a pin.**
+The URL's host segment names the TIER; the handler dispatches `shallow` to
+`idbGetShallowTileForAddress` and everything else to the disc's
+`idbGetTileForAddress` — the two namespaces never answer each other's zooms.
 
 So the protocol handler receives `z/x/y` and must resolve it back to owners
 itself (§5.2). This is why the key design in §5.1 matters: it is the only place

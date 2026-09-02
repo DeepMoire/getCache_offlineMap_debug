@@ -1,7 +1,7 @@
 // ⛔ THE BLOB — nothing else in V5 may name a radius or a zoom; everything imports from here or from grid.ts.
 
 import { BLOB_TILE_Z } from "./grid";
-export { BLOB_TILE_Z, GRID_RADIUS_KM } from "./grid";
+export { BLOB_TILE_Z, GRID_RADIUS_KM, SHALLOW_Z } from "./grid";
 
 // ⛔ there is no CELL_KM — the cell is a z10 slippy tile which narrows with cos(lat) (~39km equator, ~19km at lat 60); a single constant would silently under-cover in the north.
 export function cellKmAt(lat: number): number {

@@ -7,13 +7,23 @@ import { km } from "./geo";
 /** THE RADIUS. Every road within this distance of the pin is in the blob. */
 export const GRID_RADIUS_KM = 30;
 
-/** The zoom the blob is ADDRESSED at — the shallowest zoom the roads are visible at. */
+/** The zoom the blob is ADDRESSED at — the shallowest zoom the MAIN tier is visible at. */
 // ⛔ This is an address, not a size — the blob's CONTENTS are always the radius around the pin (radiusBox), regardless of this number.
-// ⚠️ It IS the visibility floor: MapLibre overzooms up but never scales a tile down, so below this zoom the map goes silently blank. Don't fix by lowering this constant — the real fix is a separate zoom-out tier, not yet built.
+// ⚠️ It IS the visibility floor of the MAIN tier: MapLibre overzooms up but never scales a tile down, so below this zoom the main source is silent. The fix is SHALLOW_Z below — never lower this constant.
 // ⛔ The blob is framed to the TILE (not the pin), so a pin near a tile edge DOES need its neighbours — cellsFor returns every touched cell (up to 4), delivered as one request.
 export const BLOB_TILE_Z = 8;
 
-// ⚠️ Don't split the key zoom from the address zoom on its own — a shallower address was tried and abandoned (it merges too many pins' blobs per request) and reintroduces the storage collision. The real fix is a shallow IMAGE tier below z8 (see EXPLAINER.md), not yet built.
+/**
+ * THE SHALLOW TIER's zoom — one generalized z6 tile per pin so its roads stay
+ * visible at camera z6–z7, where the z8 main tier is silent (overzoom never
+ * goes down).
+ * ⛔ NOT a second entry in BLOB_ZOOMS — the main lookup's containment CLIMBS a
+ * stored tile up to the requested zoom, so a z6 stored in the main namespace
+ * would answer z8 requests mis-framed and mis-scaled (the direction1/pv46
+ * incident, 2026-09-01). Shallow tiles live in their own IDB store, served by
+ * their own source; blobHasZoom keeps rejecting this zoom on the main path.
+ */
+export const SHALLOW_Z = 6;
 
 /** A blob's cell — which IS a slippy tile at {@link BLOB_TILE_Z}. */
 export interface Cell {
@@ -92,6 +102,20 @@ export function isPinTileKey(key: string): boolean {
 	return key.startsWith("pin/");
 }
 
+/** The SHALLOW tier's storage key — the pin-keyed law of {@link pinTileKey}, on
+ * a `shallow/` host so the phone routes it to the SHALLOW store and it can
+ * never answer a main-tier z8 request mis-framed (the direction1/pv46
+ * incident). Both sides must spell it identically or the tier is silently
+ * blank — this is the one definition. */
+export function shallowTileKey(lng: number, lat: number, c: Cell): string {
+	return `shallow/${lng.toFixed(5)},${lat.toFixed(5)}/${cellTileKey(c)}`;
+}
+
+/** Is this a shallow-tier roads key? */
+export function isShallowTileKey(key: string): boolean {
+	return key.startsWith("shallow/");
+}
+
 // ⛔ pinFrame is deleted and must not come back — it wrote pin-box coords into a tile-addressed blob, and MapLibre stretched the roads 1.86x anchored top-left; centring belongs to radiusBox, not the frame.
 
 /** The box to read for a pin — the radius around it, not a tile (the blob's address is a tile; its contents are the pin's radius). */
@@ -132,6 +156,42 @@ export function cellsFor(lng: number, lat: number): Cell[] {
 	for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) {
 		for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) {
 			push({ ix: x, iy: y, z: BLOB_TILE_Z });
+		}
+	}
+	return out;
+}
+
+/**
+ * The shallow-tier cells for a pin — every z=SHALLOW_Z tile the radius touches.
+ * A z6 tile spans the whole 30 km box, so this is usually ONE cell (at most a
+ * handful if the box straddles edges). Same pin-keyed law as cellsFor; the
+ * pin's own cell first.
+ */
+export function shallowCellsFor(lng: number, lat: number): Cell[] {
+	const box = radiusBox(lng, lat);
+	const n = 2 ** SHALLOW_Z;
+	const X = (lo: number) =>
+		Math.min(n - 1, Math.max(0, Math.floor(((lo + 180) / 360) * n)));
+	const Y = (la: number) =>
+		Math.min(n - 1, Math.max(0, Math.floor(mercY(la) * n)));
+
+	const x0 = X(box.w);
+	const x1 = X(box.e);
+	const y0 = Y(box.n); // north = smaller y
+	const y1 = Y(box.s);
+
+	const out: Cell[] = [];
+	const seen = new Set<string>();
+	const push = (c: Cell) => {
+		const k = cellKey(c);
+		if (seen.has(k)) return;
+		seen.add(k);
+		out.push(c);
+	};
+	push({ ix: X(lng), iy: Y(lat), z: SHALLOW_Z });
+	for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) {
+		for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) {
+			push({ ix: x, iy: y, z: SHALLOW_Z });
 		}
 	}
 	return out;

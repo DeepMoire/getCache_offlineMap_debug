@@ -36,6 +36,7 @@ import {
 } from "../../contract/grid";
 import {
 	DB_NAME,
+	DB_VERSION,
 	idbGetTile,
 	idbGetTileForAddress,
 } from "../../worker/worker-local-dev/roads/packDownload";
@@ -159,10 +160,12 @@ const PIN_B: [number, number] = [-100.3, 45.0]; // ~15 km east
 
 function putBlobs(items: Array<[string, ArrayBuffer]>): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const req = indexedDB.open(DB_NAME, 1);
+		const req = indexedDB.open(DB_NAME, DB_VERSION);
 		req.onupgradeneeded = () => {
 			if (!req.result.objectStoreNames.contains("tiles"))
 				req.result.createObjectStore("tiles");
+			if (!req.result.objectStoreNames.contains("shallowTiles"))
+				req.result.createObjectStore("shallowTiles");
 		};
 		req.onsuccess = () => {
 			const db = req.result;

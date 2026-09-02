@@ -3,7 +3,7 @@ import { filterMvtToLayers } from "./mvtFilter";
 import { BLOB_DETAIL_LEVEL } from "./blob";
 import { PACK_LAYER_NAMES } from "./packLayers";
 import { boxFrame, buildBlobTile } from "./oneBlob";
-import { GRID_RADIUS_KM, cellBox, cellsFor, pinTileKey, radiusBox } from "./grid";
+import { GRID_RADIUS_KM, cellBox, cellsFor, pinTileKey, radiusBox, shallowCellsFor, shallowTileKey } from "./grid";
 
 // The measured bugs behind this file's invariants (the 50 km key bug, the
 // deleted roads budget and ring pyramid, the clip and PNG detours) are written
@@ -197,13 +197,39 @@ export async function buildPack(
     }
   }
 
+  // ── THE SHALLOW TIER ─────────────────────────────────────────────────────
+  // One generalized z6 tile per pin so its roads survive camera z6–z7, where
+  // the z8 blobs are silent (MapLibre overzooms up, never down). At z6 the
+  // read is 1:1 — the source tile is already framed to the cell, so it ships
+  // as a verbatim copy + layer filter, zero MVT surgery (buildBlobTile stays
+  // on the z8 path only).
+  // ⛔ SEPARATE NAMESPACE (`shallow/…`, pin-prefixed — see shallowTileKey): a
+  // z6 in the main `pin/…` namespace is the pv46 incident — the main lookup's
+  // containment would serve it mis-framed to z8 requests. The phone routes
+  // `shallow/` keys to their own IDB store; the main path never sees z6.
+  const shallowCells = shallowCellsFor(lng, lat);
+  const shallowDisc = shallowCells.map((c) => ({ z: c.z, x: c.ix, y: c.iy }));
+  let shallowRead = await readDisc(archive, shallowDisc, corridor);
+  if (shallowRead.failed > 0) shallowRead = await readDisc(archive, shallowDisc, corridor);
+  let shallowEmpty = 0;
+  for (const c of shallowCells) {
+    const hit = shallowRead.tiles.find((t) => t.k === `${c.z}/${c.ix}/${c.iy}`);
+    // zero-byte guard is already inside readDisc — `hit` exists only if the
+    // filtered tile has bytes. A void/empty z6 is counted, never shipped.
+    if (hit) out.push({ k: shallowTileKey(lng, lat, c), data: hit.data });
+    else shallowEmpty++;
+  }
+
   if (diag) {
     diag.discTiles = union.length;
     diag.outerKm = GRID_RADIUS_KM;
     diag.blobFeatures = features;
     diag.blobBytes = out.reduce((n, t) => n + t.data.byteLength, 0);
     diag.cells = cells.length;
+    const shallowOut = out.filter((t) => t.k.startsWith("shallow/"));
+    diag.shallowTiles = shallowOut.length;
+    diag.shallowBytes = shallowOut.reduce((n, t) => n + t.data.byteLength, 0);
   }
 
-  return serializePack(out, union.length, emptyCells, box);
+  return serializePack(out, union.length, emptyCells + shallowEmpty, box);
 }

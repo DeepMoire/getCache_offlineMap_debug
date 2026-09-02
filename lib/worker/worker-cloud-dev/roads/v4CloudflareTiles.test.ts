@@ -16,15 +16,19 @@ import {
 	purgeEmptyTiles,
 	v4TransformRequest,
 	DB_NAME,
+	DB_VERSION,
 	RINGS,
 } from "./packDownload";
 
 function putTiles(keys: string[]): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const req = indexedDB.open(DB_NAME, 1);
+		// v2 schema — the helpers seed at the module's DB_VERSION, never a hardcoded 1
+		const req = indexedDB.open(DB_NAME, DB_VERSION);
 		req.onupgradeneeded = () => {
 			if (!req.result.objectStoreNames.contains("tiles"))
 				req.result.createObjectStore("tiles");
+			if (!req.result.objectStoreNames.contains("shallowTiles"))
+				req.result.createObjectStore("shallowTiles");
 		};
 		req.onsuccess = () => {
 			const db = req.result;
@@ -158,10 +162,12 @@ describe("THE BLOB — one radius, every zoom", () => {
 describe("zero-byte tiles — the write boundary", () => {
 	function rawEntries(dbName: string): Promise<Array<[string, number]>> {
 		return new Promise((resolve, reject) => {
-			const req = indexedDB.open(dbName, 1);
+			const req = indexedDB.open(dbName, DB_VERSION);
 			req.onupgradeneeded = () => {
 				if (!req.result.objectStoreNames.contains("tiles"))
 					req.result.createObjectStore("tiles");
+				if (!req.result.objectStoreNames.contains("shallowTiles"))
+					req.result.createObjectStore("shallowTiles");
 			};
 			req.onsuccess = () => {
 				const db = req.result;
@@ -189,10 +195,12 @@ describe("zero-byte tiles — the write boundary", () => {
 
 	function putRaw(entries: Array<[string, number]>): Promise<void> {
 		return new Promise((resolve, reject) => {
-			const req = indexedDB.open(DB_NAME, 1);
+			const req = indexedDB.open(DB_NAME, DB_VERSION);
 			req.onupgradeneeded = () => {
 				if (!req.result.objectStoreNames.contains("tiles"))
 					req.result.createObjectStore("tiles");
+				if (!req.result.objectStoreNames.contains("shallowTiles"))
+					req.result.createObjectStore("shallowTiles");
 			};
 			req.onsuccess = () => {
 				const db = req.result;

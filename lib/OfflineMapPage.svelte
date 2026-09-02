@@ -29,6 +29,8 @@
         RAW_SOURCE,
         refreshRawTiles,
         setRawWallBlindHandler,
+        shallowSourceSpec,
+        SHALLOW_SOURCE,
     } from "./onPhone/roads/rawWallProtocol";
     import { wallLayers } from "./onPhone/render/wallStyle";
     import { addWallPois, wallLabelLayers } from "./onPhone/render/wallLabels";
@@ -472,6 +474,10 @@
                             // and drops the per-pin satellite layers.
                             setRawWallBlindHandler(() => refreshRawTiles(map));
                             map.addSource(RAW_SOURCE, rawSourceSpec());
+                            // The z6 tier's OWN source — without this the shallow
+                            // store is downloaded but never asked for (z6–7 blank
+                            // even with a fresh pv47 pack; the wiring gap of 2026-09-02).
+                            map.addSource(SHALLOW_SOURCE, shallowSourceSpec());
                             for (const layer of wallLayers())
                                 map.addLayer(layer);
                             for (const layer of wallLabelLayers(map))
