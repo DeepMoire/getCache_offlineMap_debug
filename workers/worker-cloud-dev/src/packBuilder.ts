@@ -1,7 +1,7 @@
 import type { PMTiles } from "pmtiles";
-import { filterMvtToLayers } from "./mvtFilter";
+import { allowlistOf, filterMvtToLayers } from "./mvtFilter";
 import { BLOB_DETAIL_LEVEL } from "./blob";
-import { PACK_LAYER_NAMES } from "./packLayers";
+import { PACK_LAYER_NAMES, SHALLOW_LAYER_RULES } from "./packLayers";
 import { boxFrame, buildBlobTile } from "./oneBlob";
 import { GRID_RADIUS_KM, cellBox, cellsFor, pinTileKey, radiusBox, shallowCellsFor, shallowTileKey } from "./grid";
 
@@ -20,6 +20,11 @@ const PACK_KEEP: ReadonlySet<string> = new Set(PACK_LAYER_NAMES);
 export function keepSet(corridor: boolean): ReadonlySet<string> {
   return corridor ? ROADS_ONLY : PACK_KEEP;
 }
+
+// The shallow tier's kind allowlist — the contract's SHALLOW_LAYER_RULES with
+// roads thinned to the vehicle network. Derived via allowlistOf, never
+// hand-written, so it cannot drift from the contract.
+const SHALLOW_ALLOW = allowlistOf(SHALLOW_LAYER_RULES);
 
 // How many tiles to read from R2 at once. 8-wide measured a 56 s cold build
 // (the client timed out and the blob arrived a minute later "out of nowhere");
@@ -198,26 +203,40 @@ export async function buildPack(
   }
 
   // ── THE SHALLOW TIER ─────────────────────────────────────────────────────
-  // One generalized z6 tile per pin so its roads survive camera z6–z7, where
-  // the z8 blobs are silent (MapLibre overzooms up, never down). At z6 the
-  // read is 1:1 — the source tile is already framed to the cell, so it ships
-  // as a verbatim copy + layer filter, zero MVT surgery (buildBlobTile stays
-  // on the z8 path only).
+  // One z6 tile per pin so its roads survive camera z6–z7, where the z8 blobs
+  // are silent (MapLibre overzooms up, never down).
+  // direction2.4 — BUILT, NOT COPIED. The direction2.3 tier read the archive's
+  // own z6 verbatim, but the archive's z6 is generalized to major roads only —
+  // sparser than the base map beneath it, so the tier showed nothing new. The
+  // z6 tile is now cut from the SAME z13 reads the z8 blobs above were cut
+  // from (the second readDisc is DELETED — zero extra R2 reads), framed to the
+  // z6 cell by buildBlobTile, with roads thinned per SHALLOW_LAYER_RULES.
   // ⛔ SEPARATE NAMESPACE (`shallow/…`, pin-prefixed — see shallowTileKey): a
   // z6 in the main `pin/…` namespace is the pv46 incident — the main lookup's
   // containment would serve it mis-framed to z8 requests. The phone routes
   // `shallow/` keys to their own IDB store; the main path never sees z6.
   const shallowCells = shallowCellsFor(lng, lat);
-  const shallowDisc = shallowCells.map((c) => ({ z: c.z, x: c.ix, y: c.iy }));
-  let shallowRead = await readDisc(archive, shallowDisc, corridor);
-  if (shallowRead.failed > 0) shallowRead = await readDisc(archive, shallowDisc, corridor);
   let shallowEmpty = 0;
+  let shallowFeatures = 0;
   for (const c of shallowCells) {
-    const hit = shallowRead.tiles.find((t) => t.k === `${c.z}/${c.ix}/${c.iy}`);
-    // zero-byte guard is already inside readDisc — `hit` exists only if the
-    // filtered tile has bytes. A void/empty z6 is counted, never shipped.
-    if (hit) out.push({ k: shallowTileKey(lng, lat, c), data: hit.data });
-    else shallowEmpty++;
+    const blob = buildBlobTile(
+      read.tiles.map((t) => {
+        const [z, x, y] = t.k.split("/").map(Number);
+        return {
+          tile: { z, x, y },
+          data: new Uint8Array(
+            filterMvtToLayers(t.data, keepSet(corridor), SHALLOW_ALLOW),
+          ),
+        };
+      }),
+      boxFrame(cellBox(c)),
+    );
+    shallowFeatures += blob.features;
+    if (blob.bytes.byteLength > 0) {
+      out.push({ k: shallowTileKey(lng, lat, c), data: blob.bytes.buffer as ArrayBuffer });
+    } else {
+      shallowEmpty++; // a zero-byte blob must not ship — see readDisc
+    }
   }
 
   if (diag) {
@@ -229,6 +248,7 @@ export async function buildPack(
     const shallowOut = out.filter((t) => t.k.startsWith("shallow/"));
     diag.shallowTiles = shallowOut.length;
     diag.shallowBytes = shallowOut.reduce((n, t) => n + t.data.byteLength, 0);
+    diag.shallowFeatures = shallowFeatures;
   }
 
   return serializePack(out, union.length, emptyCells + shallowEmpty, box);

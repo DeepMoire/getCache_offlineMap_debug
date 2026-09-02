@@ -68,6 +68,28 @@ export const PACK_LAYERS: Readonly<Record<string, PackLayerRule>> = {
 /** The source-layer names the pack keeps, in table order. */
 export const PACK_LAYER_NAMES: readonly string[] = Object.keys(PACK_LAYERS);
 
+/**
+ * THE SHALLOW (z6) TIER's keep-set — the pack's own layers with roads thinned
+ * to the vehicle network. Worker-side only (the phone never filters the shallow
+ * tile; it paints what arrives), but it lives in the contract so the debug
+ * report and any future phone-side assertion read the same truth.
+ *
+ * ⚠️ WHY ROADS GET A RULE HERE. The direction2.3 tier shipped the archive's own
+ * z6 tile verbatim, and the archive's z6 is generalized down to major roads —
+ * MEASURED on screen (1 Sep 2026): sparser than the base map already drawn
+ * beneath it, so the tier added nothing at camera z6–z7. The z6 tile is now
+ * BUILT from the disc's z13 reads, where density is ours to choose: highway →
+ * minor ships (every road a driver can take), service/track/path/footway/
+ * cycleway and rail drop (sub-pixel clutter in a ~600 km tile).
+ */
+export const SHALLOW_LAYER_RULES: Readonly<Record<string, PackLayerRule>> = {
+	...PACK_LAYERS,
+	roads: {
+		kinds: ["highway", "major", "medium", "minor"],
+		why: "vehicle network only — the built z6 is denser than the base map, sparser than the z8 disc",
+	},
+};
+
 /** One thing a style layer reads out of the pack. */
 export interface PackRead {
 	readonly layer: string;

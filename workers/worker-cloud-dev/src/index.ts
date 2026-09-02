@@ -33,7 +33,7 @@ const HOSPITALS_BUILD = "v1-216117-20260901";
 
 /** Bump whenever the PACK CONTENTS change. Part of the edge cache key, so a
  *  new build can never be masked by a year-old immutable cache entry. */
-const PACK_BUILD = "v34-shallow-z6";
+const PACK_BUILD = "v35-shallow-z6-built";
 
 interface Env {
   /** R2 bucket binding (see wrangler.toml [[r2_buckets]]). */

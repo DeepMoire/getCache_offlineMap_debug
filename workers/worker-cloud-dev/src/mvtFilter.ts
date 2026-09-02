@@ -66,11 +66,20 @@ export interface KindRule {
  *  still accepted so hand-built test allowlists keep working. */
 export type KindAllowlist = Record<string, ReadonlySet<string> | KindRule>;
 
-export const KIND_ALLOWLIST: KindAllowlist = Object.fromEntries(
-  Object.entries(PACK_LAYERS)
-    .filter(([, r]) => r.kinds)
-    .map(([name, r]) => [name, { key: r.key ?? "kind", kinds: new Set(r.kinds) }]),
-);
+/** Turn a rule table (PACK_LAYERS, SHALLOW_LAYER_RULES…) into the wire-level
+ *  allowlist `filterMvtToLayers` consumes. Derived, never hand-written, so the
+ *  two can never drift. */
+export function allowlistOf(
+  rules: Readonly<Record<string, { readonly key?: string; readonly kinds?: readonly string[] }>>,
+): KindAllowlist {
+  return Object.fromEntries(
+    Object.entries(rules)
+      .filter(([, r]) => r.kinds)
+      .map(([name, r]) => [name, { key: r.key ?? "kind", kinds: new Set(r.kinds!) }]),
+  );
+}
+
+export const KIND_ALLOWLIST: KindAllowlist = allowlistOf(PACK_LAYERS);
 
 function ruleOf(entry: ReadonlySet<string> | KindRule): KindRule {
   return entry instanceof Set ? { key: "kind", kinds: entry } : (entry as KindRule);
