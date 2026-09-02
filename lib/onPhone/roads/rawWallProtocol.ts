@@ -9,7 +9,7 @@ import maplibregl from "maplibre-gl";
 
 import { vlog } from "../../shared/verboseLog";
 
-import { BLOB_MAX_Z } from "../../contract/roadBlob";
+import { BLOB_MAX_Z, BLOB_MIN_Z } from "../../contract/roadBlob";
 
 import { idbGetTileForAddress } from "../../worker/worker-local-dev/roads/packDownload";
 
@@ -24,9 +24,11 @@ export const RAW_TILE_URL = `${RAW_SCHEME}://disc/{z}/{x}/{y}`;
 
 /** The disc's zoom span, DERIVED from `BLOB_ZOOMS` — never hand-written. `roadBlob.ts` is the only file allowed to name a road zoom or radius. */
 /**
- * ⛔ the render floor (RAW_MIN_Z) is NOT the storage level (BLOB_TILE_Z) — they were one number once, and setting minzoom to the storage level blanked the map the instant the camera rose above it, since MapLibre only ever overzooms UP.
+ * The render floor EQUALS the shallowest stored level — below it this source is SILENT by design, and the world-base (offlineBaseStyle.ts) draws major roads, lakes, borders and labels instead.
+ * ⛔ do NOT lower it to "stretch" the stored tile over a shallower address — a z8-framed tile served at a z6 address paints 4×-off-place geometry (the zoom<8 distortion bug, killed 2026-09-01).
+ * (History: minzoom was once set shallow so the blob itself filled the zoomed-out view; that invented the distortion instead of leaving the band to the base style.)
  */
-export const RAW_MIN_Z = 5;
+export const RAW_MIN_Z = BLOB_MIN_Z;
 export const RAW_MAX_Z = BLOB_MAX_Z;
 
 let installed = false;
@@ -133,6 +135,7 @@ export function rawSourceSpec(): maplibregl.VectorSourceSpecification {
 		tiles: [RAW_TILE_URL],
 		// ⛔ minzoom is the SHALLOWEST STORED LEVEL the pack holds, not 0 and not the detail level — source minzoom/maxzoom describe the tile pyramid, not the camera.
 		// ⚠️ minzoom: 0 does NOT mean "scale the deepest level to fill any zoom" — it means z0 addresses may be requested, and if the pack doesn't have them: 404, blank map, no error.
+		// Below RAW_MIN_Z the camera shows the world-base only — that handover is the design, not a hole.
 		minzoom: RAW_MIN_Z,
 		maxzoom: RAW_MAX_Z,
 	};

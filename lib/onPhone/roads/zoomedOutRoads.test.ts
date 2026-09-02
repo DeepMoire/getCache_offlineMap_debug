@@ -1,7 +1,9 @@
 // ⚠️ Roads must draw when the camera is above the stored zoom — keysForAddress must match by real geometric containment, not exact z/x/y string equality, or a zoomed-out camera reads zero roads.
+// NOTE: the ANCESTOR (z5) cases below exercise the lookup's depth only — since RAW_MIN_Z === BLOB_MIN_Z the protocol can no longer be asked a shallower address; the branch stays as defense-in-depth.
 import { describe, expect, it } from "vitest";
 import { keysForAddress } from "./pinTileLookup";
 import { RAW_MAX_Z, RAW_MIN_Z } from "./rawWallProtocol";
+import { BLOB_MIN_Z } from "../../contract/roadBlob";
 
 /** A pin near Spokane. */
 const PIN = "pin/-117.10620,47.34330";
@@ -37,8 +39,9 @@ describe("a zoomed-out camera still finds the stored roads", () => {
 		expect(keysForAddress(stored, 12, (Z8.x + 1) * 16, Z8.y * 16)).toEqual([]);
 	});
 
-	it("declares a render floor SHALLOWER than the stored level", () => {
-		expect(RAW_MIN_Z).toBeLessThan(RAW_MAX_Z);
-		expect(RAW_MIN_Z).toBe(5);
+	it("declares a render floor EQUAL to the stored level — no stretched tier below it", () => {
+		// The zoom<8 distortion is gone BY CONTRACT: the blob never serves a shallower address than it stores; below the floor the world-base (offlineBaseStyle.ts) draws instead.
+		expect(RAW_MIN_Z).toBe(RAW_MAX_Z);
+		expect(RAW_MIN_Z).toBe(BLOB_MIN_Z);
 	});
 });
