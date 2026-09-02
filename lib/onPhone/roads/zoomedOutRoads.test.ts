@@ -39,6 +39,14 @@ describe("a zoomed-out camera still finds the stored roads", () => {
 		expect(keysForAddress(stored, 12, (Z8.x + 1) * 16, Z8.y * 16)).toEqual([]);
 	});
 
+	it("never answers from a stored zoom OUTSIDE the pyramid (foreign/stale data)", () => {
+		// direction1/pv46 left real z6/z7 roads-only tiles in the SAME IndexedDB; containment alone matched them
+		// for z8 requests and the merge painted sparse interstates mis-framed and mis-scaled. A foreign zoom answers NOTHING, at any request zoom.
+		const stale = `${PIN}/6/${Math.floor(Z8.x / 4)}/${Math.floor(Z8.y / 4)}`;
+		expect(keysForAddress([stale], Z8.z, Z8.x, Z8.y)).toEqual([]);
+		expect(keysForAddress([stale], 6, Math.floor(Z8.x / 4), Math.floor(Z8.y / 4))).toEqual([]);
+	});
+
 	it("declares a render floor EQUAL to the stored level — no stretched tier below it", () => {
 		// The zoom<8 distortion is gone BY CONTRACT: the blob never serves a shallower address than it stores; below the floor the world-base (offlineBaseStyle.ts) draws instead.
 		expect(RAW_MIN_Z).toBe(RAW_MAX_Z);

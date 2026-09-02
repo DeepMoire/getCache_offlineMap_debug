@@ -3,6 +3,7 @@
  * ⚠️ no I/O decisions in here beyond the key set — pure functions over the keys, testable without a database.
  */
 import { isPinTileKey } from "../../contract/grid";
+import { blobHasZoom } from "../../contract/roadBlob";
 
 /** A stored roads key, split into the pin that owns it and the tile it draws. */
 export interface PinTile {
@@ -92,6 +93,8 @@ export function keysForAddress(
 	for (const key of stored) {
 		const pt = parsePinTileKey(key);
 		if (!pt) continue;
+		// ⛔ zoom MEMBERSHIP before containment — a stored zoom outside BLOB_ZOOMS is foreign data another experiment/version left in this same DB (the direction1/pv46 z6-z7 incident, 2026-09-01: real roads-only z6/z7 tiles answered z8 requests and the byte-concat merge painted sparse interstates mis-framed and mis-scaled). Foreign zooms answer NOTHING, at any request zoom.
+		if (!blobHasZoom(Number(pt.address.split("/")[0]))) continue;
 		// ⛔ not a string compare — a zoomed-out address must contain the stored one, or any camera above the stored zoom finds nothing and the map goes blank.
 		if (!containsAddress(z, x, y, pt.address)) continue;
 		hits.push({ key, d: d2(centre.lng, centre.lat, pt.lng, pt.lat) });
