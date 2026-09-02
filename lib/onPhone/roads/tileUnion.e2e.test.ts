@@ -284,6 +284,32 @@ describe("TWO NEARBY PINS — real worker blobs, real storage, real parser", () 
 		);
 	});
 
+	it("⛔ repeated reads are MEMOIZED — no re-merge, byte-identical copies (zoom-gesture perf, 2026-09-02)", async () => {
+		const shared = cellsFor(PIN_A[0], PIN_A[1]).filter((c) =>
+			owns(c, cellsFor(PIN_B[0], PIN_B[1])),
+		);
+		const cell = shared[0];
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const first = await idbGetTileForAddress(cell.z, cell.ix, cell.iy);
+			expect(first).not.toBeNull();
+			// 150 reads ≈ a couple of zoom gestures' worth — every one must be a
+			// cached copy, NOT a fresh re-merge of the owners' blobs
+			for (let i = 0; i < 150; i++) {
+				const again = await idbGetTileForAddress(cell.z, cell.ix, cell.iy);
+				expect(again!.byteLength).toBe(first!.byteLength);
+				expect(new Uint8Array(again!)).toEqual(new Uint8Array(first!));
+			}
+			// a broken memoization would re-merge (and re-log) on every read
+			const merges = warn.mock.calls.filter((c) =>
+				String(c[0]).includes("[roads] merged"),
+			);
+			expect(merges.length).toBeLessThanOrEqual(1);
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
 	it("a pin-ONLY address still returns that pin's blob alone", async () => {
 		await storePinBlobs(PIN_A, "A");
 		await storePinBlobs(PIN_B, "B");

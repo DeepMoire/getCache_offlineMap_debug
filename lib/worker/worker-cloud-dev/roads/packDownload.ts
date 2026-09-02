@@ -84,7 +84,11 @@ async function idbPutMany(
 			const req = store.put(b, k);
 			req.onsuccess = () => onStored?.(++done);
 		}
-		tx.oncomplete = () => resolve();
+		tx.oncomplete = () => {
+			// the render-hot caches must see the write (memoized reads + key-set cache)
+			noteKeysWritten(items.map(([k]) => k));
+			resolve();
+		};
 		tx.onerror = () => reject(tx.error);
 	});
 	db.close();
@@ -98,7 +102,10 @@ export async function idbDeleteMany(keys: readonly string[]): Promise<void> {
 		const tx = db.transaction(STORE, "readwrite");
 		const store = tx.objectStore(STORE);
 		for (const k of keys) store.delete(k);
-		tx.oncomplete = () => resolve();
+		tx.oncomplete = () => {
+			noteKeysDeleted(keys);
+			resolve();
+		};
 		tx.onerror = () => reject(tx.error);
 	});
 	db.close();
@@ -137,44 +144,151 @@ let rawDb: IDBDatabase | null = null;
 registerOfflineDbReset(() => {
 	rawDb?.close();
 	rawDb = null;
+	invalidateTileCaches();
 });
 
 registerWipeLatch({
 	latch: () => {
 		rawDb?.close();
 		rawDb = null;
+		invalidateTileCaches();
 	},
 	unlatch: () => {},
 });
 
+// ── render-hot caches (perf, 2026-09-02) ─────────────────────────────────────
+// A zoom gesture re-requests EVERY visible tile; re-listing all store keys and
+// re-merging each shared address on every read froze the UI 1–2 s with ~290 MB
+// memory spikes. These caches sit in front of IndexedDB, are maintained by the
+// write path (idbPutMany / idbDeleteMany) and cleared on wipe/reset/purge.
+
+/** Merged (or solo) tile per address; `owners` = the pin keys that produced `buf`. */
+const mergedTiles = new Map<string, { owners: string[]; buf: ArrayBuffer }>();
+/** One in-flight read per address — a tile burst must not merge the same blob N×. */
+const inFlightReads = new Map<string, Promise<ArrayBuffer | null>>();
+/** LRU cap — a long panning session must not accumulate unbounded tile bytes. */
+const MERGED_CACHE_MAX = 512;
+/** The store's key set, kept in memory so probes never re-open IndexedDB. */
+let allKeysCache: Set<string> | null = null;
+let allKeysLoad: Promise<Set<string>> | null = null;
+let allKeysEpoch = 0;
+
+function invalidateTileCaches(): void {
+	allKeysEpoch++;
+	allKeysCache = null;
+	allKeysLoad = null;
+	mergedTiles.clear();
+	inFlightReads.clear();
+}
+
+/**
+ * Drop cache entries for the addresses these keys own. A key whose address we
+ * cannot parse → drop EVERYTHING (correctness over cache).
+ */
+function dropTilesFor(keys: Iterable<string>): void {
+	for (const k of keys) {
+		const addr = parseTileAddress(k);
+		if (!addr) {
+			invalidateTileCaches();
+			return;
+		}
+		mergedTiles.delete(`${addr.z}/${addr.x}/${addr.y}`);
+	}
+}
+
+function noteKeysWritten(keys: readonly string[]): void {
+	if (!allKeysCache) return;
+	for (const k of keys) allKeysCache.add(k);
+	dropTilesFor(keys);
+}
+
+function noteKeysDeleted(keys: readonly string[]): void {
+	if (!allKeysCache) return;
+	for (const k of keys) allKeysCache.delete(k);
+	dropTilesFor(keys);
+}
+
 // ⚠️ runtime marker for the layer-merge path — once per address per session (a per-read line would spam every pan). Seeing `[roads] merged N pins` in DevTools proves the merged read path is LIVE in the running build (stale-build check, 2026-09-01 strips bug).
 const mergedReads = new Set<string>();
 
-/** ⚠️ returns ALL owners layer-merged into ONE tile (byte-concat would keep only the last same-named layer — one pin's roads would erase the other's); null on miss. */
+/**
+ * ⚠️ returns ALL owners layer-merged into ONE tile (byte-concat would keep only
+ * the last same-named layer — one pin's roads would erase the other's); null on
+ * miss. Memoized per address: a zoom gesture re-requests every visible tile, and
+ * re-merging each shared address per read froze the UI 1–2 s (2026-09-02).
+ */
 export async function idbGetTileForAddress(
 	z: number,
 	x: number,
 	y: number,
 ): Promise<ArrayBuffer | null> {
-	const keys = keysForAddress(await getAllTileKeys(), z, x, y);
-	if (!keys.length) return null;
-	if (keys.length === 1) return idbGetTile(keys[0]);
-
-	const parts: ArrayBuffer[] = [];
-	for (const k of keys) {
-		const b = await idbGetTile(k);
-		if (b?.byteLength) parts.push(b);
-	}
-	if (!parts.length) return null;
-	if (parts.length === 1) return parts[0];
-
-	// ⛔ NOT byte-concat: every blob has a layer named `roads`, and the MVT parser indexes layers BY NAME — the LAST duplicate silently wins, so the whole tile flips to one pin (the farthest) whenever another pin lands nearby: roads vanish and appear in axis-aligned strips along the two radius boxes (2026-09-01). Merge at the LAYER level instead — one `roads`, every owner's features, tags re-indexed into merged tables.
 	const addr = `${z}/${x}/${y}`;
-	if (!mergedReads.has(addr)) {
-		mergedReads.add(addr);
-		console.warn(`[roads] merged ${parts.length} pins' blobs at ${addr}`);
+	const job = inFlightReads.get(addr) ?? computeTileForAddress(z, x, y, addr);
+	const buf = await job;
+	// ⚠️ a fresh copy per caller — MapLibre TRANSFERS the buffer to its worker, detaching it
+	return buf ? buf.slice(0) : null;
+}
+
+function computeTileForAddress(
+	z: number,
+	x: number,
+	y: number,
+	addr: string,
+): Promise<ArrayBuffer | null> {
+	const job = (async () => {
+		const keys = keysForAddress(await getAllTileKeys(), z, x, y);
+		if (!keys.length) return null;
+		const cached = mergedTiles.get(addr);
+		if (
+			cached &&
+			cached.owners.length === keys.length &&
+			cached.owners.every((k, i) => k === keys[i])
+		) {
+			return cached.buf; // same owner set → the merged bytes are still the union
+		}
+		if (keys.length === 1) {
+			const solo = await idbGetTile(keys[0]);
+			if (!solo) return null;
+			cacheMergedTile(addr, keys, solo);
+			return solo;
+		}
+		const parts: ArrayBuffer[] = [];
+		for (const k of keys) {
+			const b = await idbGetTile(k);
+			if (b?.byteLength) parts.push(b);
+		}
+		if (!parts.length) return null;
+		if (parts.length === 1) {
+			cacheMergedTile(addr, keys, parts[0]);
+			return parts[0];
+		}
+
+		// ⛔ NOT byte-concat: every blob has a layer named `roads`, and the MVT parser indexes layers BY NAME — the LAST duplicate silently wins, so the whole tile flips to one pin (the farthest) whenever another pin lands nearby: roads vanish and appear in axis-aligned strips along the two radius boxes (2026-09-01). Merge at the LAYER level instead — one `roads`, every owner's features, tags re-indexed into merged tables.
+		if (!mergedReads.has(addr)) {
+			mergedReads.add(addr);
+			console.warn(`[roads] merged ${parts.length} pins' blobs at ${addr}`);
+		}
+		const merged = mergeSameFrameTiles(parts.map((b) => new Uint8Array(b))).buffer;
+		cacheMergedTile(addr, keys, merged);
+		return merged;
+	})();
+	inFlightReads.set(addr, job);
+	void job
+		.catch(() => {})
+		.then(() => {
+			if (inFlightReads.get(addr) === job) inFlightReads.delete(addr);
+		});
+	return job;
+}
+
+/** Insertion-order LRU: delete-then-set refreshes recency; cap evicts the oldest. */
+function cacheMergedTile(addr: string, owners: string[], buf: ArrayBuffer): void {
+	mergedTiles.delete(addr);
+	mergedTiles.set(addr, { owners, buf });
+	if (mergedTiles.size > MERGED_CACHE_MAX) {
+		const oldest = mergedTiles.keys().next();
+		if (!oldest.done) mergedTiles.delete(oldest.value);
 	}
-	return mergeSameFrameTiles(parts.map((b) => new Uint8Array(b))).buffer;
 }
 
 export async function idbGetTile(key: string): Promise<ArrayBuffer | null> {
@@ -243,6 +357,8 @@ export async function purgeEmptyTiles(): Promise<number> {
 		tx.onerror = () => reject(tx.error);
 	});
 	db.close();
+	// purged rows are gone from the store — the key-set cache must not keep them
+	if (removed > 0) invalidateTileCaches();
 	return removed;
 }
 
@@ -541,17 +657,36 @@ export async function areaTilesPresent(
 	return present;
 }
 
-/** ⚠️ batch probes through areaTilesPresentIn — per-area areaTilesPresent over hundreds of areas is an I/O storm. */
+/**
+ * ⚠️ loaded ONCE into memory and maintained by the write path (idbPutMany /
+ * idbDeleteMany) — this runs per bake pass AND per tile read; open+getAllKeys
+ * +close per call was the I/O storm behind the per-zoom freezes (2026-09-02).
+ * The returned Set is the LIVE cache — callers must not mutate it.
+ */
 export async function getAllTileKeys(): Promise<Set<string>> {
-	const db = await openDb();
-	const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
-		const tx = db.transaction(STORE, "readonly");
-		const req = tx.objectStore(STORE).getAllKeys();
-		req.onsuccess = () => resolve(req.result);
-		req.onerror = () => reject(req.error);
-	});
-	db.close();
-	return new Set(keys.map(String));
+	if (allKeysCache) return allKeysCache;
+	if (!allKeysLoad) {
+		const epoch = allKeysEpoch;
+		allKeysLoad = (async () => {
+			const db = await openDb();
+			const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+				const tx = db.transaction(STORE, "readonly");
+				const req = tx.objectStore(STORE).getAllKeys();
+				req.onsuccess = () => resolve(req.result);
+				req.onerror = () => reject(req.error);
+			});
+			db.close();
+			const loaded = new Set(keys.map(String));
+			// a wipe/reset that fired DURING the load must not resurrect a stale set
+			if (epoch === allKeysEpoch) allKeysCache = loaded;
+			return loaded;
+		})();
+	}
+	try {
+		return await allKeysLoad;
+	} finally {
+		allKeysLoad = null;
+	}
 }
 
 export function areaTilesPresentIn(

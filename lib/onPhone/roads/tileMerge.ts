@@ -32,14 +32,74 @@ function readVarint(buf: Uint8Array, pos: number): [number, number] {
 	return [result, p];
 }
 
-function writeVarint(out: number[], value: number): void {
-	let v = value;
+/**
+ * Amortised byte writer over ONE growing Uint8Array. ⛔ do NOT go back to
+ * `number[]` with a byte per `push()`: boxing hundreds of thousands of small
+ * ints per merge was the ~290 MB spike / 1–2 s freeze per zoom change
+ * (2026-09-02).
+ */
+class Writer {
+	private buf: Uint8Array;
+	private len = 0;
+
+	constructor(capacity = 1 << 16) {
+		this.buf = new Uint8Array(capacity);
+	}
+
+	private ensure(n: number): void {
+		if (this.len + n <= this.buf.length) return;
+		let cap = this.buf.length * 2;
+		while (cap < this.len + n) cap *= 2;
+		const next = new Uint8Array(cap);
+		next.set(this.buf.subarray(0, this.len));
+		this.buf = next;
+	}
+
+	varint(v: number): void {
+		this.ensure(5);
+		while (v > 0x7f) {
+			this.buf[this.len++] = (v & 0x7f) | 0x80;
+			v = Math.floor(v / 128);
+		}
+		this.buf[this.len++] = v;
+	}
+
+	bytes(b: Uint8Array): void {
+		this.ensure(b.length);
+		this.buf.set(b, this.len);
+		this.len += b.length;
+	}
+
+	finish(): Uint8Array {
+		return this.buf.slice(0, this.len);
+	}
+}
+
+/** Byte length a value's varint will occupy — sizing pass, no allocation. */
+function varintLen(v: number): number {
+	let n = 1;
 	while (v > 0x7f) {
-		out.push((v & 0x7f) | 0x80);
+		v = Math.floor(v / 128);
+		n++;
+	}
+	return n;
+}
+
+/** Write a varint straight into a pre-sized buffer; returns bytes written. */
+function writeVarintTo(buf: Uint8Array, pos: number, value: number): number {
+	let v = value;
+	let p = pos;
+	while (v > 0x7f) {
+		buf[p++] = (v & 0x7f) | 0x80;
 		v = Math.floor(v / 128);
 	}
-	out.push(v);
+	buf[p++] = v;
+	return p - pos;
 }
+
+// module-level and REUSED — a fresh TextDecoder per field was per-byte churn
+const DECODER = new TextDecoder();
+const ENCODER = new TextEncoder();
 
 /** Skip one protobuf field's payload; returns the new position. */
 function skipField(buf: Uint8Array, wire: number, pos: number): number {
@@ -78,8 +138,8 @@ function splitTile(data: Uint8Array): Uint8Array[] {
 /** A layer split into its parts (frame-identical to oneBlob.ts's LayerParts). */
 interface LayerParts {
 	name: string;
-	/** Layer fields that are NOT name/keys/values/features/extent (e.g. version). */
-	header: number[];
+	/** Layer fields that are NOT name/keys/values/features/extent (e.g. version), kept as raw segments. */
+	header: Uint8Array[];
 	features: Uint8Array[];
 	keys: string[];
 	/** Raw encoded Value messages, kept verbatim — they may be any scalar type. */
@@ -88,7 +148,7 @@ interface LayerParts {
 }
 
 function splitLayer(layer: Uint8Array): LayerParts {
-	const header: number[] = [];
+	const header: Uint8Array[] = [];
 	const features: Uint8Array[] = [];
 	const keys: string[] = [];
 	const values: Uint8Array[] = [];
@@ -111,14 +171,14 @@ function splitLayer(layer: Uint8Array): LayerParts {
 		if (field === 1 && wire === 2) {
 			let len: number;
 			[len, p] = readVarint(layer, p);
-			name = new TextDecoder().decode(layer.subarray(p, p + len));
+			name = DECODER.decode(layer.subarray(p, p + len));
 			p += len;
 			continue;
 		}
 		if (field === 3 && wire === 2) {
 			let len: number;
 			[len, p] = readVarint(layer, p);
-			keys.push(new TextDecoder().decode(layer.subarray(p, p + len)));
+			keys.push(DECODER.decode(layer.subarray(p, p + len)));
 			p += len;
 			continue;
 		}
@@ -136,7 +196,8 @@ function splitLayer(layer: Uint8Array): LayerParts {
 			continue;
 		}
 		const next = skipField(layer, wire, p);
-		for (let i = start; i < next; i++) header.push(layer[i]);
+		// verbatim SEGMENT copy, not byte-per-push
+		header.push(layer.subarray(start, next));
 		p = next;
 	}
 	return { name, header, features, keys, values, extent };
@@ -159,7 +220,8 @@ function remapTags(
 	keyMap: number[],
 	valMap: number[],
 ): Uint8Array {
-	const out: number[] = [];
+	// pass 1 — locate EVERY tags field (field 2) and pre-resolve its index pairs
+	const spans: Array<{ start: number; end: number; indices: number[] }> = [];
 	let p = 0;
 	while (p < feature.length) {
 		const start = p;
@@ -171,26 +233,44 @@ function remapTags(
 			let len: number;
 			[len, p] = readVarint(feature, p);
 			const end = p + len;
-			const pairs: number[] = [];
+			const indices: number[] = [];
 			while (p < end) {
 				let k: number;
 				let v: number;
 				[k, p] = readVarint(feature, p);
 				[v, p] = readVarint(feature, p);
-				pairs.push(keyMap[k] ?? k, valMap[v] ?? v);
+				indices.push(keyMap[k] ?? k, valMap[v] ?? v);
 			}
-			const body: number[] = [];
-			for (const n of pairs) writeVarint(body, n);
-			writeVarint(out, tag);
-			writeVarint(out, body.length);
-			for (const b of body) out.push(b);
-			continue;
+			spans.push({ start, end, indices });
+		} else {
+			p = skipField(feature, wire, p);
 		}
-		const next = skipField(feature, wire, p);
-		for (let i = start; i < next; i++) out.push(feature[i]);
-		p = next;
 	}
-	return new Uint8Array(out);
+	if (!spans.length) return feature; // zero-copy — nothing to remap
+	// pass 2 — size the output ONCE, then splice in one pre-allocated buffer.
+	// The rewritten tag header is canonical: field 2, wire 2 → one 0x12 byte.
+	let size = feature.length;
+	for (const s of spans) {
+		let bodyLen = 0;
+		for (const n of s.indices) bodyLen += varintLen(n);
+		size -= s.end - s.start;
+		size += 1 + varintLen(bodyLen) + bodyLen;
+	}
+	const out = new Uint8Array(size);
+	let w = 0;
+	let r = 0;
+	for (const s of spans) {
+		out.set(feature.subarray(r, s.start), w); // bytes before the tags field
+		w += s.start - r;
+		out[w++] = (2 << 3) | 2;
+		let bodyLen = 0;
+		for (const n of s.indices) bodyLen += varintLen(n);
+		w += writeVarintTo(out, w, bodyLen);
+		for (const n of s.indices) w += writeVarintTo(out, w, n);
+		r = s.end;
+	}
+	out.set(feature.subarray(r), w);
+	return out;
 }
 
 /**
@@ -199,7 +279,16 @@ function remapTags(
  * tag remap, features copied verbatim. Order-independent — every owner draws.
  */
 export function mergeSameFrameTiles(parts: readonly Uint8Array[]): Uint8Array {
-	const byName = new Map<string, LayerParts>();
+	// keyIndex/valIndex ride along so table dedupe is O(1) per entry — the old
+	// indexOf/findIndex scans made table merge O(n²) on real tiles (2026-09-02).
+	const byName = new Map<
+		string,
+		{
+			parts: LayerParts;
+			keyIndex: Map<string, number>;
+			valIndex: Map<string, number>;
+		}
+	>();
 
 	for (const data of parts) {
 		if (!data || data.byteLength === 0) continue;
@@ -208,12 +297,16 @@ export function mergeSameFrameTiles(parts: readonly Uint8Array[]): Uint8Array {
 			let dst = byName.get(src.name);
 			if (!dst) {
 				dst = {
-					name: src.name,
-					header: src.header,
-					features: [],
-					keys: [],
-					values: [],
-					extent: src.extent,
+					parts: {
+						name: src.name,
+						header: src.header,
+						features: [],
+						keys: [],
+						values: [],
+						extent: src.extent,
+					},
+					keyIndex: new Map(),
+					valIndex: new Map(),
 				};
 				byName.set(src.name, dst);
 			}
@@ -222,64 +315,70 @@ export function mergeSameFrameTiles(parts: readonly Uint8Array[]): Uint8Array {
 			// law as oneBlob.ts: without the remap a `kind` index resolves to a
 			// different string (a highway rendered as a foot trail).
 			const keyMap: number[] = src.keys.map((k) => {
-				let i = dst.keys.indexOf(k);
-				if (i === -1) {
-					i = dst.keys.length;
-					dst.keys.push(k);
+				let i = dst.keyIndex.get(k);
+				if (i === undefined) {
+					i = dst.parts.keys.length;
+					dst.parts.keys.push(k);
+					dst.keyIndex.set(k, i);
 				}
 				return i;
 			});
 			const valMap: number[] = src.values.map((v) => {
 				const id = valueId(v);
-				let i = dst.values.findIndex((e) => valueId(e) === id);
-				if (i === -1) {
-					i = dst.values.length;
-					dst.values.push(v);
+				let i = dst.valIndex.get(id);
+				if (i === undefined) {
+					i = dst.parts.values.length;
+					dst.parts.values.push(v);
+					dst.valIndex.set(id, i);
 				}
 				return i;
 			});
 			for (const f of src.features) {
-				dst.features.push(remapTags(f, keyMap, valMap));
+				dst.parts.features.push(remapTags(f, keyMap, valMap));
 			}
 		}
 	}
 
-	const out: number[] = [];
+	// ONE amortised buffer per message (Writer) — the previous byte-per-push
+	// into JS number[] arrays was the 290 MB spike / 1–2 s freeze per zoom
+	// gesture (2026-09-02). Wire format is unchanged.
+	const out = new Writer();
 	for (const layer of byName.values()) {
-		if (!layer.features.length) continue; // never ship a husk layer
-		const body: number[] = [];
+		if (!layer.parts.features.length) continue; // never ship a husk layer
+		const body = new Writer();
 		// name (field 1)
-		const nameBytes = new TextEncoder().encode(layer.name);
-		writeVarint(body, (1 << 3) | 2);
-		writeVarint(body, nameBytes.length);
-		for (const b of nameBytes) body.push(b);
+		const nameBytes = ENCODER.encode(layer.parts.name);
+		body.varint((1 << 3) | 2);
+		body.varint(nameBytes.length);
+		body.bytes(nameBytes);
 		// keys (field 3) — the MERGED table every feature's tags now index into
-		for (const k of layer.keys) {
-			const kb = new TextEncoder().encode(k);
-			writeVarint(body, (3 << 3) | 2);
-			writeVarint(body, kb.length);
-			for (const b of kb) body.push(b);
+		for (const k of layer.parts.keys) {
+			const kb = ENCODER.encode(k);
+			body.varint((3 << 3) | 2);
+			body.varint(kb.length);
+			body.bytes(kb);
 		}
 		// values (field 4) — raw Value messages, copied verbatim
-		for (const v of layer.values) {
-			writeVarint(body, (4 << 3) | 2);
-			writeVarint(body, v.length);
-			for (let i = 0; i < v.length; i++) body.push(v[i]);
+		for (const v of layer.parts.values) {
+			body.varint((4 << 3) | 2);
+			body.varint(v.length);
+			body.bytes(v);
 		}
 		// anything else the source layer carried (e.g. version)
-		for (const b of layer.header) body.push(b);
+		for (const seg of layer.parts.header) body.bytes(seg);
 		// extent, declared once
-		writeVarint(body, (5 << 3) | 0);
-		writeVarint(body, layer.extent);
-		for (const f of layer.features) {
-			writeVarint(body, (2 << 3) | 2);
-			writeVarint(body, f.length);
-			for (let i = 0; i < f.length; i++) body.push(f[i]);
+		body.varint((5 << 3) | 0);
+		body.varint(layer.parts.extent);
+		for (const f of layer.parts.features) {
+			body.varint((2 << 3) | 2);
+			body.varint(f.length);
+			body.bytes(f);
 		}
-		writeVarint(out, (3 << 3) | 2);
-		writeVarint(out, body.length);
-		for (const b of body) out.push(b);
+		const bodyBytes = body.finish();
+		out.varint((3 << 3) | 2);
+		out.varint(bodyBytes.length);
+		out.bytes(bodyBytes);
 	}
-	return new Uint8Array(out);
+	return out.finish();
 }
 
