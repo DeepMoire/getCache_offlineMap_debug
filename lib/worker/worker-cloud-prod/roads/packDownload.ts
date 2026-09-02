@@ -132,6 +132,9 @@ registerWipeLatch({
 	unlatch: () => {},
 });
 
+// ⚠️ runtime marker for the layer-merge path — once per address per session (a per-read line would spam every pan). Seeing `[roads] merged N pins` in DevTools proves the merged read path is LIVE in the running build (stale-build check, 2026-09-01 strips bug).
+const mergedReads = new Set<string>();
+
 /** ⛔ merges EVERY owning pin into ONE layer-merged tile (byte-concat keeps only the last same-named layer); null on miss — never another pin's bytes. */
 export async function idbGetTileForAddress(
 	z: number,
@@ -150,7 +153,12 @@ export async function idbGetTileForAddress(
 	if (!parts.length) return null;
 	if (parts.length === 1) return parts[0];
 
-	// ⛔ NOT byte-concat: every blob has a layer named `roads`, and the MVT parser indexes layers BY NAME — the LAST duplicate silently wins, so the whole tile flips to one pin (the farthest) whenever another pin lands nearby: roads vanish and appear in axis-aligned strips along the two radius boxes (2026-09-01). Merge at the LAYER level instead — one `roads`, every owner's features, tags re-indexed into merged tables.
+	// ⛔ NOT byte-concat: every blob has a layer named `roads`, and the MVT parser indexes layers BY NAME — the LAST duplicate silently wins, so whole tile flips to one pin (the farthest) whenever another pin lands nearby: roads vanish and appear in axis-aligned strips along the two radius boxes (2026-09-01). Merge at the LAYER level instead — one `roads`, every owner's features, tags re-indexed into merged tables.
+	const addr = `${z}/${x}/${y}`;
+	if (!mergedReads.has(addr)) {
+		mergedReads.add(addr);
+		console.warn(`[roads] merged ${parts.length} pins' blobs at ${addr}`);
+	}
 	return mergeSameFrameTiles(parts.map((b) => new Uint8Array(b))).buffer;
 }
 

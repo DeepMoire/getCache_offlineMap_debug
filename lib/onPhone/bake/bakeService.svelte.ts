@@ -639,12 +639,20 @@ async function bakeAll(): Promise<void> {
 			// ⛔ LINES LIVE IN THE V4 TILE PILE — ask rt-tiles-v3, NOT the legacy rt-vectors (getVectorKeys, empty on any modern install). Using it here caused the "downloading the same blobs over and over" regression.
 			// Same in-memory key set the download loop uses, so the mirror and skip check can no longer disagree about what's on disk.
 			const liveTileKeys = await getAllTileKeys();
+			// ⛔ FRESH registry read — covByKey is a PASS-START snapshot, so an area that downloaded
+			// DURING this pass is invisible to it (rec === undefined) and the mirror rewrote the
+			// pass's freshly-written lineBytes with an explicit 0 while lineCount fell back through
+			// the `??` merge — the "2 tiles / —" ledger bug (2026-09-01). The mirror must carry
+			// what the download JUST wrote, so it reads the registry again after the download loop.
+			const covNow = new Map(
+				(await allCoverage()).map((r) => [r.areaKey, r] as const),
+			);
 			for (const [k, { c }] of ordered) {
 				if (!kept.has(k)) continue;
 				const hasPhoto = liveSat.has(k);
 				const hasLines = areaTilesPresentIn(liveTileKeys, c[0], c[1]);
 				if (!hasPhoto && !hasLines) continue; // nothing actually on disk yet
-				const rec = covByKey.get(k);
+				const rec = covNow.get(k);
 				const current =
 					!!rec &&
 					rec.hasPhoto === hasPhoto &&
@@ -656,6 +664,10 @@ async function bakeAll(): Promise<void> {
 				// lineCount is load-bearing — the skip check treats ===0 as "server confirmed empty"; `?? 0` on a missing count would silently claim that and kill the re-download self-heal, so absent lines leave it undefined ("unknown").
 				const lineBytes = hasLines ? (rec?.lineBytes ?? 0) : 0;
 				const lineCount = hasLines ? rec?.lineCount : undefined;
+				// photo bytes: the pass-start metadata map misses a photo baked DURING this pass —
+				// fall back to the FRESH record's real number instead of zeroing it (same class
+				// of stale-snapshot bug as the lineBytes carry above).
+				const photoBytesNow = photoBytes.get(k) ?? rec?.photoBytes ?? 0;
 				await noteCoverage(
 					k,
 					c[0],
@@ -663,10 +675,10 @@ async function bakeAll(): Promise<void> {
 					{
 						hasPhoto,
 						hasLines,
-						photoBytes: photoBytes.get(k) ?? 0,
+						photoBytes: photoBytesNow,
 						lineBytes,
 						lineCount,
-						bytes: (photoBytes.get(k) ?? 0) + lineBytes,
+						bytes: photoBytesNow + lineBytes,
 						// ⚠️ CARRY THE EXISTING STAMP — NEVER write BLOB_VERSION here. This mirror only knows PRESENCE (boolean), not WHICH RINGS — it shipped once and stamped 232 areas as current while holding zero z9 tiles, hiding the whole z9 ring for an evening. Only a REAL DOWNLOAD may write the version.
 						blobVersion: rec?.blobVersion,
 					},

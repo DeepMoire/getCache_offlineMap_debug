@@ -277,6 +277,27 @@ describe("offline tripwire 2 — a photo alone is NOT complete; roads are always
 	});
 });
 
+describe("offline ledger — the end-of-pass mirror must not zero what the pass just wrote", () => {
+	// The "2 tiles / —" regression (2026-09-01): covByKey is a PASS-START snapshot, so an area
+	// downloaded DURING the pass is invisible to the mirror (rec === undefined) and it rewrote
+	// the download's freshly-written lineBytes with an explicit 0. The mirror must re-read the
+	// registry AFTER the download loop and carry the real numbers.
+	it("an area downloaded DURING a pass keeps its lineBytes/lineCount", async () => {
+		features = [point([70, 80])];
+		await reconcileOnceForTest(testPorts);
+		const rec = h.cov.get(h.key(70, 80));
+		// the download wrote lineBytes 1000 / lineCount 5 — the mirror must not flatten them to 0
+		expect(rec?.lineBytes).toBe(1000);
+		expect(rec?.lineCount).toBe(5);
+	});
+
+	it("a photo baked DURING a pass keeps its photoBytes", async () => {
+		features = [point([71, 81])];
+		await reconcileOnceForTest(testPorts);
+		expect(h.cov.get(h.key(71, 81))?.photoBytes).toBe(1000);
+	});
+});
+
 describe("offline tripwire — ONE pass has a TIME BUDGET", () => {
 	// A pass MUST stop cleanly after its time slice (not download everything) — an unbudgeted pass measured 81s of continuous work and starved GC/idle.
 	/** ⚠️ Must restore the mockImplementation by hand — mockClear() resets calls but not the implementation, so leaving it would silently break later tests. */

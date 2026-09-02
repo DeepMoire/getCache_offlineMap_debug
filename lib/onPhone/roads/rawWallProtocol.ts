@@ -49,7 +49,7 @@ export function installRawWallProtocol(): void {
 		if (!m) throw notFound(params.url);
 
 		const [, z, x, y] = m;
-		// ⛔ resolve the address to the nearest owning pin — roads are keyed by pin, not bare z/x/y, or a shared tile serves one pin's roads to another (the 50 km bug, 2026-08-20).
+		// ⛔ resolve the address to EVERY owning pin, layer-merged into ONE tile — roads are keyed by pin, not bare z/x/y; resolving to a single "nearest" pin serves one pin's roads to another (the 50 km bug, 2026-08-20), and byte-concat keeps only the last same-named layer (the strips bug, 2026-09-01).
 		const buf = await idbGetTileForAddress(Number(z), Number(x), Number(y));
 		noteTileRead(!!buf && buf.byteLength > 0);
 		// ⚠️ a miss is the common path, not an error — fail loud only on returning another pin's bytes, never on a routine 404 for an undownloaded tile.

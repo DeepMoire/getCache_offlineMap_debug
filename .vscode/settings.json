@@ -1,0 +1,6 @@
+{
+  // Edit/commit copy: no node_modules installed here on purpose (tests run in
+  // the Desktop clone). Without deps the language server flags every import
+  // as unresolved, which buried the Explorer under meaningless red badges.
+  "problems.decorations.enabled": false
+}
