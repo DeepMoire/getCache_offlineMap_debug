@@ -284,6 +284,11 @@
     }
     let mapError = $state("");
     let wallStatus = $state("wall not mounted yet");
+    /** LIVE CAMERA, FOR THE DEBUG RAIL — the fractional zoom the renderer is at
+     *  RIGHT NOW, written on every zoom/move frame. The URL's `&z=` only lands on
+     *  `moveend`, so mid-gesture "which tile z will the wall ask for" was
+     *  answerable only in DevTools. 0 = the map is not ready yet. */
+    let liveZoom = $state(0);
     /** `lat,lng` at 6 dp (~10 cm) — human order, the one cameraFromUrl parses. */
     const llText = (lat: number, lng: number): string =>
         `${lat.toFixed(6)},${lng.toFixed(6)}`;
@@ -387,6 +392,15 @@
                 },
                 onMapReady: (map: maplibreType.Map) => {
                     mapInstance = map;
+                    // LIVE ZOOM FOR THE RAIL — `zoom` alone misses camera changes
+                    // that fire only `move` (jumpTo-style programmatic moves);
+                    // both handlers are one getZoom() each, so wiring both is free.
+                    const syncLiveZoom = () => {
+                        liveZoom = map.getZoom();
+                    };
+                    syncLiveZoom();
+                    map.on("move", syncLiveZoom);
+                    map.on("zoom", syncLiveZoom);
                     // The popover is plain DOM, so nothing moves it when the map does.
                     map.on("move", syncPopover);
                     map.on("zoom", syncPopover);
@@ -571,6 +585,12 @@
                 <div class="pin-note">
                     {dropped.length} dropped · session only, no database
                 </div>
+                <!-- LIVE CAMERA — fractional zoom plus the integer tile z the wall
+			             actually requests (Math.floor; overzoom draws z13 at z14). -->
+                <p class="camera-zoom">
+                    camera z{liveZoom.toFixed(2)} · tile
+                    z{Math.max(0, Math.floor(liveZoom))}
+                </p>
                 <p class="wall-status">{wallStatus}</p>
             </div>
         </aside>
@@ -806,5 +826,11 @@
     .wall-status {
         color: #7a7568;
         margin: 0 0 0.4rem;
+    }
+    /* LIVE CAMERA — brighter than .wall-status because it CHANGES as you zoom;
+       it is the one number you watch while zooming, not a settled status. */
+    .camera-zoom {
+        color: #cfc9b8;
+        margin: 0.4rem 0 0;
     }
 </style>
