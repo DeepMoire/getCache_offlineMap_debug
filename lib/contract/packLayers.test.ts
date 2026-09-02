@@ -11,6 +11,7 @@ import { LAYER_TOGGLES } from "../onPhone/render/wallLegend";
 import {
 	PACK_LAYERS,
 	PACK_LAYER_NAMES,
+	SHALLOW_LAYER_RULES,
 	describePackLayer,
 	packShips,
 } from "./packLayers";
@@ -46,6 +47,35 @@ describe("PACK_LAYERS", () => {
 		expect(describePackLayer("roads")).toBe("roads (all)");
 		expect(describePackLayer("pois")).toBe("pois kind∈{hospital,camp_site}");
 		expect(describePackLayer("earth")).toBe("earth (NOT shipped)");
+	});
+});
+
+describe("SHALLOW_LAYER_RULES", () => {
+	it("speaks the ARCHIVE vocabulary — *_road kinds, never the fictional short forms", () => {
+		// Measured 2 Sep 2026: ["highway","major","medium","minor"] matched nothing
+		// real ("medium" does not exist in Protomaps; the archive says major_road /
+		// minor_road), so the z6 tile shipped highways alone — secondaries and the
+		// brown mesh never arrived, and the quadratino read as a few statali.
+		expect([...SHALLOW_LAYER_RULES.roads.kinds!]).toEqual([
+			"highway",
+			"major_road",
+			"minor_road",
+		]);
+		for (const fictional of ["major", "medium", "minor", "major_road "]) {
+			expect(SHALLOW_LAYER_RULES.roads.kinds).not.toContain(fictional);
+		}
+	});
+
+	it("still thins to the vehicle network — no path, rail or service", () => {
+		for (const clutter of ["path", "rail", "service", "track", "footway", "cycleway"]) {
+			expect(SHALLOW_LAYER_RULES.roads.kinds).not.toContain(clutter);
+		}
+	});
+
+	it("carries the pack's non-road rules unchanged", () => {
+		expect(SHALLOW_LAYER_RULES.water).toBe(PACK_LAYERS.water);
+		expect(SHALLOW_LAYER_RULES.places).toBe(PACK_LAYERS.places);
+		expect(SHALLOW_LAYER_RULES.pois).toBe(PACK_LAYERS.pois);
 	});
 });
 

@@ -137,6 +137,27 @@ out, backed off 60 s, and the blob arrived "out of nowhere". 100 in flight
 blew the 128 MB Worker limit (error 1102) on the world planet. 32 is 4× the
 throughput at a third of the failing concurrency.
 
+## The shallow vocabulary miss — kinds that matched nothing (pv48, 2026-09-02)
+
+direction2.5 built the z6 tile from the disc's z13 reads, but the shallow
+keep-set listed `["highway","major","medium","minor"]` — a fictional vocabulary.
+The archive speaks `major_road`/`minor_road` (measured at z13: minor_road 58 kB,
+major_road 14.9, highway 0.8 of a ~136 kB 5-city sample; "medium" does not exist
+in Protomaps at all), and `mvtFilter` matches kinds EXACTLY (`Set.has`), so the
+z6 tile shipped highways alone: the low-zoom quadratino read as a few statali
+with no secondaries and no brown mesh. The lockstep miss was total —
+`shallowBuild.test` fed the filter its own synthetic tiles built from the same
+fictional kinds, so CI stayed green while the fleet shipped the bug. Fixed in
+`lib/contract/packLayers.ts` (the archive's own `*_road` kinds), the test
+rewritten on the real vocabulary, and pv bumped 47→48 — which also catches the
+pv47 miss: the built-shallow content change (v34→v35) shipped without its own
+bump, so already-baked pins never re-downloaded (the bake latch keys on
+BLOB_VERSION, which folds `pf${PACK_FORMAT_VERSION}` in).
+
+Same session, phone side: the tier's water had been riding in the z6 tile
+unpainted — `v4-water-*` read the disc only. `v4-water-fill-shallow` /
+`v4-water-line-shallow` now paint it (pure rendering, no pack change).
+
 ## The meta-lesson
 
 Every silent failure above had the same shape: **two constants that must agree,

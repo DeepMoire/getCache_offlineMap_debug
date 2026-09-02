@@ -202,6 +202,41 @@ export function wallLayers(): mapboxgl.LayerSpecification[] {
 			},
 		} as mapboxgl.LayerSpecification,
 
+		// ── 1b) THE SHALLOW WATER RELAY (camera z6–z7) ─────────────────────
+		// The z6 tier carries the pack's water rule UNCHANGED (river/canal lines
+		// + lake/pond polygons ride along — SHALLOW_LAYER_RULES spreads
+		// PACK_LAYERS), but until these two layers existed that water sat
+		// unpainted: `v4-water-*` read the disc only, which is silent under
+		// BLOB_MIN_Z. Same split as the disc (a fill ignores lines; a line
+		// layer would outline every pond), same colours, window DERIVED from
+		// the constants — hands over to the disc exactly at its floor.
+		{
+			id: "v4-water-fill-shallow",
+			type: "fill",
+			source: SHALLOW_SOURCE,
+			"source-layer": "water",
+			minzoom: SHALLOW_Z,
+			maxzoom: BLOB_MIN_Z,
+			filter: ["==", ["geometry-type"], "Polygon"],
+			paint: { "fill-color": WATER_FILL, "fill-opacity": 0.85 },
+		} as mapboxgl.LayerSpecification,
+		{
+			id: "v4-water-line-shallow",
+			type: "line",
+			source: SHALLOW_SOURCE,
+			"source-layer": "water",
+			minzoom: SHALLOW_Z,
+			maxzoom: BLOB_MIN_Z,
+			filter: ["==", ["geometry-type"], "LineString"],
+			layout: { "line-cap": "round", "line-join": "round" },
+			paint: {
+				"line-color": WATER_LINE,
+				// 0.8 at z6 so rivers read as blue threads at the tier's own
+				// scale, easing to the disc's own 0.6 at the handover — no pop.
+				"line-width": ["interpolate", ["linear"], ["zoom"], 6, 0.8, 8, 0.6],
+			},
+		} as mapboxgl.LayerSpecification,
+
 		// ── 2) THE ROAD RELAY ────────────────────────────────────────────────
 		// Four bands, one per stored zoom, meeting exactly. See the header.
 		//

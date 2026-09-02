@@ -85,8 +85,13 @@ export const PACK_LAYER_NAMES: readonly string[] = Object.keys(PACK_LAYERS);
 export const SHALLOW_LAYER_RULES: Readonly<Record<string, PackLayerRule>> = {
 	...PACK_LAYERS,
 	roads: {
-		kinds: ["highway", "major", "medium", "minor"],
-		why: "vehicle network only — the built z6 is denser than the base map, sparser than the z8 disc",
+		// ⛔ THE ARCHIVE'S OWN VOCABULARY — `major_road`/`minor_road`, never the
+		// short "major"/"minor": those matched NOTHING (there is no "medium" in
+		// Protomaps at all), so the built z6 shipped highways alone and the
+		// low-zoom quadratino read as a few statali with no secondaries and no
+		// brown mesh. Measured 2 Sep 2026; the fix rode pv48.
+		kinds: ["highway", "major_road", "minor_road"],
+		why: "vehicle network only, in the ARCHIVE vocabulary (*_road) — the built z6 is denser than the base map, sparser than the z8 disc",
 	},
 };
 

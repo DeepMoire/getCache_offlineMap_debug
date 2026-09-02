@@ -57,6 +57,12 @@ export const LAYER_TOGGLES: readonly LayerToggle[] = [
 		ids: [
 			"v4-water-fill",
 			"v4-water-line",
+			// the z6 tier's own water + roads — same feed, same colours, the
+			// band below the disc's floor; leaving them out kept them painted
+			// when the toggle swept the disc's layers only.
+			"v4-water-fill-shallow",
+			"v4-water-line-shallow",
+			"v4-roads-shallow",
 			"v4-roads",
 			"v4-path",
 			"v4-rail",

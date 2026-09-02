@@ -101,4 +101,23 @@ describe("the SHALLOW tier is wired to its OWN source — never the disc", () =>
 		// so the shallow source is never queried above the band.
 		expect(layer!.maxzoom).toBe(BLOB_MIN_Z);
 	});
+
+	it("wallLayers paints the tier's WATER too — fill and line, same window", () => {
+		// The z6 tile has carried water since direction2.4 (the pack rule rides
+		// along unchanged), but until these layers existed nothing asked for it:
+		// v4-water-* read the disc only, silent under BLOB_MIN_Z — rivers and
+		// lakes were IN the tile and off the screen (2026-09-02, second gap).
+		for (const id of ["v4-water-fill-shallow", "v4-water-line-shallow"]) {
+			const layer = wallLayers().find((l) => l.id === id);
+			expect(layer, id).toBeDefined();
+			expect(layer!.source).toBe(SHALLOW_SOURCE);
+			expect(layer!["source-layer"]).toBe("water");
+			expect(layer!.minzoom).toBe(SHALLOW_Z);
+			expect(layer!.maxzoom).toBe(BLOB_MIN_Z);
+		}
+		const fill = wallLayers().find((l) => l.id === "v4-water-fill-shallow")!;
+		expect(fill.filter).toEqual(["==", ["geometry-type"], "Polygon"]);
+		const line = wallLayers().find((l) => l.id === "v4-water-line-shallow")!;
+		expect(line.filter).toEqual(["==", ["geometry-type"], "LineString"]);
+	});
 });

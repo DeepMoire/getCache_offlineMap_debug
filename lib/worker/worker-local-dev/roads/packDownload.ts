@@ -23,8 +23,8 @@ import { noteCircuit } from "../../../shared/workMeter.svelte";
 import { satImageKey } from "../../../onPhone/satellite/satelliteImage";
 
 // ⚠️ bump on ANY pack wire/content change — edge cache keys by full URL, survives redeploys, never purged; bump only AFTER the deploy is live or the version is poisoned permanently
-// ⚠️ 46 is SKIPPED, never reuse it — poisoned by direction1's z6/z7 packs and the edge cache is immutable; 47 = the shallow z6 tier (fleet-wide re-download, intended rollout)
-export const PACK_FORMAT_VERSION = 47;
+// ⚠️ 46 is SKIPPED, never reuse it — poisoned by direction1's z6/z7 packs and the edge cache is immutable; 47 = the shallow z6 tier (fleet-wide re-download, intended rollout); 48 = shallow vocabulary fix (47's allowlist said "major"/"minor" which matched nothing, so z6 shipped highways alone — major_road/minor_road now ship, and baked pv47 pins re-download)
+export const PACK_FORMAT_VERSION = 48;
 
 // ⚠️ renaming the DB wipes every device's tile pile (fleet-wide re-bake); older rt-tiles* names are swept, never migrated
 export const DB_NAME = "gc-offlineTiles";

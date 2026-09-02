@@ -3,7 +3,11 @@
  * pipeline (no mocks): a hand-encoded z13 source tile → buildPack → the pack's
  * shallow/ tile decoded back. What must hold:
  *
- *   · shallow roads = SHALLOW_LAYER_RULES — major/minor ship, path/service drop
+ *   · shallow roads = SHALLOW_LAYER_RULES — the ARCHIVE vocabulary ships
+ *     (highway/major_road/minor_road), path/service drop. ⛔ 2 Sep 2026: this
+ *     test once fed the filter its own fictional kinds ("major"/"minor") — CI
+ *     green, the real tile shipped highways alone. Synthetic tiles must speak
+ *     the archive's vocabulary: *_road.
  *   · the z8 pin/ tile (same reads, PACK_LAYERS) still ships ALL road kinds
  *   · non-road rules ride along unchanged — a places town survives the z6 cut
  */
@@ -67,11 +71,12 @@ function tileOf(layers: number[][]): ArrayBuffer {
 // roads: one feature per kind; places: a town under kind_detail (the
 // Protomaps v4 shape the contract warns about — see PACK_LAYERS.places).
 const SOURCE = tileOf([
-	layer("roads", ["kind"], ["major", "minor", "path", "service"], [
+	layer("roads", ["kind"], ["highway", "major_road", "minor_road", "path", "service"], [
 		feature([0, 0], lineGeom()),
 		feature([0, 1], lineGeom()),
 		feature([0, 2], lineGeom()),
 		feature([0, 3], lineGeom()),
+		feature([0, 4], lineGeom()),
 	]),
 	layer("places", ["kind", "kind_detail"], ["locality", "town"], [
 		feature([0, 0, 1, 1], pointGeom(), 1),
@@ -222,14 +227,15 @@ function layerKinds(tile: Uint8Array, want: string): string[] {
 }
 
 describe("direction2.4 — the shallow z6 tile is BUILT from the disc reads", () => {
-	it("shallow roads thin to the vehicle network: major/minor ship, path/service drop", async () => {
+	it("shallow roads thin to the vehicle network — ARCHIVE vocabulary: highway/major_road/minor_road ship, path/service drop", async () => {
 		const { buildPack } = await import("./packBuilder");
 		const pack = await buildPack(archive, LNG, LAT);
 		const m = manifestOf(pack);
 		const shallowKey = m.tiles.find((t) => t.k.startsWith("shallow/"))!.k;
 		const kinds = layerKinds(tileBytesOf(pack, shallowKey), "roads");
-		expect(kinds).toContain("major");
-		expect(kinds).toContain("minor");
+		expect(kinds).toContain("highway");
+		expect(kinds).toContain("major_road");
+		expect(kinds).toContain("minor_road");
 		expect(kinds).not.toContain("path");
 		expect(kinds).not.toContain("service");
 	});
@@ -240,7 +246,7 @@ describe("direction2.4 — the shallow z6 tile is BUILT from the disc reads", ()
 		const m = manifestOf(pack);
 		const pinKey = m.tiles.find((t) => t.k.startsWith("pin/"))!.k;
 		const kinds = layerKinds(tileBytesOf(pack, pinKey), "roads");
-		for (const k of ["major", "minor", "path", "service"]) expect(kinds).toContain(k);
+		for (const k of ["highway", "major_road", "minor_road", "path", "service"]) expect(kinds).toContain(k);
 	});
 
 	it("non-road rules ride along — a places town survives the z6 cut", async () => {
