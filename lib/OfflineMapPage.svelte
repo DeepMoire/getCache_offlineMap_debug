@@ -33,6 +33,10 @@
         SHALLOW_SOURCE,
     } from "./onPhone/roads/rawWallProtocol";
     import { wallLayers } from "./onPhone/render/wallStyle";
+    import {
+        blobGridFeatures,
+        BLOB_GRID_SOURCE,
+    } from "./onPhone/render/blobGrid";
     import { addWallPois, wallLabelLayers } from "./onPhone/render/wallLabels";
     import { createSatelliteMount } from "./onPhone/satellite/mountSatellite";
     import { watchPaint } from "./onPhone/render/paintWatch";
@@ -364,6 +368,7 @@
         let fireHandle: ReturnType<typeof attachFireLayer> | undefined;
         let unsubFireCircuit: (() => void) | undefined;
         let unsubPackCircuit: (() => void) | undefined;
+        let unsubBlobGrid: (() => void) | undefined;
         let firePaintTimer: ReturnType<typeof setTimeout> | undefined;
         try {
             // WHERE THE MAP OPENS. A coordinate in the query string wins over the
@@ -478,11 +483,48 @@
                             // store is downloaded but never asked for (z6–7 blank
                             // even with a fresh pv47 pack; the wiring gap of 2026-09-02).
                             map.addSource(SHALLOW_SOURCE, shallowSourceSpec());
+                            // ── THE GHOST GRID source (direction2.5) ─────
+                            // BEFORE the wallLayers() loop: the grid layer sits
+                            // at the bottom of that array and references this
+                            // source by id, and MapLibre refuses to add a layer
+                            // whose source does not exist yet — added after, the
+                            // layer was silently never mounted. Empty for now;
+                            // the onPlacesChanged subscription below feeds it.
+                            map.addSource(BLOB_GRID_SOURCE, {
+                                type: "geojson",
+                                data: {
+                                    type: "FeatureCollection",
+                                    features: [],
+                                },
+                            });
                             for (const layer of wallLayers())
                                 map.addLayer(layer);
                             for (const layer of wallLabelLayers(map))
                                 map.addLayer(layer);
                             void addWallPois(map);
+
+                            // ── THE GHOST GRID data (direction2.5) ────────
+                            // The z8 footprint of every pin's tileset, white
+                            // squares UNDER the whole stack — wallStyle puts
+                            // the layer at the very bottom; this only feeds
+                            // the data. onPlacesChanged fires once on register
+                            // (the hostPorts contract), so the same
+                            // subscription paints the first grid AND every
+                            // pin dropped afterwards.
+                            const setBlobGrid = () => {
+                                const src = map.getSource(
+                                    BLOB_GRID_SOURCE,
+                                ) as maplibreType.GeoJSONSource | undefined;
+                                src?.setData(
+                                    blobGridFeatures(
+                                        ports
+                                            .places()
+                                            .flatMap((p) => p.anchors),
+                                    ),
+                                );
+                            };
+                            unsubBlobGrid =
+                                ports.onPlacesChanged(setBlobGrid);
                         }
 
                         // ── ROADS LAND → THE MAP RE-ASKS ─────────────────────
@@ -559,6 +601,7 @@
             clearTimeout(firePaintTimer);
             unsubFireCircuit?.();
             unsubPackCircuit?.();
+            unsubBlobGrid?.();
             fireHandle?.();
             // Revoke every photo object-URL, or each unmount strands the blob.
             satMount?.dispose();

@@ -16,13 +16,18 @@
  *
  * ── PAINT ORDER (bottom → top), and why ──────────────────────────────────
  *
- *   land cover → water fill → [per-pin satellite photos] → roads → water edge
+ *   ghost grid → land cover → water fill → [per-pin satellite photos] → roads → water edge
  *                             └── mounted by the page's reconcile, BETWEEN
  *                                 `v4-water-fill` and `v4-roads`, so a photo
  *                                 always covers the fills and never the roads.
  *
  * The photos are not in this list because they are per-area and dynamic; the
  * page mounts them against `SAT_INSERT_BEFORE`. Everything else is static.
+ *
+ * The ghost grid (direction2.5) IS a static layer here — bottom of the stack —
+ * but its DATA is per-pin and dynamic: the page feeds `BLOB_GRID_SOURCE` from
+ * blobGrid.ts. Same split as the photos: the paint order is this file's job,
+ * the payload is the page's.
  *
  * ── ONE SOURCE, ONE DISC, EVERY ZOOM ────────────────────────────────────
  *
@@ -68,7 +73,8 @@ import {
 	SHALLOW_SOURCE,
 } from "../roads/rawWallProtocol";
 import { BLOB_MIN_Z } from "../../contract/roadBlob";
-import { SHALLOW_Z } from "../../contract/grid";
+import { BLOB_TILE_Z, SHALLOW_Z } from "../../contract/grid";
+import { BLOB_GRID_SOURCE } from "./blobGrid";
 
 /** The layer per-area satellite photos mount BEFORE — i.e. directly under the
  *  roads, directly over the water fill. The page's reconcile reads this rather
@@ -151,6 +157,34 @@ const ROADS_ONLY: mapboxgl.FilterSpecification = [
  */
 export function wallLayers(): mapboxgl.LayerSpecification[] {
 	return [
+		// ── -1) THE GHOST GRID (direction2.5) ────────────────────────────────
+		// One white square per pin — the bounding box of that pin's tileset
+		// (radiusBox, blobGrid.ts), shown only while the camera is BELOW the
+		// disc's floor so you can see where the z8 tiles will appear. Data is
+		// per-pin and dynamic: the page feeds BLOB_GRID_SOURCE (blobGrid.ts).
+		// UNDER EVERYTHING by the user's instruction; fill only, no outline
+		// ("bordo invisibile"). Opacity is the direction2.5 spec verbatim —
+		// MapLibre clamps an interpolation outside its stops, so TWO stops
+		// produce all three regimes: 0 at z≥8, LINEAR 0→0.01 between
+		// BLOB_TILE_Z−0.1 and SHALLOW_Z, flat 0.01 below. Both stops DERIVED
+		// from the contract constants, never hand-written.
+		{
+			id: "v4-blob-grid-fill",
+			type: "fill",
+			source: BLOB_GRID_SOURCE,
+			paint: {
+				"fill-color": "#ffffff",
+				"fill-opacity": [
+					"interpolate",
+					["linear"],
+					["zoom"],
+					SHALLOW_Z,
+					0.01,
+					BLOB_TILE_Z - 0.1,
+					0,
+				],
+			},
+		} as mapboxgl.LayerSpecification,
 		// ── 0) LAND COVER ────────────────────────────────────────────────────
 		// The `landuse` source-layer of the z15 core tiles, each polygon keeping
 		// its `kind`. Bottom of the stack: water, satellite and roads all draw
