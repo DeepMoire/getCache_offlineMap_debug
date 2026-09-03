@@ -1,35 +1,42 @@
-# Branch notes — offline map (sessione direction2.5)
+# Branch notes — offline map (direction2.5 session)
 
-> Stato al termine della chat del 2026-09-02. `main` è stato fast-forwardato a `direction2.5` e spinto su origin.
+> State at the end of the 2026-09-02 session. `main` was fast-forwarded to `direction2.5` and pushed to origin.
 
-## Cosa c'è in ogni branch
+## What's in each branch
 
-| Branch | Contenuto |
+| Branch | Contents |
 |---|---|
-| **main** | Ora = `direction2.5` (merge ff `b3c6160`). Prima conteneva solo il pack hospitals offline + fix npm install. È il punto di partenza per testare tutto il lavoro della sessione. |
-| **direction1** | Direzione abbandonata presto: docs "ring doctrine" in OFFLINE_PLAN/OFFLINE_MAP_SPEC + ignore di `.vscode/`. Solo storico. |
-| **direction2 / 2.1** | Stessa punta (`8938ebe`). Ammazza lo stretch-tier sotto z8 (`RAW_MIN_Z = BLOB_MIN_Z`) e mette in quarantena zoom stranieri nella lookup dei tile. |
-| **direction2.2** | Perf gestures: letture merge memoizzate + merge O(n) + key set in memoria — zoom non si freeza più. In più: test e2e di confutazione (merge layer VERBATIM), fix bug ledger "2 tiles / —" (snapshot a inizio pass azzerava lineBytes appena scritti). |
-| **direction2.3** | Tier shallow z6: tile z6 verbatim dall'archivio per pin, store/source/protocol propri (`rtraw-shallow`), layer relay z6–z7. |
-| **direction2.4** | Tier shallow z6 COSTRUITO dalle letture z13 del disco (non più verbatim): `SHALLOW_LAYER_RULES` assottiglia le strade; zero letture R2 extra. Il commit in punta ("direction2.6") corregge il vocabolario (major_road/minor_road reali), **pv 47→48** (i pin già cotti si riscaricano) e fa disegnare l'acqua del tier (`v4-water-fill/line-shallow`). |
-| **direction2.5** | **Il ghost grid di questa chat**: un quadrato bianco per pin = il bounding box reale del suo tileset (`radiusBox`, 60×60 km centrato sul pin — NON le celle z8 di `cellsFor`). In fondo allo stack, solo fill senza outline, rampa opacità `[[6, 0.01], [7.9, 0]]`: visibile solo sotto z6, sfuma a 0 verso z8. Fix correlato: `addSource(BLOB_GRID_SOURCE)` spostato PRIMA del loop `wallLayers()` (MapLibre monta silenziosamente male un layer la cui source non esiste). Test: 7 in `blobGrid.test.ts`. |
+| **main** | Now = `direction2.5` (ff merge `b3c6160`) + these notes (`234f145`). Before, it only had the offline hospitals pack + npm install fixes. This is the starting point for testing all the session's work. |
+| **direction1** | Early abandoned direction: "ring doctrine" docs in OFFLINE_PLAN/OFFLINE_MAP_SPEC + `.vscode/` ignore. Historical only. |
+| **direction2 / 2.1** | Same tip (`8938ebe`). Kills the below-z8 stretch tier (`RAW_MIN_Z = BLOB_MIN_Z`) and quarantines foreign zooms in the tile lookup. |
+| **direction2.2** | Gesture perf: memoized merged reads + O(n) merge + in-memory key set — zoom no longer freezes. Also: e2e refutation test (layer merge VERBATIM), fix for the ledger "2 tiles / —" bug (pass-start snapshot zeroed just-written lineBytes). |
+| **direction2.3** | Shallow z6 tier: verbatim z6 tile per pin, own store/source/protocol (`rtraw-shallow`), z6–z7 relay layer. |
+| **direction2.4** | Shallow z6 tier BUILT from the z13 disc reads (no longer verbatim): `SHALLOW_LAYER_RULES` thins the roads; zero extra R2 reads. The tip commit ("direction2.6") fixes the vocabulary (real major_road/minor_road), bumps **pv 47→48** (baked pins re-download), and paints the tier's water (`v4-water-fill/line-shallow`). |
+| **direction2.5** | **The ghost grid of this session**: one white square per pin = the real bounding box of its tileset (`radiusBox`, a 60×60 km box centered on the pin — NOT the z8 cells of `cellsFor`). Bottom of the layer stack, fill only, no outline, opacity ramp `[[6, 0.01], [7.9, 0]]`: visible only below z6, fading to 0 toward z8. Related fix: `addSource(BLOB_GRID_SOURCE)` moved BEFORE the `wallLayers()` loop (MapLibre silently fails to mount a layer whose source doesn't exist). Tests: 7 in `blobGrid.test.ts`. |
 
-File nuovi della 2.5: `lib/onPhone/render/blobGrid.ts` + `blobGrid.test.ts`; modificati `wallStyle.ts` (layer + rampa) e `OfflineMapPage.svelte` (source prima dei layer).
+New files in 2.5: `lib/onPhone/render/blobGrid.ts` + `blobGrid.test.ts`; modified: `wallStyle.ts` (layer + ramp) and `OfflineMapPage.svelte` (source before layers).
 
-## Cosa fare per prenderlo e testarlo
+## How to fetch and test it
 
 ```bash
 git fetch origin
-git checkout main && git pull        # sei su b3c6160
-npm install                          # c'è ora il package-lock.json committato
-npx vitest run                       # suite completa (883+ test; ~54 fallimenti ambientali noti su macchine senza deps locali)
+git checkout main && git pull        # you're on 234f145
+npm install                          # package-lock.json is now committed
+npx vitest run                       # full suite (883+ tests; ~54 known environmental failures on machines without real local deps)
 ```
 
-Per il test **a runtime** (telefono/debugger):
-1. Vite + worker: `npm run dev` (vite su :5174) e `wrangler dev` in `workers/worker-local-dev/`.
-2. Attenzione: **pv 47→48** — i pin già cotti si ri-cottiscono/riscaricano al primo avvio, è voluto.
-3. Check visivo del ghost grid: zoom **sotto z6** — un quadrato bianco appena percettibile (1%) centrato su ogni pin; salendo verso z8 sfuma e sparisce. Sopra z8 non c'è, by design.
+For **runtime** testing (phone/debugger):
+1. Vite + worker: `npm run dev` (vite on :5174) and `wrangler dev` in `workers/worker-local-dev/`.
+2. Heads-up: **pv 47→48** — already-baked pins re-bake/re-download on first launch, by design.
+3. Ghost-grid visual check: zoom **below z6** — a barely-visible white square (1%) centered on each pin; fading out as you climb toward z8, gone at z≥8, by design.
 
-## Nota deploy (differita, non fatta in questa chat)
+## Tweaking the ghost-grid visibility (the 0.01)
 
-I worker cloud non sono ancora aggiornati: quando si deploya, **prima il Worker poi l'app** (il telefono parla il protocollo nuovo solo dopo il worker). Le modifiche cloud toccano `workers/worker-{cloud-dev,cloud-prod}/src/{packBuilder,mvtFilter,index}.ts`.
+The squares are intentionally faint. To make them more visible:
+
+- `lib/onPhone/render/wallStyle.ts`, in the `v4-blob-grid-fill` layer's `fill-opacity` ramp — the stop after `SHALLOW_Z` is `0.01`. Raise it (e.g. `0.02`, `0.05`, `0.1`) for more visible squares; the ramp shape stays the same (`[[6, X], [7.9, 0]]`).
+- The test `lib/onPhone/render/blobGrid.test.ts` asserts that exact value — update the `0.01` in the "opacity is the direction2.5 spec" test to match, then re-run `npx vitest run lib/onPhone/render/blobGrid.test.ts`.
+
+## Deploy note (deferred, not done in this session)
+
+Cloud workers are not updated yet: when deploying, **Worker first, then app** (the phone speaks the new protocol only after the worker). Cloud changes touch `workers/worker-{cloud-dev,cloud-prod}/src/{packBuilder,mvtFilter,index}.ts`.
