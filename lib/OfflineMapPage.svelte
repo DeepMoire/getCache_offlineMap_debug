@@ -538,16 +538,28 @@
                             refreshRawTiles(map);
                         });
 
-                        // ── THE SATELLITE PHOTOS ─────────────────────────────
+                        // ── THE SATELLITE PHOTOS — viewport-culled (direction2.6) ──
+                        // WAS: every baked photo on disk mounted once and kept
+                        // forever — RAM grew with the PIN COUNT (~9 MB decoded
+                        // per 1536-px photo × 321 pins ≈ 2.9 GB), not the screen
+                        // (Law 5). NOW: reconcile() mounts what is near the
+                        // camera and unmounts (object URL revoked) what is far
+                        // outside it. GEOMETRY ONLY, never zoom (Law 1) — a
+                        // photo on screen stays mounted at every zoom; the
+                        // two-ring hysteresis in mountSatellite.ts keeps
+                        // re-entry blink-free (Law 3).
                         satMount = createSatelliteMount(map);
                         const showPhotos = async (): Promise<void> => {
-                            let shown = 0;
-                            for (const p of ports.places())
-                                for (const c of p.anchors) {
-                                    await satMount?.display(c);
-                                    if (satMount?.mounted().has(satImageKey(c)))
-                                        shown++;
-                                }
+                            const b = map.getBounds();
+                            const shown = await satMount?.reconcile(
+                                [
+                                    b.getWest(),
+                                    b.getSouth(),
+                                    b.getEast(),
+                                    b.getNorth(),
+                                ],
+                                ports.places().flatMap((p) => p.anchors),
+                            );
                             // LOUD either way — "no photo on disk yet" and "the mount is
                             // missing" look identical on a black map.
                             console.info(
@@ -558,6 +570,9 @@
                             );
                         };
                         void showPhotos();
+                        // The cull follows the camera — moveend, not move: one
+                        // reconcile per settled gesture, not per frame.
+                        map.on("moveend", () => void showPhotos());
                         // A photo that lands 30 s into the bake must appear without
                         // a reload.
                         satPoll = setInterval(() => void showPhotos(), 20000);
