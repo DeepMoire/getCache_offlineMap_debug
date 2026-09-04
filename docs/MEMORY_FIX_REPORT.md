@@ -33,9 +33,10 @@ With 321 pins this sums to ≈ 2.9 GB of decoded pixel potential — matching th
 client's measurements. In short: **memory scaled with the PIN COUNT, not with
 the screen.**
 
-**Secondary (not addressed in this fix — see §6):** MapLibre's map workers
-accumulate decoded tile caches per zoom level (~+258 MB per zoom level worst
-case). This memory is invisible to main-thread-only debug panels.
+**Secondary (not addressed in this fix — see §6):** MapLibre's map workers hold
+decoded tile caches that spike during zoom transitions (measured: +118 MB,
+largely recovered once the view settles). This memory is invisible to
+main-thread-only debug panels.
 
 Road rendering was verified unaffected: road packs are served raw/undecoded via
 a custom protocol (`addProtocol`) — correct by design, not touched.
@@ -77,25 +78,28 @@ z5 (whole area visible) = 33 · z7 = 15 · z8 = 8 · z10 = 1.
 Panning at FIXED zoom away from blobs drops the count to 0–2 and back up on
 return, with no visible re-mount flicker (pre-mount margin working).
 
-**B. Memory (Chrome DevTools → Memory → JavaScript VM instances, after forced GC):**
+**B. Memory (Chrome DevTools → Memory → JavaScript VM instances, chronological; readings taken after forced GC):**
 
-| Scenario                     | Main heap | Worker heap | Total |
-|------------------------------|-----------|-------------|-------|
-| M1: z5, whole area, 33 photos mounted  | 99.0 MB | 12.7 MB | **112 MB** |
-| M2: z10 Vancouver, 1 photo mounted      | 60.5 MB | 11.2 MB | **71.7 MB** |
-| M3: back to z5, 33 photos mounted (same camera as M1) | 85.7 MB | 130.0 MB | **215 MB** |
+| Time | Scenario | Main heap | Worker heap | Total |
+|------|----------|-----------|-------------|-------|
+| 14:47:42 | z10 Vancouver, 1 photo mounted | 60.5 MB | 11.2 MB | **71.7 MB** |
+| 14:49:33 | z5 whole area, 33 photos, ~1 min after zoom-out (still settling) | 85.7 MB | 130.0 MB | **215 MB** |
+| 14:50:29 | same z5 view, settled | 99.0 MB | 12.7 MB | **112 MB** |
 
 Readings:
 
-1. **M1→M2: −38.5 MB in the main heap** = photo memory released (≈1.2 MB/pin
-   in JS heap; the ~9 MB/pin decoded portion lives in GPU/renderer memory
-   outside the JS heap counters). Before the fix this memory was never
-   released.
-2. **M2→M3: photo memory returns reversibly** (+25 MB re-mounting 33 photos) —
-   the mechanism is bidirectional and stable.
-3. **M1 vs M3 (identical camera state):** photo memory is the same; the ONLY
-   difference is +117 MB in the worker heap — the MapLibre tile cache accrued
-   while visiting z9/z10. This isolates and quantifies the secondary issue.
+1. **Photo memory scales with the screen and is released.** Main heap with 1
+   photo mounted: 60.5 MB; with 33 photos mounted: 85.7–99.0 MB — a
+   +25–38.5 MB delta for 32 photos (≈1.2 MB/pin in JS heap; the ~9 MB/pin
+   decoded portion lives in GPU/renderer memory outside the JS heap counters).
+   Before the fix this memory was never released.
+2. **The worker heap spike is TRANSIENT, not a leak.** 11.2 → 130 → 12.7 MB:
+   during the zoom transition MapLibre's workers decode the new zoom level's
+   tiles in a burst (+118 MB), then return almost all of it once the view
+   settles (~1 minute). The temporary 215 MB total is a transition spike, not
+   a new steady state.
+3. **Settled totals:** 71.7 MB at working zoom · 112 MB at full-region view
+   with all 33 blobs mounted.
 
 ## 5. Expected Behavior After Fix (what "solved" means)
 
@@ -108,9 +112,11 @@ Readings:
 
 ## 6. Known Remaining Items (not regressions — pre-existing, now quantified)
 
-1. **Worker tile cache is monotonic** (+117 MB measured after one zoom-in
-   excursion; ~258 MB/zoom worst case). Candidate next step: tile-cache
-   eviction/cap in the map workers.
+1. **Worker tile cache spikes transiently during zoom transitions** (+118 MB
+   observed mid-transition, ~12.7 MB once settled). It recovers on its own, so
+   it is a burst, not a leak — but sustained zoom-surfing keeps the total
+   elevated for as long as the transitions continue. If low-end devices ever
+   show sustained totals, a tile-cache cap/eviction review is the lever.
 2. **Wide/low-zoom views keep every intersecting photo mounted by design**
    (constant-presence rule). If a customer has hundreds of pins AND browses at
    continent scale, memory will rise accordingly. The proper remedy is a
@@ -132,5 +138,6 @@ Readings:
    record again.
 5. Scenario 3: return to the wide view; record again.
 
-Expected: photo memory drops on zoom-in and returns on zoom-out; worker
-heap only ever grows (known item §6.1).
+Expected: photo memory drops on zoom-in and returns on zoom-out; the worker
+heap spikes during zoom transitions and recovers once the view settles (known
+item §6.1).
